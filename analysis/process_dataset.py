@@ -12,6 +12,7 @@ from vqniche.utils.config_parsers import parse_arguments, collect_configs
 def main(config: dict):
     # Get parameters for the Experiment
     experiment_name = config['experiment']['name']
+    overwrite = config['experiment']['overwrite']
     print(f"Processing: {experiment_name}")
     
     # Get parameters for Data
@@ -26,7 +27,8 @@ def main(config: dict):
                                     graph_kwargs=graph_kwargs,
                                     data_directory_path=data_directory_path,
                                     pre_transform=pre_transform,
-                                    pre_filter=pre_filter)
+                                    pre_filter=pre_filter,
+                                    overwrite=overwrite)
 
     print(f"Processed data saved at {dataset.processed_dir}")
 

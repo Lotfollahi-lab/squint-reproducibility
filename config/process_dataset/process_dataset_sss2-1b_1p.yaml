@@ -1,5 +1,6 @@
 experiment:
   name: "sss2-1b_1p"
+  overwrite: True
   description: "Simulated 10K dataset"
   
 data:
