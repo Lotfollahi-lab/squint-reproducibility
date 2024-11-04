@@ -1,0 +1,44 @@
+experiment:
+  name: "sss2-1b_1p"
+  seed: 1
+  description: Train GraphSAGE on Simulated 10K dataset
+
+data:
+  data_directory_path: '/lustre/scratch126/cellgen/team361/DATASETS'
+  feature_name: 'cell_gene_counts'
+  label_name: 'cell_types'
+  graph_kwargs: {'coord_type': 'generic',
+                'spatial_key': 'spatial',
+                'delaunay': True,
+                'radius': null,
+                'set_diag': True}
+  transform_list: [
+                  'SetCustomDataKeys',
+                  'NormalizeByReadDepth',
+                  'RandomNodeSplit']
+  transform_kwargs: {'val_ratio': 0.1,
+                    'test_ratio': 0.2}
+  loader: 'neighbor'
+  loader_kwargs: {'num_neighbors': [30, 30],
+                  'batch_size': 64,
+                  'num_workers': 4}
+
+model:
+  name: 'GraphSAGE'
+  num_layers: 2
+  hidden_channels: 16
+  dropout: 0.1
+  loss_names: ['cross_entropy']
+  loss_kwargs: {'reduction': 'mean'}
+  task: 'multiclass'
+  optimizer_name: 'adam'
+  lr: 0.001
+  weight_decay: 0.0005
+
+train:
+  max_epochs: 20
+  accelerator: 'gpu'
+  monitor: 'val_loss'
+  save_top_k: 1
+  mode: 'max'
+  ckpt_path: 'last'
