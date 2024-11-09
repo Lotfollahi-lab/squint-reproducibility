@@ -1,5 +1,9 @@
 """
-This script trains a Graph Neural Network (GNN) model on a PyTorch Geometric dataset and uses PyTorch Lightning to train the model. Ideally, the script should be run on a multi-GPU-enabled machine and PyG dataset is already processed and saved in the gold data directory.
+This script trains one Graph Neural Network (GNN) model on one batch of AnnData.
+
+We use PyTorch Lightning to support distributed data parallel (DDP) training across multiple GPUs.
+
+It is required that the data has previously been processed and stored as a PyTorch Geometric dataset in the "gold" directory.  and PyG dataset is already processed and saved in the gold data directory.
 
 Usage:
 >>> python analysis/train_gnn.py --config config/train_gnn/train_gnn_sss2-1b_1p.yaml
@@ -10,19 +14,29 @@ import numpy as np
 
 import torch
 import pytorch_lightning as pl
+from pytorch_lightning.loggers import WandbLogger
 from torch_geometric.data.lightning import LightningNodeData
+import torch_geometric.transforms as T
 
 from vqniche.utils.config_parsers import parse_arguments, collect_configs
-from vqniche.dataloaders.transforms import prepare_transforms
-from vqniche.dataloaders.custom_in_memory_dataset import CustomInMemoryDataset
+from vqniche.dataloaders.transforms import SetExperimentDataKeys, init_data_transforms
+from vqniche.dataloaders.in_memory_dataset_blob import InMemoryDatasetBlob
 from vqniche.models.graphsage import GraphSAGE
 
 
 def main(config: dict):
-    # Get parameters for the Experiment
-    experiment_name = config['experiment']['name']
+    # --------------------- Wandb and Logger ---------------------
+    # Initialize WandbLogger
+    wandb_logger = WandbLogger(project="VQNiche", 
+                               log_model=True,
+                        )
+    # Log hyperparameters
+    wandb_logger.log_hyperparams(config)
+    
+    # --------------------- Experiment Settings ---------------------
+    print(f"Experiment: {config['experiment']['description']}")
+    
     seed = config['experiment']['seed']
-    print(f"Experiment: {experiment_name}")
     
     # Set seed for reproducibility
     torch.manual_seed(seed)
@@ -34,111 +48,163 @@ def main(config: dict):
     torch.backends.cudnn.benchmark = False
     torch.set_float32_matmul_precision('medium')
     
-    # Get parameters for Data
+    num_devices = torch.cuda.device_count()
+    print(f"Number of devices: {num_devices}")
+    
+    # --------------------- Dataset Parameters ---------------------
+    # NOTE: currently supports only one feature, label, and edge index
+    # decide which node features to use in this experiment
+    feature_name = config['data']['feature_name']
+    
+    # decide which node labels to use in this experiment
+    label_name = config['data']['label_name']
+
+    # decide which edge index to use in this experiment
+    graph_kwargs = config['data']['graph_kwargs']
+    spatial_key = graph_kwargs['spatial_key']
+    delaunay = graph_kwargs['delaunay']
+    radii = graph_kwargs['radii']
+    assert delaunay or len(radii) >= 1, "Either `delaunay` or `radii` must be provided."
+    if delaunay:
+        edge_index_name = f"{spatial_key}_delaunay"
+    else:
+        radius = radii[0] # only supports using the first radius
+        delaunay_radius_union = graph_kwargs['delaunay_radius_union']
+        if delaunay_radius_union:
+            edge_index_name = f"{spatial_key}_delaunay_radius_{radius}"
+        else:
+            edge_index_name = f"{spatial_key}_radius_{radius}"
+
+    DataKeyTransform = SetExperimentDataKeys(       
+                            feature_name=feature_name,
+                            label_name=label_name,
+                            edge_index_name=edge_index_name
+                        )
+    
+    print(f"Feature Name: {feature_name}")
+    print(f"Label Name: {label_name}")
+    print(f"Graph Name: {edge_index_name}")
+    
+    # --------------------- Initialize In-Memory Dataset Blob ---------------------
+    dataset_name = config['dataset']['name']
+    print(f"Initializing Dataset: {dataset_name}")
+    
     # set root data directory
     data_directory_path = config['data']['data_directory_path']
 
-    # set feature and label keys to use from the PyG Data object
-    feature_name = config['data']['feature_name']
-    feature_key = f"x_{feature_name}"
-    label_name = config['data']['label_name']
-    label_key = f"y_{label_name}"
-
-    # set edge index key to use from the PyG Data object
-    graph_kwargs = config['data']['graph_kwargs']
-    if graph_kwargs['delaunay']:
-        edge_index_name = f"{graph_kwargs['spatial_key']}-delaunay"
-    else:
-        edge_index_name = f"{graph_kwargs['spatial_key']}-radius-{graph_kwargs['radius']}"
-    edge_index_key = f"edge_index_{edge_index_name}"
-    
-    # prepare transforms 
-    # (train-val-test split, normalization by read depth, etc.)
-    transform_list = config['data']['transform_list']
+    # e.g. normalize features , train-val-test split, etc.
+    transform_names = config['data']['transform_names']
     transform_kwargs = config['data']['transform_kwargs']
-    transform = prepare_transforms(transform_list=transform_list,
-                                   feature_key=feature_key,
-                                   label_key=label_key,
-                                   edge_index_key=edge_index_key,
-                                   **transform_kwargs)
+    data_transforms = init_data_transforms(
+                        transform_names=transform_names,
+                        **transform_kwargs
+                    )
+
+    # initialize a composed transform
+    transform = T.Compose([DataKeyTransform, data_transforms])
     
-    # load pytorch geometric data
-    dataset = CustomInMemoryDataset(name=experiment_name,
-                                    label_names=[label_key],
-                                    graph_kwargs=graph_kwargs,
-                                    data_directory_path=data_directory_path,
-                                    transform=transform)
-    data = dataset[0]
+    # initialize pytorch geometric dataset blob stored at:
+    # data_directory_path / 'gold' / 'in-memory-PyG-dataset-blob' / dataset_name / 'dataset_blob.pt'
+    dataset_blob = InMemoryDatasetBlob(
+                        name=dataset_name,
+                        data_directory_path=data_directory_path,
+                        transform=transform
+                    )
     
-    # prepare loader
-    # TODO: improve to allow custom loaders
+    # --------------------- Data and Loader ---------------------
+    # NOTE: currently trains one model on one batch of data
+    # Load PyG data object corresponding to batch_idx (e.g. AnnData batch0)
+    batch_idx = config['data']['batch_idx']
+    data_batch = dataset_blob[batch_idx]
+    assert data_batch['metadata_batch_id'] == f"batch{batch_idx}", "Batch ID mismatch."
+    print(f"Batch ID: {data_batch['metadata_batch_id']}")
+     
+    # set data loader (currently uses a string, .e.g. 'neighbor')
+    # TODO: Upgrade to support string or custom Callable data loader
     loader = config['data']['loader']
     loader_kwargs = config['data']['loader_kwargs']
 
-    # prepare lightning data module 
-    datamodule = LightningNodeData(
-            data=data,
-            loader=loader,
-            shuffle=False,
-            **loader_kwargs
-            )
+    # initialize lightning node data module 
+    datamodule_batch = LightningNodeData(
+                            data=data_batch,
+                            loader=loader,
+                            shuffle=False,
+                            **loader_kwargs
+                        )
     
-    # initialize model
+    # --------------------- Initialize Model ---------------------    
     model_name = config['model']['name']
-    in_channels = data.num_features
-    out_channels = data.num_classes
-    hidden_channels = config['model']['hidden_channels']
-    num_layers = config['model']['num_layers']
-    dropout = config['model']['dropout']
-    loss_names = config['model']['loss_names']
-    loss_kwargs = config['model']['loss_kwargs']
-    task = config['model']['task']
-    optimizer_name = config['model']['optimizer_name']
-    lr = config['model']['lr']
-    weight_decay = config['model']['weight_decay']
+    print(f"Model: {model_name}")
+
+    # get model, optimizer, loss, and task parameters
+    model_params = config['model']['model_params']
+    optimizer_params = config['model']['optimizer_params']
+    loss_params = config['model']['loss_params']
+    task_params = config['model']['task_params']
+
+    # initialize model 
     if model_name == 'GraphSAGE':
         Model = GraphSAGE
     else:
         raise ValueError(f"Model {model_name} not found.")
-    
-    model = Model(in_channels=in_channels,
-                    out_channels=out_channels,
-                    hidden_channels=hidden_channels,
-                    num_layers=num_layers,
-                    dropout=dropout,
-                    lr=lr,
-                    weight_decay=weight_decay,                    
-                    optimizer_name=optimizer_name,
-                    loss_names=loss_names,
-                    loss_kwargs=loss_kwargs,
-                    task=task,
-                    )
+    model = Model(
+                name=model_name,                
+                in_channels=data_batch.num_features,
+                out_channels=data_batch.num_classes,
+                **model_params,
+                **optimizer_params,
+                **loss_params,
+                **task_params
+            )
 
-    accelerator = config['train']['accelerator']
-    max_epochs = config['train']['max_epochs']
-    monitor = config['train']['monitor']
-    save_top_k = config['train']['save_top_k']
-    mode = config['train']['mode']
-    ckpt_path = config['train']['ckpt_path']
-    
-    devices = torch.cuda.device_count()
+    # Log model architecture
+    wandb_logger.watch(model)
+
+    # --------------------- Initialize Trainer ---------------------
+    # set strategy to Distributed Data Parallel (DDP)
+    accelerator = config['trainer']['accelerator']
     strategy = pl.strategies.DDPStrategy(accelerator=accelerator)
-    checkpoint = pl.callbacks.ModelCheckpoint(monitor=monitor,
-                                                save_top_k=save_top_k,
-                                                mode=mode,
-                                                save_last=True)
-    trainer = pl.Trainer(devices=devices,
-                            strategy=strategy,
-                            max_epochs=max_epochs,
-                            callbacks=[checkpoint]
-                            )
+
+    # configure model checkpointing
+    monitor = config['trainer']['monitor']
+    save_top_k = config['trainer']['save_top_k']
+    mode = config['trainer']['mode']
+    save_last = config['trainer']['save_last']
+    checkpoint = pl.callbacks.ModelCheckpoint(
+                    monitor=monitor,
+                    save_top_k=save_top_k,
+                    mode=mode,
+                    save_last=save_last
+                )
     
-    trainer.fit(model, datamodule)
-    trainer.test(ckpt_path=ckpt_path, datamodule=datamodule)
+    # initialize trainer
+    max_epochs = config['trainer']['max_epochs']
+    trainer = pl.Trainer(
+                    devices=num_devices,
+                    strategy=strategy,
+                    max_epochs=max_epochs,
+                    callbacks=[checkpoint]
+                )
+    
+    # --------------------- Train and Test Model ---------------------
+    # train model
+    print("Training Model...")
+    trainer.fit(
+        model=model,
+        datamodule=datamodule_batch
+    )
+
+    # test model
+    print("Testing Model...")
+    ckpt_path = config['trainer']['ckpt_path']
+    trainer.test(
+        ckpt_path=ckpt_path,
+        datamodule=datamodule_batch
+    )
 
 
 if __name__ == '__main__':
     args = parse_arguments()
     config = collect_configs(args)
     
-    main(config)
+    main(config)    

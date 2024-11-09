@@ -1,44 +1,66 @@
 experiment:
-  name: "sss2-1b_1p"
   seed: 1
   description: Train GraphSAGE on Simulated 10K dataset
 
 data:
-  data_directory_path: '/lustre/scratch126/cellgen/team361/DATASETS'
+  dataset_name: 'sss2-1b_1p'
   feature_name: 'cell_gene_counts'
   label_name: 'cell_types'
-  graph_kwargs: {'coord_type': 'generic',
+  graph_kwargs: {
+                'coord_type': 'generic',
                 'spatial_key': 'spatial',
                 'delaunay': True,
-                'radius': null,
-                'set_diag': True}
-  transform_list: [
-                  'SetCustomDataKeys',
+                'radii': [],
+                'delaunay_radius_union': False,
+                'set_diag': True
+                }
+  data_directory_path: '/lustre/scratch126/cellgen/team361/DATASETS'
+  overwrite: False
+  transform_names: [
                   'NormalizeByReadDepth',
-                  'RandomNodeSplit']
-  transform_kwargs: {'val_ratio': 0.1,
-                    'test_ratio': 0.2}
+                  'RandomNodeSplit'
+                  ]
+  transform_kwargs: {
+                    'norm_method': 'read_depth',
+                    'val_ratio': 0.1,
+                    'test_ratio': 0.2
+                    }
+  batch_idx: 0
   loader: 'neighbor'
-  loader_kwargs: {'num_neighbors': [30, 30],
+  loader_kwargs: {
+                  'num_neighbors': [30, 30],
                   'batch_size': 64,
-                  'num_workers': 4}
+                  'num_workers': 4
+                  }
 
 model:
   name: 'GraphSAGE'
-  num_layers: 2
-  hidden_channels: 16
-  dropout: 0.1
-  loss_names: ['cross_entropy']
-  loss_kwargs: {'reduction': 'mean'}
-  task: 'multiclass'
-  optimizer_name: 'adam'
-  lr: 0.001
-  weight_decay: 0.0005
+  model_params: {
+                'encoder_name': 'SAGE_Encoder',
+                'predictor_name': 'Linear',
+                'hidden_channels': 16,
+                'num_layers': 2
+                'dropout': 0.1
+                }
+  optimizer_params: {
+                    'optimizer_name': 'adam'
+                    'lr': 0.001,
+                    'weight_decay': 0.0005,
+                    }
+  loss_params: {
+                'loss_names': ['cross_entropy'],
+                'loss_kwargs': {'reduction': 'mean'}
+                }
+  task_params: {
+                'task_name': 'multiclass',
+                'task_kwargs': {}
+                }
 
-train:
-  max_epochs: 20
+trainer:
   accelerator: 'gpu'
   monitor: 'val_loss'
   save_top_k: 1
   mode: 'max'
+  save_last: True
+  max_epochs: 20
   ckpt_path: 'last'
