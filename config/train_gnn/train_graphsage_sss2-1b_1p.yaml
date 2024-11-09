@@ -1,5 +1,5 @@
 experiment:
-  seed: 1
+  seed: 0
   description: Train GraphSAGE on Simulated 10K dataset
 
 data:
@@ -17,19 +17,19 @@ data:
   data_directory_path: '/lustre/scratch126/cellgen/team361/DATASETS'
   overwrite: False
   transform_names: [
-                  'NormalizeByReadDepth',
+                  'NormalizeFeatures',
                   'RandomNodeSplit'
                   ]
   transform_kwargs: {
                     'norm_method': 'read_depth',
                     'val_ratio': 0.1,
-                    'test_ratio': 0.2
+                    'test_ratio': 0.1
                     }
   batch_idx: 0
   loader: 'neighbor'
   loader_kwargs: {
-                  'num_neighbors': [30, 30],
-                  'batch_size': 64,
+                  'num_neighbors': [25, 10],
+                  'batch_size': 1024,
                   'num_workers': 4
                   }
 
@@ -38,14 +38,14 @@ model:
   model_params: {
                 'encoder_name': 'SAGE_Encoder',
                 'predictor_name': 'Linear',
-                'hidden_channels': 16,
-                'num_layers': 2
-                'dropout': 0.1
+                'hidden_channels': 256,
+                'num_layers': 2,
+                'dropout': 0.5
                 }
   optimizer_params: {
-                    'optimizer_name': 'adam'
-                    'lr': 0.001,
-                    'weight_decay': 0.0005,
+                    'optimizer_name': 'adam',
+                    'lr': 0.1,
+                    'weight_decay': 0.0,
                     }
   loss_params: {
                 'loss_names': ['cross_entropy'],
@@ -63,4 +63,4 @@ trainer:
   mode: 'max'
   save_last: True
   max_epochs: 20
-  ckpt_path: 'last'
+  ckpt_path: 'best'

@@ -20,7 +20,7 @@ def main(config: dict):
     data_directory_path = config['data']['data_directory_path']
     pre_transform = config['data']['pre_transform']
     pre_filter = config['data']['pre_filter']
-    overwrite = config['experiment']['overwrite']
+    overwrite = config['data']['overwrite']
 
     dataset = InMemoryDatasetBlob(
                     name=dataset_name,

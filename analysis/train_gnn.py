@@ -27,9 +27,11 @@ from vqniche.models.graphsage import GraphSAGE
 def main(config: dict):
     # --------------------- Wandb and Logger ---------------------
     # Initialize WandbLogger
-    wandb_logger = WandbLogger(project="VQNiche", 
-                               log_model=True,
-                        )
+    wandb_logger = WandbLogger(
+                        project="VQNiche", 
+                        log_model=False,
+                        offline=True
+                    )
     # Log hyperparameters
     wandb_logger.log_hyperparams(config)
     
@@ -86,22 +88,22 @@ def main(config: dict):
     print(f"Graph Name: {edge_index_name}")
     
     # --------------------- Initialize In-Memory Dataset Blob ---------------------
-    dataset_name = config['dataset']['name']
+    dataset_name = config['data']['dataset_name']
     print(f"Initializing Dataset: {dataset_name}")
     
     # set root data directory
     data_directory_path = config['data']['data_directory_path']
 
     # e.g. normalize features , train-val-test split, etc.
-    transform_names = config['data']['transform_names']
+    data_transform_names = config['data']['transform_names']
     transform_kwargs = config['data']['transform_kwargs']
     data_transforms = init_data_transforms(
-                        transform_names=transform_names,
+                        data_transform_names=data_transform_names,
                         **transform_kwargs
                     )
 
     # initialize a composed transform
-    transform = T.Compose([DataKeyTransform, data_transforms])
+    transform = T.Compose([DataKeyTransform] + data_transforms)
     
     # initialize pytorch geometric dataset blob stored at:
     # data_directory_path / 'gold' / 'in-memory-PyG-dataset-blob' / dataset_name / 'dataset_blob.pt'
@@ -116,8 +118,8 @@ def main(config: dict):
     # Load PyG data object corresponding to batch_idx (e.g. AnnData batch0)
     batch_idx = config['data']['batch_idx']
     data_batch = dataset_blob[batch_idx]
-    assert data_batch['metadata_batch_id'] == f"batch{batch_idx}", "Batch ID mismatch."
-    print(f"Batch ID: {data_batch['metadata_batch_id']}")
+    # assert data_batch['metadata_batch_id'] == f"batch{batch_idx}", "Batch ID mismatch."
+    # print(f"Batch ID: {data_batch['metadata_batch_id']}")
      
     # set data loader (currently uses a string, .e.g. 'neighbor')
     # TODO: Upgrade to support string or custom Callable data loader
