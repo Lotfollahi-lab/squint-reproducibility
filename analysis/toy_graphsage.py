@@ -65,7 +65,10 @@ if __name__ == '__main__':
     # Set seed for reproducibility
     seed = 0
     torch.manual_seed(seed)
-    
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.set_float32_matmul_precision('medium')
+
     DataKeyTransform = SetExperimentDataKeys(       
                             feature_name="cell_gene_counts",
                             label_name="cell_types",
@@ -92,31 +95,29 @@ if __name__ == '__main__':
     
     datamodule = LightningNodeData(
         data,
-        # input_train_nodes=data.train_mask,
-        # input_val_nodes=data.val_mask,
-        # input_test_nodes=data.test_mask,
         loader='neighbor',
         num_neighbors=[25, 10],
         batch_size=1024,
         num_workers=4,
+        shuffle=False
     )
 
-    # model = Model(dataset.num_node_features, dataset.num_classes)
-    model = GraphSAGE(
-        name='GraphSAGE',
-        in_channels=dataset.num_node_features,
-        out_channels=dataset.num_classes,
-        hidden_channels=256,
-        num_layers=2,
-        dropout=0.5,
-        loss_kwargs={'reduction': 'mean'})
+    model = Model(dataset.num_node_features, dataset.num_classes)
+    # model = GraphSAGE(
+    #     name='GraphSAGE',
+    #     in_channels=data.num_features,
+    #     out_channels=data.num_classes,        
+    #     hidden_channels=256,
+    #     num_layers=2,
+    #     dropout=0.5,
+    #     loss_kwargs={'reduction': 'mean'})
 
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     strategy = pl.strategies.SingleDeviceStrategy(device=device)
     checkpoint = pl.callbacks.ModelCheckpoint(monitor='val_acc', save_top_k=1,
                                               mode='max')
     trainer = pl.Trainer(strategy=strategy, devices=1, max_epochs=20,
-                         callbacks=[checkpoint])
+                         callbacks=[checkpoint], deterministic=True)
 
     trainer.fit(model, datamodule)
     trainer.test(ckpt_path='best', datamodule=datamodule)
