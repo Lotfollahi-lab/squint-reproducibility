@@ -8,9 +8,11 @@ It is required that the data has previously been processed and stored as a PyTor
 Usage:
 >>> python analysis/train_gnn.py --config config/train_gnn/train_gnn_sss2-1b_1p.yaml
 """
-
+import os
 import random
 import numpy as np
+import wandb
+from pathlib import Path
 
 import torch
 import pytorch_lightning as pl
@@ -25,45 +27,50 @@ from vqniche.models.graphsage import GraphSAGE
 
 
 def main(config: dict):
-    # --------------------- Wandb and Logger ---------------------
-    # Initialize WandbLogger
-    wandb_logger = WandbLogger(
-                        project="VQNiche", 
-                        log_model=False,
-                        offline=True
-                    )
-    # Log hyperparameters
-    wandb_logger.log_hyperparams(config)
+
+    # --------------------- Configure Backend ---------------------
+    torch.backends.cudnn.benchmark = False
+    torch.set_float32_matmul_precision('medium')
+
+    num_cores = int(os.environ.get("LSB_DJOB_NUMPROC", 1))
+    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+
+    print(f"Number of CPU cores: {num_cores}")
+    print(f"Number of GPU devices: {num_gpus}")
     
-    # --------------------- Experiment Settings ---------------------
-    print(f"Experiment: {config['experiment']['description']}")
-    
+    # --------------------- Determinism Settings ---------------------
     seed = config['experiment']['seed']
-    
+
     # Set seed for reproducibility
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
-    pl.seed_everything(seed)
     
     # Set backend deterministic as true
     torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    torch.set_float32_matmul_precision('medium')
     
-    num_devices = torch.cuda.device_count()
-    print(f"Number of devices: {num_devices}")
-    
-    # --------------------- Dataset Parameters ---------------------
-    # NOTE: currently supports only one feature, label, and edge index
+    print(f"Seed: {seed}")
+
+    # --------------------- Define Experiment Parameters ---------------------
+    experiment_name = config['experiment']['name']
+    dataset_name = config['dataset']['name']
+    model_name = config['model']['name']
+    batch_idx = config['dataset']['batch_idx']
+
+    print(f"Experiment: {experiment_name}")
+    print(f"Dataset: {dataset_name}")
+    print(f"Model: {model_name}")
+    print(f"Batch: {batch_idx}")
+
+    # --------------------- Set Data Keys ---------------------
     # decide which node features to use in this experiment
-    feature_name = config['data']['feature_name']
-    
+    feature_name = config['dataset']['feature_name']
+
     # decide which node labels to use in this experiment
-    label_name = config['data']['label_name']
+    label_name = config['dataset']['label_name']
 
     # decide which edge index to use in this experiment
-    graph_kwargs = config['data']['graph_kwargs']
+    graph_kwargs = config['dataset']['graph_kwargs']
     spatial_key = graph_kwargs['spatial_key']
     delaunay = graph_kwargs['delaunay']
     radii = graph_kwargs['radii']
@@ -78,33 +85,50 @@ def main(config: dict):
         else:
             edge_index_name = f"{spatial_key}_radius_{radius}"
 
-    DataKeyTransform = SetExperimentDataKeys(       
+    print(f"Feature Name: {feature_name}")
+    print(f"Label Name: {label_name}")
+    print(f"Graph Name: {edge_index_name}")
+
+    # --------------------- Wandb and Logger ---------------------
+    # set logging directory
+    log_dir = Path(config['logging']['log_dir']) / dataset_name / experiment_name
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    # configure PyTorch Lightning Logger parameters
+    log_model = config['logging']['log_model']
+    offline = config['logging']['offline']
+    wandb_tags = [experiment_name, dataset_name, model_name, f"batch{batch_idx}"]
+    
+    # initialize wandb logger
+    wandb_logger = WandbLogger(
+                        project="VQNiche",
+                        save_dir=log_dir,
+                        log_model=log_model,
+                        offline=offline,
+                        tags=wandb_tags,
+                    )
+
+    # --------------------- Initialize Dataset Transforms ---------------------
+    DataKeyTransform = SetExperimentDataKeys(
                             feature_name=feature_name,
                             label_name=label_name,
                             edge_index_name=edge_index_name
                         )
     
-    print(f"Feature Name: {feature_name}")
-    print(f"Label Name: {label_name}")
-    print(f"Graph Name: {edge_index_name}")
-    
-    # --------------------- Initialize In-Memory Dataset Blob ---------------------
-    dataset_name = config['data']['dataset_name']
-    print(f"Initializing Dataset: {dataset_name}")
-    
-    # set root data directory
-    data_directory_path = config['data']['data_directory_path']
-
     # e.g. normalize features , train-val-test split, etc.
-    data_transform_names = config['data']['transform_names']
-    transform_kwargs = config['data']['transform_kwargs']
-    data_transforms = init_data_transforms(
+    data_transform_names = config['dataset']['transform_names']
+    transform_kwargs = config['dataset']['transform_kwargs']
+    DataTransforms = init_data_transforms(
                         data_transform_names=data_transform_names,
                         **transform_kwargs
                     )
 
     # initialize a composed transform
-    transform = T.Compose([DataKeyTransform] + data_transforms)
+    transform = T.Compose([DataKeyTransform] + DataTransforms)
+
+    # --------------------- Initialize Dataset Blob ---------------------
+    # set root data directory
+    data_directory_path = config['dataset']['data_directory_path']
     
     # initialize pytorch geometric dataset blob stored at:
     # data_directory_path / 'gold' / 'in-memory-PyG-dataset-blob' / dataset_name / 'dataset_blob.pt'
@@ -113,31 +137,52 @@ def main(config: dict):
                         data_directory_path=data_directory_path,
                         transform=transform
                     )
-    
-    # --------------------- Data and Loader ---------------------
-    # NOTE: currently trains one model on one batch of data
-    # Load PyG data object corresponding to batch_idx (e.g. AnnData batch0)
-    batch_idx = config['data']['batch_idx']
+
+    # --------------------- Load Data (one batch) ---------------------
+    # load PyG data object corresponding to batch_idx (e.g. AnnData batch0)
+    # TODO: ensure that the batch_idx is valid from the dataset_blob
     data_batch = dataset_blob[batch_idx]
     # assert data_batch['metadata_batch_id'] == f"batch{batch_idx}", "Batch ID mismatch."
     # print(f"Batch ID: {data_batch['metadata_batch_id']}")
-     
-    # set data loader (currently uses a string, .e.g. 'neighbor')
-    # TODO: Upgrade to support string or custom Callable data loader
-    loader = config['data']['loader']
-    loader_kwargs = config['data']['loader_kwargs']
 
-    # initialize lightning node data module 
+    # --------------------- Initialize Loader and Sampler ---------------------
+    # choose loader_type from ['full', 'neighbor', 'custom']
+    loader_type = config['dataset']['loader_type']
+    loader_kwargs = config['dataset']['loader_kwargs']
+    sampler_name = config['dataset']['sampler_name']
+    sampler_kwargs = config['dataset']['sampler_kwargs']
+    
+    if loader_type == 'full':
+        # batch size is set to 1 to avoid memory issues
+        loader_kwargs['batch_size'] = 1
+        # num_workers is set to 0 to avoid DataLoader issues
+        loader_kwargs['num_workers'] = 0
+        # node_sampler must be set to None
+        node_sampler = None
+        sampler_kwargs = {}
+    elif loader_type == 'neighbor':
+        # Lightning will reset node_sampler to torch_geometric.loader.NeighborSampler and initialize it with the given kwargs
+        node_sampler = None
+        num_workers = max(num_cores // 2, 1)
+        loader_kwargs['num_workers'] = num_workers
+    elif loader_type == 'custom':
+        # set node_sampler to be a callable function of type torch_geometric.sampler.BaseSampler
+        # if sampler_name == 'GraphSAINTSampler':
+            # node_sampler = ...
+        raise NotImplementedError("Custom loader not implemented.")
+    else:
+        raise ValueError(f"Loader type {loader_type} not found.")
+
+    # --------------------- Initialize Lightning DataModule ---------------------
     datamodule_batch = LightningNodeData(
                             data=data_batch,
-                            loader=loader,
-                            **loader_kwargs
+                            loader=loader_type,
+                            node_sampler=node_sampler,
+                            **loader_kwargs,
+                            **sampler_kwargs,
                         )
-    
-    # --------------------- Initialize Model ---------------------    
-    model_name = config['model']['name']
-    print(f"Model: {model_name}")
 
+    # --------------------- Initialize Model ---------------------
     # get model, optimizer, loss, and task parameters
     model_params = config['model']['model_params']
     optimizer_params = config['model']['optimizer_params']
@@ -159,34 +204,32 @@ def main(config: dict):
                 **task_params
             )
 
-    # Log model architecture
+    # log model architecture
     wandb_logger.watch(model)
 
     # --------------------- Initialize Trainer ---------------------
-    # set strategy to Distributed Data Parallel (DDP)
-    accelerator = config['trainer']['accelerator']
-    strategy = pl.strategies.DDPStrategy(accelerator=accelerator)
-
     # configure model checkpointing
-    monitor = config['trainer']['monitor']
-    save_top_k = config['trainer']['save_top_k']
-    mode = config['trainer']['mode']
-    save_last = config['trainer']['save_last']
+    ckpt_log_dir = Path(wandb.run.dir) / 'checkpoints'
+    ckpt_log_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_kwargs = config['trainer']['checkpoint_kwargs']
     checkpoint = pl.callbacks.ModelCheckpoint(
-                    monitor=monitor,
-                    save_top_k=save_top_k,
-                    mode=mode,
-                    save_last=save_last
-                )
+                        dirpath=ckpt_log_dir,
+                        filename='{epoch}-{val_acc:.2f}',
+                        **checkpoint_kwargs
+                        )
     
     # initialize trainer
     max_epochs = config['trainer']['max_epochs']
+    enable_checkpointing = config['trainer']['enable_checkpointing']
     trainer = pl.Trainer(
-                    devices=num_devices,
-                    strategy=strategy,
-                    max_epochs=max_epochs,
-                    callbacks=[checkpoint],
+                    accelerator="auto",
+                    devices="auto",
                     deterministic=True,
+                    logger=wandb_logger,
+                    callbacks=[checkpoint],
+                    strategy="ddp",
+                    max_epochs=max_epochs,
+                    enable_checkpointing=enable_checkpointing,
                 )
     
     # --------------------- Train and Test Model ---------------------
@@ -199,12 +242,30 @@ def main(config: dict):
 
     # test model
     print("Testing Model...")
-    ckpt_path = config['trainer']['ckpt_path']
-    trainer.test(
-        ckpt_path=ckpt_path,
-        datamodule=datamodule_batch
-    )
-
+    test_acc = trainer.test(
+                    ckpt_path=config['trainer']['ckpt_path'],
+                    datamodule=datamodule_batch,      
+                )[0]['test_acc']
+    print(f"Test Accuracy: {test_acc}")
+    
+    # prepare summary for logging
+    summary = {
+                'CPUs': num_cores,
+                'GPUs': num_gpus,
+                'Seed': seed,
+                'Experiment_Name': experiment_name,
+                'Dataset_Name': dataset_name,
+                'Model_Name': model_name,
+                'Batch_Index': batch_idx,
+                'Feature_Name': feature_name,
+                'Label_Name': label_name,
+                'Graph_Name': edge_index_name,
+                'Sampler': sampler_name,
+                'Test_Accuracy': test_acc,
+            }
+    print(summary)
+    
+    wandb.log(summary)
 
 if __name__ == '__main__':
     args = parse_arguments()

@@ -1,9 +1,14 @@
 experiment:
   seed: 0
-  description: Train GraphSAGE on Simulated 10K dataset
+  name: "train_gnn"
 
-data:
-  dataset_name: 'sss2-1b_1p'
+logging:
+  log_dir: '/lustre/scratch126/cellgen/team361/am84/VQNiche/logs'
+  log_model: False
+  offline: True
+
+dataset:
+  name: 'sss2-1b_1p'
   feature_name: 'cell_gene_counts'
   label_name: 'cell_types'
   graph_kwargs: {
@@ -26,12 +31,15 @@ data:
                     'test_ratio': 0.1
                     }
   batch_idx: 0
-  loader: 'neighbor'
+  loader_type: 'neighbor'
   loader_kwargs: {
-                  'num_neighbors': [25, 10],
                   'batch_size': 1024,
-                  'num_workers': 4
                   }
+  sampler_name: NeighborSampler
+  sampler_kwargs: {
+                  'num_neighbors': [25, 10],
+                  }
+
 
 model:
   name: 'GraphSAGE'
@@ -57,10 +65,12 @@ model:
                 }
 
 trainer:
-  accelerator: 'gpu'
-  monitor: 'val_acc'
-  save_top_k: 1
-  mode: 'max'
-  save_last: True
+  checkpoint_kwargs: {
+                  'mode': 'max',
+                  'monitor': 'val_acc',
+                  'save_top_k': 1,
+                  'save_last': True,
+                  }
   max_epochs: 10
+  enable_checkpointing: True
   ckpt_path: 'best'
