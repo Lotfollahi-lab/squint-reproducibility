@@ -44,6 +44,7 @@ def main(config: dict):
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
+    pl.seed_everything(seed)
     
     # Set backend deterministic as true
     torch.backends.cudnn.deterministic = True
@@ -130,7 +131,6 @@ def main(config: dict):
     datamodule_batch = LightningNodeData(
                             data=data_batch,
                             loader=loader,
-                            shuffle=False,
                             **loader_kwargs
                         )
     
@@ -185,7 +185,8 @@ def main(config: dict):
                     devices=num_devices,
                     strategy=strategy,
                     max_epochs=max_epochs,
-                    callbacks=[checkpoint]
+                    callbacks=[checkpoint],
+                    deterministic=True,
                 )
     
     # --------------------- Train and Test Model ---------------------
@@ -209,4 +210,4 @@ if __name__ == '__main__':
     args = parse_arguments()
     config = collect_configs(args)
     
-    main(config)    
+    main(config)

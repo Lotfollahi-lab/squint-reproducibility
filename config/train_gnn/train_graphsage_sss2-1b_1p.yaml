@@ -44,7 +44,7 @@ model:
                 }
   optimizer_params: {
                     'optimizer_name': 'adam',
-                    'lr': 0.1,
+                    'lr': 0.01,
                     'weight_decay': 0.0,
                     }
   loss_params: {
@@ -58,9 +58,9 @@ model:
 
 trainer:
   accelerator: 'gpu'
-  monitor: 'val_loss'
+  monitor: 'val_acc'
   save_top_k: 1
   mode: 'max'
   save_last: True
-  max_epochs: 20
+  max_epochs: 10
   ckpt_path: 'best'
