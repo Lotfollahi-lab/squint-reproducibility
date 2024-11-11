@@ -13,14 +13,14 @@ def main(config: dict):
     print(f"Experiment: {config['experiment']['description']}")
     
     # Configure parameters for creating the InMemoryDatasetBlob
-    dataset_name = config['data']['dataset_name']
-    feature_names = config['data']['feature_names']
-    label_names = config['data']['label_names']
-    graph_kwargs = config['data']['graph_kwargs']
-    data_directory_path = config['data']['data_directory_path']
-    pre_transform = config['data']['pre_transform']
-    pre_filter = config['data']['pre_filter']
-    overwrite = config['data']['overwrite']
+    dataset_name = config['dataset']['name']
+    feature_names = config['dataset']['feature_names']
+    label_names = config['dataset']['label_names']
+    graph_kwargs = config['dataset']['graph_kwargs']
+    data_directory_path = config['dataset']['data_directory_path']
+    pre_transform = config['dataset']['pre_transform']
+    pre_filter = config['dataset']['pre_filter']
+    overwrite = config['dataset']['overwrite']
 
     dataset = InMemoryDatasetBlob(
                     name=dataset_name,
