@@ -6,7 +6,7 @@ We use PyTorch Lightning to support distributed data parallel (DDP) training acr
 It is required that the data has previously been processed and stored as a PyTorch Geometric dataset in the "gold" directory.  and PyG dataset is already processed and saved in the gold data directory.
 
 Usage:
->>> python analysis/train_gnn.py --config config/train_gnn/train_gnn_sss2-1b_1p.yaml
+>>> python analysis/train_gnn.py --config_file config/train_gnn/train_gnn_sss2-1b_1p.yaml
 """
 import os
 import random
@@ -17,12 +17,13 @@ from pathlib import Path
 import torch
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
-from torch_geometric.data.lightning import LightningNodeData
+from pytorch_lightning.profilers import PyTorchProfiler
 import torch_geometric.transforms as T
 
 from vqniche.utils.config_parsers import parse_arguments, collect_configs
 from vqniche.dataloaders.transforms import SetExperimentDataKeys, init_data_transforms
 from vqniche.dataloaders.in_memory_dataset_blob import InMemoryDatasetBlob
+from vqniche.dataloaders.in_memory_datamodule import InMemoryDataModule
 from vqniche.models.graphsage import GraphSAGE
 
 
@@ -145,41 +146,26 @@ def main(config: dict):
     # assert data_batch['metadata_batch_id'] == f"batch{batch_idx}", "Batch ID mismatch."
     # print(f"Batch ID: {data_batch['metadata_batch_id']}")
 
-    # --------------------- Initialize Loader and Sampler ---------------------
-    # choose loader_type from ['full', 'neighbor', 'custom']
-    loader_type = config['dataset']['loader_type']
-    loader_kwargs = config['dataset']['loader_kwargs']
-    sampler_name = config['dataset']['sampler_name']
-    sampler_kwargs = config['dataset']['sampler_kwargs']
-    
-    if loader_type == 'full':
-        # batch size is set to 1 to avoid memory issues
-        loader_kwargs['batch_size'] = 1
-        # num_workers is set to 0 to avoid DataLoader issues
-        loader_kwargs['num_workers'] = 0
-        # node_sampler must be set to None
-        node_sampler = None
-        sampler_kwargs = {}
-    elif loader_type == 'neighbor':
-        # Lightning will reset node_sampler to torch_geometric.loader.NeighborSampler and initialize it with the given kwargs
-        node_sampler = None
-        num_workers = max(num_cores // 2, 1)
-        loader_kwargs['num_workers'] = num_workers
-    elif loader_type == 'custom':
-        # set node_sampler to be a callable function of type torch_geometric.sampler.BaseSampler
-        # if sampler_name == 'GraphSAINTSampler':
-            # node_sampler = ...
-        raise NotImplementedError("Custom loader not implemented.")
-    else:
-        raise ValueError(f"Loader type {loader_type} not found.")
-
     # --------------------- Initialize Lightning DataModule ---------------------
-    datamodule_batch = LightningNodeData(
-                            data=data_batch,
-                            loader=loader_type,
-                            node_sampler=node_sampler,
-                            **loader_kwargs,
-                            **sampler_kwargs,
+    # set parameters for data loader and sampler for training, validation, and testing
+    train_loader_name = config['dataset']['train_loader_name']
+    train_loader_kwargs = config['dataset']['train_loader_kwargs']
+
+    train_sampler_name = config['dataset']['train_sampler_name']
+    train_sampler_kwargs = config['dataset']['train_sampler_kwargs']
+
+    val_loader_name = config['dataset']['val_loader_name']
+    test_loader_name = config['dataset']['test_loader_name']
+
+    datamodule_batch = InMemoryDataModule(
+                            data_batch=data_batch,
+                            num_cores=num_cores,
+                            train_loader_name=train_loader_name,
+                            train_loader_kwargs=train_loader_kwargs,
+                            train_sampler_name=train_sampler_name,
+                            train_sampler_kwargs=train_sampler_kwargs,
+                            val_loader_name=val_loader_name,
+                            test_loader_name=test_loader_name,
                         )
 
     # --------------------- Initialize Model ---------------------
@@ -230,6 +216,7 @@ def main(config: dict):
                     strategy="ddp",
                     max_epochs=max_epochs,
                     enable_checkpointing=enable_checkpointing,
+                    num_sanity_val_steps=0,
                 )
     
     # --------------------- Train and Test Model ---------------------
@@ -247,25 +234,7 @@ def main(config: dict):
                     datamodule=datamodule_batch,      
                 )[0]['test_acc']
     print(f"Test Accuracy: {test_acc}")
-    
-    # prepare summary for logging
-    summary = {
-                'CPUs': num_cores,
-                'GPUs': num_gpus,
-                'Seed': seed,
-                'Experiment_Name': experiment_name,
-                'Dataset_Name': dataset_name,
-                'Model_Name': model_name,
-                'Batch_Index': batch_idx,
-                'Feature_Name': feature_name,
-                'Label_Name': label_name,
-                'Graph_Name': edge_index_name,
-                'Sampler': sampler_name,
-                'Test_Accuracy': test_acc,
-            }
-    print(summary)
-    
-    wandb.log(summary)
+
 
 if __name__ == '__main__':
     args = parse_arguments()

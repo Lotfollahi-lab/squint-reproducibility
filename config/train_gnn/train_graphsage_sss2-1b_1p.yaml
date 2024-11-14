@@ -31,14 +31,17 @@ dataset:
                     'test_ratio': 0.1
                     }
   batch_idx: 0
-  loader_type: 'neighbor'
-  loader_kwargs: {
-                  'batch_size': 1024,
-                  }
-  sampler_name: NeighborSampler
-  sampler_kwargs: {
-                  'num_neighbors': [25, 10],
-                  }
+  train_loader_name: 'DefaultNodeLoader'
+  train_loader_kwargs:  {
+                        'batch_size': 1024,
+                        'shuffle': False,
+                        }
+  train_sampler_name: 'NeighborSampler'
+  train_sampler_kwargs: {
+                         'num_neighbors': [25, 10],
+                        }
+  val_loader_name: 'DefaultNodeLoader'
+  test_loader_name: 'DefaultNodeLoader'
 
 
 model:
