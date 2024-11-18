@@ -9,8 +9,6 @@ Usage:
 >>> python analysis/train_gnn.py --config_file config/train_gnn/train_gnn_sss2-1b_1p.yaml
 """
 import os
-import random
-import numpy as np
 import wandb
 from pathlib import Path
 
@@ -40,12 +38,9 @@ def main(config: dict):
     print(f"Number of GPU devices: {num_gpus}")
     
     # --------------------- Determinism Settings ---------------------
-    seed = config['experiment']['seed']
-
     # Set seed for reproducibility
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    random.seed(seed)
+    seed = config['experiment']['seed']
+    pl.seed_everything(seed)
     
     # Set backend deterministic as true
     torch.backends.cudnn.deterministic = True
@@ -55,40 +50,13 @@ def main(config: dict):
     # --------------------- Define Experiment Parameters ---------------------
     experiment_name = config['experiment']['name']
     dataset_name = config['dataset']['name']
+    batch_idx = config['datamodule']['batch_idx']
     model_name = config['model']['name']
-    batch_idx = config['dataset']['batch_idx']
 
     print(f"Experiment: {experiment_name}")
     print(f"Dataset: {dataset_name}")
-    print(f"Model: {model_name}")
     print(f"Batch: {batch_idx}")
-
-    # --------------------- Set Data Keys ---------------------
-    # decide which node features to use in this experiment
-    feature_name = config['dataset']['feature_name']
-
-    # decide which node labels to use in this experiment
-    label_name = config['dataset']['label_name']
-
-    # decide which edge index to use in this experiment
-    graph_kwargs = config['dataset']['graph_kwargs']
-    spatial_key = graph_kwargs['spatial_key']
-    delaunay = graph_kwargs['delaunay']
-    radii = graph_kwargs['radii']
-    assert delaunay or len(radii) >= 1, "Either `delaunay` or `radii` must be provided."
-    if delaunay:
-        edge_index_name = f"{spatial_key}_delaunay"
-    else:
-        radius = radii[0] # only supports using the first radius
-        delaunay_radius_union = graph_kwargs['delaunay_radius_union']
-        if delaunay_radius_union:
-            edge_index_name = f"{spatial_key}_delaunay_radius_{radius}"
-        else:
-            edge_index_name = f"{spatial_key}_radius_{radius}"
-
-    print(f"Feature Name: {feature_name}")
-    print(f"Label Name: {label_name}")
-    print(f"Graph Name: {edge_index_name}")
+    print(f"Model: {model_name}")
 
     # --------------------- Wandb and Logger ---------------------
     # set logging directory
@@ -98,7 +66,10 @@ def main(config: dict):
     # configure PyTorch Lightning Logger parameters
     log_model = config['logging']['log_model']
     offline = config['logging']['offline']
-    wandb_tags = [experiment_name, dataset_name, model_name, f"batch{batch_idx}"]
+    wandb_tags = [experiment_name,
+                  dataset_name,
+                  model_name,
+                  f"batch{batch_idx}"]
     
     # initialize wandb logger
     wandb_logger = WandbLogger(
@@ -108,6 +79,33 @@ def main(config: dict):
                         offline=offline,
                         tags=wandb_tags,
                     )
+    
+    # --------------------- Set Data Keys ---------------------
+    # decide which node features to use in this experiment
+    feature_name = config['dataset']['feature_name']
+
+    # decide which node labels to use in this experiment
+    label_name = config['dataset']['label_name']
+
+    # decide which edge index to use in this experiment
+    graph_params = config['dataset']['graph_params']
+    spatial_key = graph_params['spatial_key']
+    delaunay = graph_params['delaunay']
+    radii = graph_params['radii']
+    assert delaunay or len(radii) >= 1, "Either `delaunay` or `radii` must be provided."
+    if delaunay:
+        edge_index_name = f"{spatial_key}_delaunay"
+    else:
+        radius = radii[0] # only supports using the first radius
+        delaunay_radius_union = graph_params['delaunay_radius_union']
+        if delaunay_radius_union:
+            edge_index_name = f"{spatial_key}_delaunay_radius_{radius}"
+        else:
+            edge_index_name = f"{spatial_key}_radius_{radius}"
+
+    print(f"Feature Name: {feature_name}")
+    print(f"Label Name: {label_name}")
+    print(f"Graph Name: {edge_index_name}")
 
     # --------------------- Initialize Dataset Transforms ---------------------
     DataKeyTransform = SetExperimentDataKeys(
@@ -148,24 +146,26 @@ def main(config: dict):
 
     # --------------------- Initialize Lightning DataModule ---------------------
     # set parameters for data loader and sampler for training, validation, and testing
-    train_loader_name = config['dataset']['train_loader_name']
-    train_loader_kwargs = config['dataset']['train_loader_kwargs']
+    train_loader_name = config['datamodule']['train_loader_name']
+    train_loader_params = config['datamodule']['train_loader_params']
 
-    train_sampler_name = config['dataset']['train_sampler_name']
-    train_sampler_kwargs = config['dataset']['train_sampler_kwargs']
+    train_sampler_name = config['datamodule']['train_sampler_name']
+    train_sampler_params = config['datamodule']['train_sampler_params']
 
-    val_loader_name = config['dataset']['val_loader_name']
-    test_loader_name = config['dataset']['test_loader_name']
+    val_loader_name = config['datamodule']['val_loader_name']
+    test_loader_name = config['datamodule']['test_loader_name']
+    inference_params = config['datamodule']['inference_params']
 
     datamodule_batch = InMemoryDataModule(
-                            data_batch=data_batch,
                             num_cores=num_cores,
+                            data=data_batch,
                             train_loader_name=train_loader_name,
-                            train_loader_kwargs=train_loader_kwargs,
+                            **train_loader_params,
                             train_sampler_name=train_sampler_name,
-                            train_sampler_kwargs=train_sampler_kwargs,
+                            **train_sampler_params,
                             val_loader_name=val_loader_name,
                             test_loader_name=test_loader_name,
+                            **inference_params,
                         )
 
     # --------------------- Initialize Model ---------------------
@@ -174,6 +174,7 @@ def main(config: dict):
     optimizer_params = config['model']['optimizer_params']
     loss_params = config['model']['loss_params']
     task_params = config['model']['task_params']
+    train_params = config['model']['train_params']
 
     # initialize model 
     if model_name == 'GraphSAGE':
@@ -187,7 +188,8 @@ def main(config: dict):
                 **model_params,
                 **optimizer_params,
                 **loss_params,
-                **task_params
+                **task_params,
+                **train_params,
             )
 
     # log model architecture

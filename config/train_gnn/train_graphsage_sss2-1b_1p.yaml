@@ -11,7 +11,7 @@ dataset:
   name: 'sss2-1b_1p'
   feature_name: 'cell_gene_counts'
   label_name: 'cell_types'
-  graph_kwargs: {
+  graph_params: {
                 'coord_type': 'generic',
                 'spatial_key': 'spatial',
                 'delaunay': True,
@@ -25,24 +25,28 @@ dataset:
                   'NormalizeFeatures',
                   'RandomNodeSplit'
                   ]
-  transform_kwargs: {
+  transform_params: {
                     'norm_method': 'read_depth',
                     'val_ratio': 0.1,
                     'test_ratio': 0.1
                     }
+
+datamodule:
   batch_idx: 0
   train_loader_name: 'DefaultNodeLoader'
-  train_loader_kwargs:  {
+  train_loader_params:  {
                         'batch_size': 1024,
                         'shuffle': False,
                         }
   train_sampler_name: 'NeighborSampler'
-  train_sampler_kwargs: {
+  train_sampler_params: {
                          'num_neighbors': [25, 10],
                         }
-  val_loader_name: 'DefaultNodeLoader'
-  test_loader_name: 'DefaultNodeLoader'
-
+  val_loader_name: 'NeighborLoader'
+  test_loader_name: 'NeighborLoader'
+  inference_params: {
+                    'use_full_graph_for_inference': True,
+                    }
 
 model:
   name: 'GraphSAGE'
@@ -57,7 +61,7 @@ model:
                     'optimizer_name': 'adam',
                     'lr': 0.01,
                     'weight_decay': 0.0,
-                    }
+                    } 
   loss_params: {
                 'loss_names': ['cross_entropy'],
                 'loss_kwargs': {'reduction': 'mean'}
@@ -66,9 +70,14 @@ model:
                 'task_name': 'multiclass',
                 'task_kwargs': {}
                 }
+  inference_params: {
+                    # 'inference_mode': 'batch-wise',
+                    'inference_mode': 'layer-wise',
+                    }
+
 
 trainer:
-  checkpoint_kwargs: {
+  checkpoint_params: {
                   'mode': 'max',
                   'monitor': 'val_acc',
                   'save_top_k': 1,
