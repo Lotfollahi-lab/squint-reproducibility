@@ -116,10 +116,10 @@ def main(config: dict):
     
     # e.g. normalize features , train-val-test split, etc.
     data_transform_names = config['dataset']['transform_names']
-    transform_kwargs = config['dataset']['transform_kwargs']
+    transform_params = config['dataset']['transform_params']
     DataTransforms = init_data_transforms(
                         data_transform_names=data_transform_names,
-                        **transform_kwargs
+                        **transform_params
                     )
 
     # initialize a composed transform
@@ -174,7 +174,7 @@ def main(config: dict):
     optimizer_params = config['model']['optimizer_params']
     loss_params = config['model']['loss_params']
     task_params = config['model']['task_params']
-    train_params = config['model']['train_params']
+    inference_params = config['model']['inference_params']
 
     # initialize model 
     if model_name == 'GraphSAGE':
@@ -189,7 +189,7 @@ def main(config: dict):
                 **optimizer_params,
                 **loss_params,
                 **task_params,
-                **train_params,
+                **inference_params,
             )
 
     # log model architecture
@@ -199,11 +199,11 @@ def main(config: dict):
     # configure model checkpointing
     ckpt_log_dir = Path(wandb.run.dir) / 'checkpoints'
     ckpt_log_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_kwargs = config['trainer']['checkpoint_kwargs']
+    checkpoint_params = config['trainer']['checkpoint_params']
     checkpoint = pl.callbacks.ModelCheckpoint(
                         dirpath=ckpt_log_dir,
                         filename='{epoch}-{val_acc:.2f}',
-                        **checkpoint_kwargs
+                        **checkpoint_params
                         )
     
     # initialize trainer
