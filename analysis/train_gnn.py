@@ -6,9 +6,10 @@ We use PyTorch Lightning to support distributed data parallel (DDP) training acr
 It is required that the data has previously been processed and stored as a PyTorch Geometric dataset in the "gold" directory.  and PyG dataset is already processed and saved in the gold data directory.
 
 Usage:
->>> python analysis/train_gnn.py --config_file config/train_gnn/train_gnn_sss2-1b_1p.yaml
+>>> python analysis/train_gnn.py --config_file config/train_gnn/sss2-1b_1p.yaml
 """
 import os
+import tracemalloc
 import wandb
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from pytorch_lightning.profilers import PyTorchProfiler
 import torch_geometric.transforms as T
 
 from vqniche.utils.config_parsers import parse_arguments, collect_configs
+from vqniche.preprocessors.graph_constructors import set_edge_index_name
 from vqniche.dataloaders.transforms import SetExperimentDataKeys, init_data_transforms
 from vqniche.dataloaders.in_memory_dataset_blob import InMemoryDatasetBlob
 from vqniche.dataloaders.in_memory_datamodule import InMemoryDataModule
@@ -91,17 +93,17 @@ def main(config: dict):
     graph_params = config['dataset']['graph_params']
     spatial_key = graph_params['spatial_key']
     delaunay = graph_params['delaunay']
-    radii = graph_params['radii']
-    assert delaunay or len(radii) >= 1, "Either `delaunay` or `radii` must be provided."
-    if delaunay:
-        edge_index_name = f"{spatial_key}_delaunay"
-    else:
-        radius = radii[0] # only supports using the first radius
-        delaunay_radius_union = graph_params['delaunay_radius_union']
-        if delaunay_radius_union:
-            edge_index_name = f"{spatial_key}_delaunay_radius_{radius}"
-        else:
-            edge_index_name = f"{spatial_key}_radius_{radius}"
+    n_neighs = graph_params['n_neighs']
+    radius = graph_params['radius']
+
+    assert delaunay or n_neighs or radius, "Specify at least one of delaunay, n_neighs, or radius."
+
+    edge_index_name = set_edge_index_name(
+                        spatial_key=spatial_key,
+                        delaunay=delaunay,
+                        n_neighs=n_neighs,
+                        radius=radius,
+                    )
 
     print(f"Feature Name: {feature_name}")
     print(f"Label Name: {label_name}")
@@ -125,6 +127,7 @@ def main(config: dict):
     # initialize a composed transform
     transform = T.Compose([DataKeyTransform] + DataTransforms)
 
+    tracemalloc.start()
     # --------------------- Initialize Dataset Blob ---------------------
     # set root data directory
     data_directory_path = config['dataset']['data_directory_path']
@@ -144,6 +147,9 @@ def main(config: dict):
     # assert data_batch['metadata_batch_id'] == f"batch{batch_idx}", "Batch ID mismatch."
     # print(f"Batch ID: {data_batch['metadata_batch_id']}")
 
+    current, peak = tracemalloc.get_traced_memory()
+    print(f"Current memory usage after loading data_batch is {current / 10**6}MB")
+    print(f"Peak memory usage during data loading was {peak / 10**6}MB.")
     # --------------------- Initialize Lightning DataModule ---------------------
     # set parameters for data loader and sampler for training, validation, and testing
     train_loader_name = config['datamodule']['train_loader_name']
