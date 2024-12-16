@@ -15,9 +15,8 @@ dataset:
                 'coord_type': 'generic',
                 'spatial_key': 'spatial',
                 'delaunay': True,
-                'radii': [],
-                'delaunay_radius_union': False,
-                'set_diag': True
+                'n_neighs': null,
+                'radius': null,
                 }
   data_directory_path: '/lustre/scratch126/cellgen/team361/DATASETS'
   overwrite: False
