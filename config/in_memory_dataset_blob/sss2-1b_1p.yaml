@@ -15,8 +15,8 @@ dataset:
   graph_kwargs: {
                 'coord_type': 'generic',
                 'spatial_key': 'spatial',
-                'n_neighs_list': [10, 20, 30],
-                'radius_list': [27.5, 55.0],
+                'n_neighs_list': [4, 10],
+                'radius_list': [27.5],
                 'include_self_loop': True,
                 }
   data_directory_path: "/lustre/scratch126/cellgen/team361/DATASETS"
