@@ -69,19 +69,24 @@ def main(config: dict):
     # configure PyTorch Lightning Logger parameters
     log_model = config['logging']['log_model']
     offline = config['logging']['offline']
-    wandb_tags = [experiment_name,
-                  dataset_name,
-                  model_name,
-                  f"batch{batch_idx}"]
+    wandb_tags = [
+                    experiment_name,
+                    dataset_name,
+                    model_name,
+                    f"batch{batch_idx}"
+                ]
     
     # initialize wandb logger
-    wandb_logger = WandbLogger(
-                        project="VQNiche",
-                        save_dir=log_dir,
-                        log_model=log_model,
-                        offline=offline,
-                        tags=wandb_tags,
-                    )
+    if config['logging']['mode'] == 'disabled':
+        wandb_logger = None
+    elif config['logging']['mode'] == 'enabled':
+        wandb_logger = WandbLogger(
+                            project="VQNiche",
+                            save_dir=log_dir,
+                            log_model=log_model,
+                            offline=offline,
+                            tags=wandb_tags,
+                        )
     
     # --------------------- Set Data Keys ---------------------
     # decide which node features to use in this experiment
@@ -111,7 +116,7 @@ def main(config: dict):
     print(f"Graph Name: {edge_index_name}")
 
     # --------------------- Initialize Dataset Transforms ---------------------
-    DataKeyTransform = SetExperimentDataKeys(
+    ExperimentDataKeys = SetExperimentDataKeys(
                             feature_name=feature_name,
                             label_name=label_name,
                             edge_index_name=edge_index_name
@@ -126,7 +131,7 @@ def main(config: dict):
                     )
 
     # initialize a composed transform
-    transform = T.Compose([DataKeyTransform] + DataTransforms)
+    transforms = T.Compose([ExperimentDataKeys] + DataTransforms)
 
     tracemalloc.start()
     # --------------------- Initialize Dataset Blob ---------------------
@@ -138,15 +143,19 @@ def main(config: dict):
     dataset_blob = InMemoryDatasetBlob(
                         name=dataset_name,
                         data_directory_path=data_directory_path,
-                        transform=transform
+                        transform=transforms
                     )
 
     # --------------------- Load Data (one batch) ---------------------
     # load PyG data object corresponding to batch_idx (e.g. AnnData batch0)
     # TODO: ensure that the batch_idx is valid from the dataset_blob
     data_batch = dataset_blob[batch_idx]
-    # assert data_batch['metadata_batch_id'] == f"batch{batch_idx}", "Batch ID mismatch."
-    # print(f"Batch ID: {data_batch['metadata_batch_id']}")
+    print(f"Data Batch: {data_batch}")
+    print(data_batch.train_mask)
+    print(data_batch.val_mask)
+    print(data_batch.test_mask)
+    # assert data_batch['batch'] == f"batch{batch_idx+1}", "Batch ID mismatch."
+    # print(f"Batch ID: {data_batch['batch']}")
 
     current, peak = tracemalloc.get_traced_memory()
     print(f"Current memory usage after loading data_batch is {current / 10**6}MB")
@@ -167,9 +176,9 @@ def main(config: dict):
                             num_cores=num_cores,
                             data=data_batch,
                             train_loader_name=train_loader_name,
-                            **train_loader_params,
+                            train_loader_params=train_loader_params,
                             train_sampler_name=train_sampler_name,
-                            **train_sampler_params,
+                            train_sampler_params=train_sampler_params,
                             val_loader_name=val_loader_name,
                             test_loader_name=test_loader_name,
                             **inference_params,
@@ -202,7 +211,8 @@ def main(config: dict):
             )
 
     # log model architecture
-    wandb_logger.watch(model)
+    if wandb_logger is not None:
+        wandb_logger.watch(model)
 
     # --------------------- Initialize Trainer ---------------------
     # configure model checkpointing
