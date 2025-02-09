@@ -4,6 +4,7 @@ This script creates an InMemoryDatasetBlob for use in training GNN-style models.
 Usage:
 >>> python analysis/create_in_memory_dataset_blob.py --config_file config/in_memory_dataset_blob/sss2-1b_1p.yaml
 """
+import scanpy as sc
 
 from vqniche.dataloaders.in_memory_dataset_blob import InMemoryDatasetBlob
 from vqniche.utils.config_parsers import parse_arguments, collect_configs
@@ -22,7 +23,7 @@ def main(config: dict):
     pre_filter = config['dataset']['pre_filter']
     overwrite = config['dataset']['overwrite']
 
-    dataset = InMemoryDatasetBlob(
+    dataset_blob = InMemoryDatasetBlob(
                     name=dataset_name,
                     feature_names=feature_names,
                     label_names=label_names,
@@ -32,8 +33,13 @@ def main(config: dict):
                     pre_filter=pre_filter,
                     overwrite=overwrite
                 )
-
-    print(f"Processed data saved at {dataset.processed_dir}")
+    
+    for data_batch in dataset_blob:
+        print(f"Batch: {data_batch.batch}")
+        print(f"Data: {data_batch}")
+        print("")
+    
+    print(f"Processed data saved at {dataset_blob.processed_dir}")
 
 
 if __name__ == '__main__':
