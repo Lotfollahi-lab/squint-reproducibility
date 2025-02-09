@@ -15,7 +15,7 @@ dataset:
   graph_kwargs: {
                 'coord_type': 'generic',
                 'spatial_key': 'spatial',
-                'n_neighs_list': [4, 10],
+                'n_neighs_list': [4, 7, 10, 12],
                 'radius_list': [27.5],
                 'include_self_loop': True,
                 }
