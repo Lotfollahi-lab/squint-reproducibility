@@ -34,8 +34,7 @@ dataset:
 
 datamodule:
   batch_idx: 0
-  loader_name: 'DefaultNodeLoader'
-  # loader_name: 'NeighborLoader'
+  loader_name: 'NeighborLoader'
   loader_params:  {
                         'batch_size': 1024,
                         }
