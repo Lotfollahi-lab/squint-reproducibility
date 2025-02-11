@@ -6,7 +6,7 @@ We use PyTorch Lightning to support distributed data parallel (DDP) training acr
 It is required that the data has previously been processed and stored as a PyTorch Geometric dataset in the "gold" directory.  and PyG dataset is already processed and saved in the gold data directory.
 
 Usage:
->>> python analysis/train_gnn.py --config_file config/train_gnn/sss2-1b_1p.yaml
+>>> python analysis/train_gnn.py --config_file config/train_models/sss2-1b_1p_graphsage.yaml
 """
 import os
 import tracemalloc
@@ -25,6 +25,7 @@ from vqniche.dataloaders.transforms import SetExperimentDataKeys, init_data_tran
 from vqniche.dataloaders.in_memory_dataset_blob import InMemoryDatasetBlob
 from vqniche.dataloaders.in_memory_datamodule import InMemoryDataModule
 from vqniche.models.graphsage import GraphSAGE
+from vqniche.models.vqgraph import VQGraph
 
 
 def main(config: dict):
@@ -185,6 +186,8 @@ def main(config: dict):
     # initialize model 
     if model_name == 'GraphSAGE':
         Model = GraphSAGE
+    elif model_name == 'VQGraph':
+        Model = VQGraph
     else:
         raise ValueError(f"Model {model_name} not found.")
     model = Model(
@@ -221,10 +224,11 @@ def main(config: dict):
                     deterministic=True,
                     logger=wandb_logger,
                     callbacks=[checkpoint],
-                    strategy="ddp",
+                    strategy="ddp_find_unused_parameters_true",
                     max_epochs=max_epochs,
                     enable_checkpointing=enable_checkpointing,
                     num_sanity_val_steps=0,
+                    enable_progress_bar=False,
                 )
     
     # --------------------- Train and Test Model ---------------------
