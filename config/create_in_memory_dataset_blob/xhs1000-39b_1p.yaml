@@ -1,0 +1,33 @@
+experiment:
+  name: in_memory_dataset_blob
+  description: Xenium Human Skin | 39 batches | 1 panel
+
+dataset:
+  name: xhs1000-39b_1p
+
+  feature_names: 
+    - cell_gene_counts
+
+  label_names: 
+    - cell_type
+    - niche_type
+
+  graph_kwargs:
+    coord_type: generic
+    spatial_key: spatial
+    n_neighs_list: 
+      - 4
+      - 7
+      - 10
+      - 12
+    radius_list:
+      - 27.5
+    include_self_loop: true
+
+  data_directory_path: /lustre/scratch126/cellgen/team361/DATASETS
+
+  pre_transform: null
+
+  pre_filter: null
+
+  overwrite: true

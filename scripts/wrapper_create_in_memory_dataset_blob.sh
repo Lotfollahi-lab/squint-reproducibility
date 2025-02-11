@@ -1,0 +1,60 @@
+GROUP="team361"
+
+# Set the experiment parameters
+EXPERIMENT_NAME="create_in_memory_dataset_blob"
+DATASET_NAME="${1:-sss2-1b_1p}"
+
+SCRIPT="scripts/${EXPERIMENT_NAME}.sh"
+LOG_DIR="logs/${DATASET_NAME}/${EXPERIMENT_NAME}"
+CONFIG_FILE="config/${EXPERIMENT_NAME}/${DATASET_NAME}.yaml"
+JOB_NAME="${EXPERIMENT_NAME}_${DATASET_NAME}"
+
+echo "Log directory: ${LOG_DIR}"
+
+case $DATASET_NAME in
+    mmb0-4b_1p)
+        RAM="25G"
+        TIME="0:30"
+        CORES=1
+        QUEUE="normal"
+        ;;
+    sss2-1b_1p)
+        RAM="10G"
+        TIME="0:30"
+        CORES=1
+        QUEUE="normal"
+        ;;
+    xhs1000-39b_1p)
+        RAM="40G"
+        TIME="0:30"
+        CORES=4
+        QUEUE="normal"
+        ;;
+    *)
+        echo "Invalid dataset name"
+        exit 1
+        ;;
+esac
+
+# If not provided, use the default value
+CORES="${2:-$CORES}"
+QUEUE="${3:-$QUEUE}"
+
+# Set the output and error log files
+mkdir -p "${LOG_DIR}"
+OUTPUT_FILE="${LOG_DIR}/${CORES}_${QUEUE}_%J.out"
+ERROR_FILE="${LOG_DIR}/${CORES}_${QUEUE}_%J.err"
+
+echo "Creating an in-memory Dataset-Blob of ${DATASET_NAME} using ${CORES} cores..."
+
+bsub \
+    -G "${GROUP}" \
+    -n "${CORES}" \
+    -q "${QUEUE}" \
+    -M "${RAM}" -R "select[mem>${RAM}] rusage[mem=${RAM}]" \
+    -W "${TIME}" \
+    -cwd "${CWD}" \
+    -o "${OUTPUT_FILE}" \
+    -e "${ERROR_FILE}" \
+    -J "${JOB_NAME}" \
+    "${SCRIPT}" "${CONFIG_FILE}"

@@ -2,10 +2,8 @@
 This script creates an InMemoryDatasetBlob for use in training GNN-style models. We use this to convert the preprocessed (silver) AnnData batches into a collection of PyG Data objects with various features, labels, and edge indices. This collection of Data objects is then saved to disk in the "gold" directory as a single PyTorch Geometric Dataset.
 
 Usage:
->>> python analysis/create_in_memory_dataset_blob.py --config_file config/in_memory_dataset_blob/sss2-1b_1p.yaml
+>>> python analysis/create_in_memory_dataset_blob.py --config_file config/create_in_memory_dataset_blob/sss2-1b_1p.yaml
 """
-import scanpy as sc
-
 from vqniche.dataloaders.in_memory_dataset_blob import InMemoryDatasetBlob
 from vqniche.utils.config_parsers import parse_arguments, collect_configs
 
@@ -13,7 +11,7 @@ from vqniche.utils.config_parsers import parse_arguments, collect_configs
 def main(config: dict):
     print(f"Experiment: {config['experiment']['description']}")
     
-    # Configure parameters for creating the InMemoryDatasetBlob
+    # configure parameters for creating the InMemoryDatasetBlob
     dataset_name = config['dataset']['name']
     feature_names = config['dataset']['feature_names']
     label_names = config['dataset']['label_names']
@@ -23,6 +21,7 @@ def main(config: dict):
     pre_filter = config['dataset']['pre_filter']
     overwrite = config['dataset']['overwrite']
 
+    # initialize InMemoryDatasetBlob
     dataset_blob = InMemoryDatasetBlob(
                     name=dataset_name,
                     feature_names=feature_names,
