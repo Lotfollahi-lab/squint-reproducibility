@@ -6,6 +6,8 @@ logging:
   log_dir: '/lustre/scratch126/cellgen/team361/am84/VQNiche/logs'
   log_model: False
   offline: True
+  # mode: 'disabled' 
+  mode: 'enabled'
 
 dataset:
   name: 'sss2-1b_1p'
@@ -32,17 +34,15 @@ dataset:
 
 datamodule:
   batch_idx: 0
-  train_loader_name: 'DefaultNodeLoader'
-  train_loader_params:  {
+  # loader_name: 'DefaultNodeLoader'
+  loader_name: 'NeighborLoader'
+  loader_params:  {
                         'batch_size': 1024,
-                        'shuffle': False,
                         }
-  train_sampler_name: 'NeighborSampler'
-  train_sampler_params: {
+  sampler_name: 'NeighborSampler'
+  sampler_params: {
                          'num_neighbors': [25, 10],
                         }
-  val_loader_name: 'NeighborLoader'
-  test_loader_name: 'NeighborLoader'
   inference_params: {
                     'use_full_graph_for_inference': True,
                     }
@@ -82,6 +82,6 @@ trainer:
                   'save_top_k': 1,
                   'save_last': True,
                   }
-  max_epochs: 10
+  max_epochs: 3
   enable_checkpointing: True
   ckpt_path: 'best'

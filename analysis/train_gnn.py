@@ -58,7 +58,7 @@ def main(config: dict):
 
     print(f"Experiment: {experiment_name}")
     print(f"Dataset: {dataset_name}")
-    print(f"Batch: {batch_idx}")
+    print(f"Batch(es): {batch_idx}")
     print(f"Model: {model_name}")
 
     # --------------------- Wandb and Logger ---------------------
@@ -162,25 +162,20 @@ def main(config: dict):
     print(f"Peak memory usage during data loading was {peak / 10**6}MB.")
     # --------------------- Initialize Lightning DataModule ---------------------
     # set parameters for data loader and sampler for training, validation, and testing
-    train_loader_name = config['datamodule']['train_loader_name']
-    train_loader_params = config['datamodule']['train_loader_params']
+    loader_name = config['datamodule']['loader_name']
+    loader_params = config['datamodule']['loader_params']
 
-    train_sampler_name = config['datamodule']['train_sampler_name']
-    train_sampler_params = config['datamodule']['train_sampler_params']
+    sampler_name = config['datamodule']['sampler_name']
+    sampler_params = config['datamodule']['sampler_params']
 
-    val_loader_name = config['datamodule']['val_loader_name']
-    test_loader_name = config['datamodule']['test_loader_name']
     inference_params = config['datamodule']['inference_params']
 
     datamodule_batch = InMemoryDataModule(
-                            num_cores=num_cores,
                             data=data_batch,
-                            train_loader_name=train_loader_name,
-                            train_loader_params=train_loader_params,
-                            train_sampler_name=train_sampler_name,
-                            train_sampler_params=train_sampler_params,
-                            val_loader_name=val_loader_name,
-                            test_loader_name=test_loader_name,
+                            loader_name=loader_name,
+                            loader_params=loader_params,
+                            sampler_name=sampler_name,
+                            sampler_params=sampler_params,
                             **inference_params,
                         )
 
