@@ -52,9 +52,9 @@ def main(config: dict):
 
     # --------------------- Define Experiment Parameters ---------------------
     experiment_name = config['experiment']['name']
-    dataset_name = config['dataset']['name']
+    dataset_name = config['dataset']['dataset_name']
     batch_idx = config['datamodule']['batch_idx']
-    model_name = config['model']['name']
+    model_name = config['model']['model_name']
 
     print(f"Experiment: {experiment_name}")
     print(f"Dataset: {dataset_name}")
@@ -181,7 +181,10 @@ def main(config: dict):
 
     # --------------------- Initialize Model ---------------------
     # get model, optimizer, loss, and task parameters
-    model_params = config['model']['model_params']
+    model_name = config['model']['model_name']
+    encoder_name = config['model']['encoder_name']
+    predictor_name = config['model']['predictor_name']
+    encoder_params = config['model']['encoder_params']
     optimizer_params = config['model']['optimizer_params']
     loss_params = config['model']['loss_params']
     task_params = config['model']['task_params']
@@ -195,10 +198,12 @@ def main(config: dict):
     else:
         raise ValueError(f"Model {model_name} not found.")
     model = Model(
-                name=model_name,                
+                model_name=model_name,
+                encoder_name=encoder_name,
+                predictor_name=predictor_name,
                 in_channels=data_batch.num_features,
                 out_channels=data_batch.num_classes,
-                **model_params,
+                **encoder_params,
                 **optimizer_params,
                 **loss_params,
                 **task_params,
