@@ -4,10 +4,8 @@ experiment:
 
 logging:
   log_dir: '/lustre/scratch126/cellgen/team361/am84/VQNiche/logs'
-  log_model: False
-  offline: True
-  # mode: 'disabled' 
-  mode: 'enabled'
+  log_model: false
+  offline: true
 
 dataset:
   dataset_name: sss2-1b_1p
@@ -16,17 +14,15 @@ dataset:
   graph_params:
     coord_type: generic
     spatial_key: spatial
-    delaunay: true
-    n_neighs: null
+    delaunay: false
+    n_neighs: 4
     radius: null
 
   data_directory_path: /lustre/scratch126/cellgen/team361/DATASETS
   overwrite: False
   transform_names:
-    - NormalizeFeatures
     - RandomNodeSplit
   transform_params:
-    norm_method: read_depth
     val_ratio: 0.1
     test_ratio: 0.1
 
@@ -48,7 +44,7 @@ model:
 
   encoder_params:
     graphconv_layer_name: SAGEConv
-    hidden_channels: 64
+    hidden_channels: 256
     num_layers: 2
     act_first: true
     activation: relu
@@ -70,13 +66,14 @@ model:
 
   optimizer_params:
     optimizer_name: adam
-    lr: 0.02
+    lr: 0.04
     weight_decay: 0.0001
 
   loss_params:
     loss_names:
       - cross_entropy
-      - vqgraph_attribute_reconstruction
+      # - vqgraph_attribute_reconstruction
+      # - negative_binomial_attribute_reconstruction
       # - vqgraph_adjacency_reconstruction
       - vqgraph_commitment_loss
       - vqgraph_codebook_loss

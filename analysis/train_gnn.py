@@ -66,27 +66,20 @@ def main(config: dict):
     log_dir = Path(config['logging']['log_dir']) / dataset_name / experiment_name
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # configure PyTorch Lightning Logger parameters
-    log_model = config['logging']['log_model']
-    offline = config['logging']['offline']
+    # initialize wandb logger
     wandb_tags = [
                     experiment_name,
                     dataset_name,
                     model_name,
                     f"batch{batch_idx}"
-                ]
-    
-    # initialize wandb logger
-    if config['logging']['mode'] == 'disabled':
-        wandb_logger = None
-    elif config['logging']['mode'] == 'enabled':
-        wandb_logger = WandbLogger(
-                            project="VQNiche",
-                            save_dir=log_dir,
-                            log_model=log_model,
-                            offline=offline,
-                            tags=wandb_tags,
-                        )
+                ]    
+    wandb_logger = WandbLogger(
+                        project="VQNiche",
+                        save_dir=log_dir,
+                        log_model=config['logging']['log_model'],
+                        offline=config['logging']['offline'],
+                        tags=wandb_tags,
+                    )
     
     # --------------------- Set Data Keys ---------------------
     # decide which node features to use in this experiment
