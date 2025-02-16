@@ -72,15 +72,17 @@ model:
   loss_params:
     loss_names:
       - cross_entropy
-      # - vqgraph_attribute_reconstruction
-      # - negative_binomial_attribute_reconstruction
-      # - vqgraph_adjacency_reconstruction
-      - vqgraph_commitment_loss
-      - vqgraph_codebook_loss
+      # - mse_attribute_reconstruction
+      # - nb_attribute_reconstruction
+      # - mse_adjacency_reconstruction
+      - mse_commitment_loss
+      - l2_codebook_loss
     loss_kwargs:
-      reduction: mean
-      scaling_node_gamma: 0.1
-      scaling_edge_gamma: 0.1
+      wt_cross_entropy: 1.0
+      wt_attr_reconstr: 0.1
+      distribution: 'nb' # for negative_binomial_attribute_reconstruction
+      dispersion_theta: 1.0 # for negative_binomial_attribute_reconstruction
+      wt_adj_reconstr: 0.1
       commitment_weight: 0.25
       codebook_reg_weight: 0.2
 

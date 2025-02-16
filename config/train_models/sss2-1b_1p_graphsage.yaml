@@ -63,7 +63,7 @@ model:
     loss_names:
       - cross_entropy
     loss_kwargs:
-      reduction: mean
+      wt_cross_entropy: 1.0
 
   task_params:
     task_name: multiclass
