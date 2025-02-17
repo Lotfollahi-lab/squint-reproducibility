@@ -52,13 +52,13 @@ def main(config: dict):
 
     # --------------------- Define Experiment Parameters ---------------------
     experiment_name = config['experiment']['name']
-    dataset_name = config['dataset']['name']
+    dataset_name = config['dataset']['dataset_name']
     batch_idx = config['datamodule']['batch_idx']
-    model_name = config['model']['name']
+    model_name = config['model']['model_name']
 
     print(f"Experiment: {experiment_name}")
     print(f"Dataset: {dataset_name}")
-    print(f"Batch: {batch_idx}")
+    print(f"Batch(es): {batch_idx}")
     print(f"Model: {model_name}")
 
     # --------------------- Wandb and Logger ---------------------
@@ -66,20 +66,18 @@ def main(config: dict):
     log_dir = Path(config['logging']['log_dir']) / dataset_name / experiment_name
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # configure PyTorch Lightning Logger parameters
-    log_model = config['logging']['log_model']
-    offline = config['logging']['offline']
-    wandb_tags = [experiment_name,
-                  dataset_name,
-                  model_name,
-                  f"batch{batch_idx}"]
-    
     # initialize wandb logger
+    wandb_tags = [
+                    experiment_name,
+                    dataset_name,
+                    model_name,
+                    f"batch{batch_idx}"
+                ]    
     wandb_logger = WandbLogger(
                         project="VQNiche",
                         save_dir=log_dir,
-                        log_model=log_model,
-                        offline=offline,
+                        log_model=config['logging']['log_model'],
+                        offline=config['logging']['offline'],
                         tags=wandb_tags,
                     )
     
@@ -111,7 +109,7 @@ def main(config: dict):
     print(f"Graph Name: {edge_index_name}")
 
     # --------------------- Initialize Dataset Transforms ---------------------
-    DataKeyTransform = SetExperimentDataKeys(
+    ExperimentDataKeys = SetExperimentDataKeys(
                             feature_name=feature_name,
                             label_name=label_name,
                             edge_index_name=edge_index_name
@@ -126,7 +124,7 @@ def main(config: dict):
                     )
 
     # initialize a composed transform
-    transform = T.Compose([DataKeyTransform] + DataTransforms)
+    transforms = T.Compose([ExperimentDataKeys] + DataTransforms)
 
     tracemalloc.start()
     # --------------------- Initialize Dataset Blob ---------------------
@@ -138,46 +136,48 @@ def main(config: dict):
     dataset_blob = InMemoryDatasetBlob(
                         name=dataset_name,
                         data_directory_path=data_directory_path,
-                        transform=transform
+                        transform=transforms
                     )
 
     # --------------------- Load Data (one batch) ---------------------
     # load PyG data object corresponding to batch_idx (e.g. AnnData batch0)
     # TODO: ensure that the batch_idx is valid from the dataset_blob
     data_batch = dataset_blob[batch_idx]
-    # assert data_batch['metadata_batch_id'] == f"batch{batch_idx}", "Batch ID mismatch."
-    # print(f"Batch ID: {data_batch['metadata_batch_id']}")
+    print(f"Data Batch: {data_batch}")
+    print(data_batch.train_mask)
+    print(data_batch.val_mask)
+    print(data_batch.test_mask)
+    # assert data_batch['batch'] == f"batch{batch_idx+1}", "Batch ID mismatch."
+    # print(f"Batch ID: {data_batch['batch']}")
 
     current, peak = tracemalloc.get_traced_memory()
     print(f"Current memory usage after loading data_batch is {current / 10**6}MB")
     print(f"Peak memory usage during data loading was {peak / 10**6}MB.")
     # --------------------- Initialize Lightning DataModule ---------------------
     # set parameters for data loader and sampler for training, validation, and testing
-    train_loader_name = config['datamodule']['train_loader_name']
-    train_loader_params = config['datamodule']['train_loader_params']
+    loader_name = config['datamodule']['loader_name']
+    loader_params = config['datamodule']['loader_params']
 
-    train_sampler_name = config['datamodule']['train_sampler_name']
-    train_sampler_params = config['datamodule']['train_sampler_params']
+    sampler_name = config['datamodule']['sampler_name']
+    sampler_params = config['datamodule']['sampler_params']
 
-    val_loader_name = config['datamodule']['val_loader_name']
-    test_loader_name = config['datamodule']['test_loader_name']
     inference_params = config['datamodule']['inference_params']
 
     datamodule_batch = InMemoryDataModule(
-                            num_cores=num_cores,
                             data=data_batch,
-                            train_loader_name=train_loader_name,
-                            **train_loader_params,
-                            train_sampler_name=train_sampler_name,
-                            **train_sampler_params,
-                            val_loader_name=val_loader_name,
-                            test_loader_name=test_loader_name,
+                            loader_name=loader_name,
+                            loader_params=loader_params,
+                            sampler_name=sampler_name,
+                            sampler_params=sampler_params,
                             **inference_params,
                         )
 
     # --------------------- Initialize Model ---------------------
     # get model, optimizer, loss, and task parameters
-    model_params = config['model']['model_params']
+    model_name = config['model']['model_name']
+    encoder_name = config['model']['encoder_name']
+    predictor_name = config['model']['predictor_name']
+    encoder_params = config['model']['encoder_params']
     optimizer_params = config['model']['optimizer_params']
     loss_params = config['model']['loss_params']
     task_params = config['model']['task_params']
@@ -191,10 +191,12 @@ def main(config: dict):
     else:
         raise ValueError(f"Model {model_name} not found.")
     model = Model(
-                name=model_name,                
+                model_name=model_name,
+                encoder_name=encoder_name,
+                predictor_name=predictor_name,
                 in_channels=data_batch.num_features,
                 out_channels=data_batch.num_classes,
-                **model_params,
+                **encoder_params,
                 **optimizer_params,
                 **loss_params,
                 **task_params,
@@ -202,7 +204,8 @@ def main(config: dict):
             )
 
     # log model architecture
-    wandb_logger.watch(model)
+    if wandb_logger is not None:
+        wandb_logger.watch(model)
 
     # --------------------- Initialize Trainer ---------------------
     # configure model checkpointing

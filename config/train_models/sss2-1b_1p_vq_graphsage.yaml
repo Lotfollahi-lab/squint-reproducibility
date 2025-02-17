@@ -4,97 +4,102 @@ experiment:
 
 logging:
   log_dir: '/lustre/scratch126/cellgen/team361/am84/VQNiche/logs'
-  log_model: False
-  offline: True
+  log_model: false
+  offline: true
 
 dataset:
-  name: 'sss2-1b_1p'
-  feature_name: 'cell_gene_counts'
-  label_name: 'niche_types'
-  graph_params: {
-                'coord_type': 'generic',
-                'spatial_key': 'spatial',
-                'delaunay': True,
-                'n_neighs': null,
-                'radius': null,
-                }
-  data_directory_path: '/lustre/scratch126/cellgen/team361/DATASETS'
+  dataset_name: sss2-1b_1p
+  feature_name: cell_gene_counts
+  label_name: niche_types
+  graph_params:
+    coord_type: generic
+    spatial_key: spatial
+    delaunay: false
+    n_neighs: 4
+    radius: null
+
+  data_directory_path: /lustre/scratch126/cellgen/team361/DATASETS
   overwrite: False
-  transform_names: [
-                  'NormalizeFeatures',
-                  'RandomNodeSplit'
-                  ]
-  transform_params: {
-                    'norm_method': 'read_depth',
-                    'val_ratio': 0.1,
-                    'test_ratio': 0.1
-                    }
+  transform_names:
+    - RandomNodeSplit
+  transform_params:
+    val_ratio: 0.1
+    test_ratio: 0.1
 
 datamodule:
   batch_idx: 0
-  train_loader_name: 'DefaultNodeLoader'
-  train_loader_params:  {
-                        'batch_size': 1024,
-                        'shuffle': False,
-                        }
-  train_sampler_name: 'NeighborSampler'
-  train_sampler_params: {
-                         'num_neighbors': [25, 10],
-                        }
-  val_loader_name: 'NeighborLoader'
-  test_loader_name: 'NeighborLoader'
-  inference_params: {
-                    'use_full_graph_for_inference': True,
-                    }
+  loader_name: NeighborLoader
+  loader_params:
+    batch_size: 1024
+  sampler_name: NeighborSampler
+  sampler_params:
+    num_neighbors: [25, 10]
+  inference_params:
+    use_full_graph_for_inference: true
 
 model:
-  name: 'VQGraph'
-  model_params: {
-                'encoder_name': 'VQGraph_Encoder',
-                'graphconv_layer_name': 'SAGEConv',
-                'predictor_name': 'Linear',
-                'hidden_channels': 64,
-                'num_layers': 2,
-                'dropout': 0.1
-                }
-  optimizer_params: {
-                    'optimizer_name': 'adam',
-                    'lr': 0.02,
-                    'weight_decay': 0.0001,
-                    } 
-  loss_params: {
-                'loss_names': [
-                              'cross_entropy',
-                              'vqgraph_attribute_reconstruction',
-                              # 'vqgraph_adjacency_reconstruction',
-                              'vqgraph_commitment_loss',
-                              'vqgraph_codebook_loss'
-                              ],
-                'loss_kwargs': {
-                                'reduction': 'mean',
-                                'scaling_node_gamma': 0.1,
-                                'scaling_edge_gamma': 0.1,
-                                'commitment_weight': 0.25,
-                                'codebook_reg_weight': 0.2,
-                                }
-                }
-  task_params: {
-                'task_name': 'multiclass',
-                'task_kwargs': {}
-                }
-  inference_params: {
-                    'inference_mode': 'batch-wise',
-                    # 'inference_mode': 'layer-wise',
-                    }
+  model_name: VQGraph
+  encoder_name: VQGraph_Encoder
+  predictor_name: Linear
 
+  encoder_params:
+    graphconv_layer_name: SAGEConv
+    hidden_channels: 256
+    num_layers: 2
+    act_first: true
+    activation: relu
+    norm: null
+    dropout: 0.1
+    codebook_params:
+        learnable_codebook: true
+        num_codebooks: 1
+        codebook_size: 256
+        decay: 0.8
+        eps: 0.00001
+        kmeans_init: false
+        kmeans_iters: 10
+        sync_kmeans: true
+        threshold_ema_dead_code: 0
+        use_ddp: false
+        sample_codebook_temp: 0.0
+
+
+  optimizer_params:
+    optimizer_name: adam
+    lr: 0.04
+    weight_decay: 0.0001
+
+  loss_params:
+    loss_names:
+      - cross_entropy
+      # - mse_attribute_reconstruction
+      # - nb_attribute_reconstruction
+      # - mse_adjacency_reconstruction
+      - mse_commitment_loss
+      - l2_codebook_loss
+    loss_kwargs:
+      wt_cross_entropy: 1.0
+      wt_attr_reconstr: 0.1
+      distribution: 'nb' # for negative_binomial_attribute_reconstruction
+      dispersion_theta: 1.0 # for negative_binomial_attribute_reconstruction
+      wt_adj_reconstr: 0.1
+      commitment_weight: 0.25
+      codebook_reg_weight: 0.2
+
+  task_params:
+    task_name: multiclass
+    task_kwargs: {}
+
+  inference_params:
+    inference_mode: batch-wise
+    # inference_mode': layer-wise
 
 trainer:
-  checkpoint_params: {
-                  'mode': 'max',
-                  'monitor': 'val_acc',
-                  'save_top_k': 1,
-                  'save_last': True,
-                  }
-  max_epochs: 10
-  enable_checkpointing: True
-  ckpt_path: 'best'
+  checkpoint_params:
+    mode: max
+    monitor: val_acc
+    save_top_k: 1
+    save_last: true
+  max_epochs: 3
+  enable_checkpointing: true
+  ckpt_path: best

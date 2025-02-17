@@ -1,87 +1,85 @@
 experiment:
   seed: 0
-  name: "train_gnn"
+  name: train_gnn
 
 logging:
-  log_dir: '/lustre/scratch126/cellgen/team361/am84/VQNiche/logs'
-  log_model: False
-  offline: True
+  log_dir: /lustre/scratch126/cellgen/team361/am84/VQNiche/logs
+  log_model: false
+  offline: true
+  # mode: disabled 
+  mode: enabled
 
 dataset:
-  name: 'sss2-1b_1p'
-  feature_name: 'cell_gene_counts'
-  label_name: 'cell_types'
-  graph_params: {
-                'coord_type': 'generic',
-                'spatial_key': 'spatial',
-                'delaunay': True,
-                'n_neighs': null,
-                'radius': null,
-                }
-  data_directory_path: '/lustre/scratch126/cellgen/team361/DATASETS'
+  dataset_name: sss2-1b_1p
+  feature_name: cell_gene_counts
+  label_name: cell_types
+  graph_params:
+    coord_type: generic
+    spatial_key: spatial
+    delaunay: true
+    n_neighs: null
+    radius: null
+
+  data_directory_path: /lustre/scratch126/cellgen/team361/DATASETS
   overwrite: False
-  transform_names: [
-                  'NormalizeFeatures',
-                  'RandomNodeSplit'
-                  ]
-  transform_params: {
-                    'norm_method': 'read_depth',
-                    'val_ratio': 0.1,
-                    'test_ratio': 0.1
-                    }
+  transform_names:
+    - NormalizeFeatures
+    - RandomNodeSplit
+  transform_params:
+    norm_method: read_depth
+    val_ratio: 0.1
+    test_ratio: 0.1
 
 datamodule:
   batch_idx: 0
-  train_loader_name: 'DefaultNodeLoader'
-  train_loader_params:  {
-                        'batch_size': 1024,
-                        'shuffle': False,
-                        }
-  train_sampler_name: 'NeighborSampler'
-  train_sampler_params: {
-                         'num_neighbors': [25, 10],
-                        }
-  val_loader_name: 'NeighborLoader'
-  test_loader_name: 'NeighborLoader'
-  inference_params: {
-                    'use_full_graph_for_inference': True,
-                    }
+  loader_name: NeighborLoader
+  loader_params:
+    batch_size: 1024
+  sampler_name: NeighborSampler
+  sampler_params:
+    num_neighbors: [25, 10]
+  inference_params:
+    use_full_graph_for_inference: true
 
 model:
-  name: 'GraphSAGE'
-  model_params: {
-                'encoder_name': 'SAGE_Encoder',
-                'predictor_name': 'Linear',
-                'hidden_channels': 256,
-                'num_layers': 2,
-                'dropout': 0.5
-                }
-  optimizer_params: {
-                    'optimizer_name': 'adam',
-                    'lr': 0.01,
-                    'weight_decay': 0.0,
-                    } 
-  loss_params: {
-                'loss_names': ['cross_entropy'],
-                'loss_kwargs': {'reduction': 'mean'}
-                }
-  task_params: {
-                'task_name': 'multiclass',
-                'task_kwargs': {}
-                }
-  inference_params: {
-                    # 'inference_mode': 'batch-wise',
-                    'inference_mode': 'layer-wise',
-                    }
+  model_name: GraphSAGE
+  encoder_name: SAGE_Encoder
+  predictor_name: Linear
+  
+  encoder_params:
+    hidden_channels: 256
+    num_layers: 2
+    act_first: true
+    activation: relu
+    norm: null
+    dropout: 0.5
+
+  optimizer_params:
+    optimizer_name: adam
+    lr: 0.01
+    weight_decay: 0.0
+
+  loss_params:
+    loss_names:
+      - cross_entropy
+    loss_kwargs:
+      wt_cross_entropy: 1.0
+
+  task_params:
+    task_name: multiclass
+    task_kwargs: {}
+
+  inference_params:
+    # inference_mode: batch-wise
+    inference_mode: layer-wise
 
 
 trainer:
-  checkpoint_params: {
-                  'mode': 'max',
-                  'monitor': 'val_acc',
-                  'save_top_k': 1,
-                  'save_last': True,
-                  }
-  max_epochs: 10
-  enable_checkpointing: True
-  ckpt_path: 'best'
+  checkpoint_params:
+    mode: max
+    monitor: val_acc
+    save_top_k: 1
+    save_last: true
+  max_epochs: 3
+  enable_checkpointing: true
+  ckpt_path: best
