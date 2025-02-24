@@ -9,8 +9,8 @@ logging:
   enabled: true
 
 dataset:
-  dataset_name: sss2-1b_1p
-  batch_idx: 0
+  dataset_name: xhs1000-39b_1p
+  batch_idx: 3 # batch11 TODO: fix indexing bug
 
   feature_name: cell_gene_counts
 
@@ -21,7 +21,7 @@ dataset:
     n_neighs: 4
     radius: null
 
-  label_name: cell_types
+  label_name: cell_type
 
   transform_names:
     - RandomNodeSplit
@@ -34,7 +34,7 @@ dataset:
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 1024
+    batch_size: 32
   sampler_name: NeighborSampler
   sampler_params:
     num_neighbors: [25, 10]

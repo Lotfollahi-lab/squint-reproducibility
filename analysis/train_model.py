@@ -29,7 +29,7 @@ def train(
                     deterministic=True,
                     logger=logger,
                     callbacks=checkpoints,
-                    strategy="ddp",
+                    strategy="ddp_find_unused_parameters_true",
                     max_epochs=config['trainer']['max_epochs'],
                     enable_checkpointing=True,
                     num_sanity_val_steps=0,
