@@ -10,7 +10,7 @@ logging:
 
 dataset:
   dataset_name: xhs1000-39b_1p
-  batch_idx: 3 # batch11 TODO: fix indexing bug
+  batch_idx: 11
 
   feature_name: cell_gene_counts
 

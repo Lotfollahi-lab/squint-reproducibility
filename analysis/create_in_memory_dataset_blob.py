@@ -4,7 +4,7 @@ This script creates an InMemoryDatasetBlob for use in training GNN-style models.
 Usage:
 >>> python analysis/create_in_memory_dataset_blob.py --config_file config/create_in_memory_dataset_blob/sss2-1b_1p.yaml
 """
-from vqniche.dataloaders.in_memory_dataset_blob import InMemoryDatasetBlob
+from vqniche.dataset.in_memory_dataset_blob import InMemoryDatasetBlob
 from vqniche.utils.config_parsers import parse_arguments, collect_configs
 
 
