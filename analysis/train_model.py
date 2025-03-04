@@ -26,7 +26,7 @@ import pytorch_lightning as pl
 from torch_geometric.loader import DataLoader
 
 from vqniche.utils.config_parsers import parse_arguments, collect_configs
-from vqniche.utils.initialize import *
+from vqniche.initializers.initialize import *
 
 
 def train(config: Dict):
@@ -45,21 +45,21 @@ def train(config: Dict):
     # --------------------- Dataset ---------------------
     dataset_blob = initialize_dataset_blob(config)
 
-    # load PyG data object corresponding to batch_idx (e.g. 0 -> AnnData batch0)
+    # load PyG data object corresponding to adata_batch_idx (e.g. 0 -> AnnData batch0)
     # NOTE: sss2-1b_1p is 1-indexed, while others are 0-indexed
-    batch_idx = config['dataset']['batch_idx']
-    if isinstance(batch_idx, int):
-        data_batch = dataset_blob[batch_idx]
-    elif isinstance(batch_idx, List[int]):
+    adata_batch_idx = config['dataset']['adata_batch_idx']
+    if isinstance(adata_batch_idx, int):
+        data_batch = dataset_blob[adata_batch_idx]
+    elif isinstance(adata_batch_idx, List[int]):
         data_batch = DataLoader(
-                        [dataset_blob[idx] for idx in batch_idx],
-                        batch_size=1,
+                        [dataset_blob[idx] for idx in adata_batch_idx],
+                        batch_size=len(adata_batch_idx),
                         shuffle=False,
                         num_workers=0,
                         pin_memory=True,
                         drop_last=False,
-                    ).collate_fn([dataset_blob[idx] for idx in batch_idx])
-    print(f"Batch ID: {data_batch.batch}")
+                    ).collate_fn([dataset_blob[idx] for idx in adata_batch_idx])
+    print(f"Batch ID: {data_batch.adata_batch_id}")
     print(f"Data Batch: {data_batch}")
     
     # --------------------- Dataloader ---------------------

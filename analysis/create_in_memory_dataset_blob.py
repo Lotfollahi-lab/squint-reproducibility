@@ -34,7 +34,7 @@ def main(config: dict):
                 )
     
     for data_batch in dataset_blob:
-        print(f"Batch: {data_batch.batch}")
+        print(f"Batch: {data_batch.adata_batch_id}")
         print(f"Data: {data_batch}")
         print("")
     
