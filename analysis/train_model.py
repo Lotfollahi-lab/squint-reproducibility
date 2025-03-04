@@ -19,10 +19,11 @@ Example Usage:
 >>> python analysis/train_model.py --config_file config/train_model/sss2-1b_1p_vq_graphsage.yaml
 """
 import os
-from typing import Dict
+from typing import Dict, List
 
 import torch
 import pytorch_lightning as pl
+from torch_geometric.loader import DataLoader
 
 from vqniche.utils.config_parsers import parse_arguments, collect_configs
 from vqniche.utils.initialize import *
@@ -47,15 +48,26 @@ def train(config: Dict):
     # load PyG data object corresponding to batch_idx (e.g. 0 -> AnnData batch0)
     # NOTE: sss2-1b_1p is 1-indexed, while others are 0-indexed
     batch_idx = config['dataset']['batch_idx']
-    data_batch = dataset_blob[batch_idx]
+    if isinstance(batch_idx, int):
+        data_batch = dataset_blob[batch_idx]
+    elif isinstance(batch_idx, List[int]):
+        data_batch = DataLoader(
+                        [dataset_blob[idx] for idx in batch_idx],
+                        batch_size=1,
+                        shuffle=False,
+                        num_workers=0,
+                        pin_memory=True,
+                        drop_last=False,
+                    ).collate_fn([dataset_blob[idx] for idx in batch_idx])
     print(f"Batch ID: {data_batch.batch}")
+    print(f"Data Batch: {data_batch}")
     
     # --------------------- Dataloader ---------------------
     datamodule_batch = initialize_datamodule(
                             config=config,
                             data=data_batch,
                         )
-    
+
     # --------------------- Model ---------------------
     model = initialize_model(
                 config=config,
@@ -101,7 +113,7 @@ def train(config: Dict):
                     max_epochs=config['trainer']['max_epochs'],
                     enable_checkpointing=enable_checkpointing,
                     num_sanity_val_steps=0,
-                    enable_progress_bar=False,
+                    enable_progress_bar=True,
                     enable_model_summary=False,
                 )
     

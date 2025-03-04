@@ -35,7 +35,7 @@ dataset:
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 32
+    batch_size: 128
   sampler_name: NeighborSampler
   sampler_params:
     num_neighbors: [25, 10]
@@ -49,7 +49,7 @@ model:
 
   encoder_params:
     graphconv_layer_name: SAGEConv
-    hidden_channels: 256
+    hidden_channels: 32
     num_layers: 2
     act_first: true
     activation: relu
@@ -82,11 +82,11 @@ model:
       - mse_commitment_loss
       - l2_codebook_loss
     loss_kwargs:
-      wt_cross_entropy: 1.0
-      wt_attr_reconstr: 0.1
-      wt_adj_reconstr: 0.1
-      wt_commit: 0.25
-      wt_codebook: 0.2
+      wt_cross_entropy: 0.01
+      wt_attr_reconstr: 10.0
+      wt_adj_reconstr: 10
+      wt_commit: 2.5
+      wt_codebook: 100.0
 
   task_params:
     task_name: multiclass
