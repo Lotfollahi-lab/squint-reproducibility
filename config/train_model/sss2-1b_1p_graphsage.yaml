@@ -1,37 +1,37 @@
 experiment:
   seed: 0
-  name: train_gnn
+  mode: standalone
 
 logging:
-  log_dir: /lustre/scratch126/cellgen/team361/am84/VQNiche/logs
+  root_log_dir: /lustre/scratch126/cellgen/team361/am84/VQNiche/reproducibility/logs
   log_model: false
   offline: true
-  # mode: disabled 
-  mode: enabled
+  enabled: true
 
 dataset:
   dataset_name: sss2-1b_1p
+  adata_batch_idx: 0
+
   feature_name: cell_gene_counts
-  label_name: cell_types
+
   graph_params:
     coord_type: generic
     spatial_key: spatial
-    delaunay: true
-    n_neighs: null
+    delaunay: false
+    n_neighs: 4
     radius: null
 
-  data_directory_path: /lustre/scratch126/cellgen/team361/DATASETS
-  overwrite: False
+  label_name: cell_types
+
   transform_names:
-    - NormalizeFeatures
     - RandomNodeSplit
   transform_params:
-    norm_method: read_depth
     val_ratio: 0.1
     test_ratio: 0.1
 
+  root_data_dir: /lustre/scratch126/cellgen/team361/DATASETS
+
 datamodule:
-  batch_idx: 0
   loader_name: NeighborLoader
   loader_params:
     batch_size: 1024
@@ -72,7 +72,6 @@ model:
   inference_params:
     # inference_mode: batch-wise
     inference_mode: layer-wise
-
 
 trainer:
   checkpoint_params:

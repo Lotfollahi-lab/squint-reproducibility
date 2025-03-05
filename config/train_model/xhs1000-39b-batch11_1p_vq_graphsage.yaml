@@ -1,16 +1,20 @@
 experiment:
   seed: 0
-  name: "train_gnn"
+  mode: standalone
 
 logging:
-  log_dir: '/lustre/scratch126/cellgen/team361/am84/VQNiche/logs'
+  root_log_dir: /lustre/scratch126/cellgen/team361/am84/VQNiche/reproducibility/logs
   log_model: false
   offline: true
+  enabled: true
 
 dataset:
-  dataset_name: sss2-1b_1p
+  dataset_name: xhs1000-39b_1p
+  adata_batch_idx: 11
+  adata_fname: adata_batch11.h5ad
+
   feature_name: cell_gene_counts
-  label_name: niche_types
+
   graph_params:
     coord_type: generic
     spatial_key: spatial
@@ -18,19 +22,20 @@ dataset:
     n_neighs: 4
     radius: null
 
-  data_directory_path: /lustre/scratch126/cellgen/team361/DATASETS
-  overwrite: False
+  label_name: cell_type
+
   transform_names:
     - RandomNodeSplit
   transform_params:
     val_ratio: 0.1
     test_ratio: 0.1
 
+  root_data_dir: /lustre/scratch126/cellgen/team361/DATASETS
+
 datamodule:
-  batch_idx: 0
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 1024
+    batch_size: 128
   sampler_name: NeighborSampler
   sampler_params:
     num_neighbors: [25, 10]
@@ -44,7 +49,7 @@ model:
 
   encoder_params:
     graphconv_layer_name: SAGEConv
-    hidden_channels: 256
+    hidden_channels: 32
     num_layers: 2
     act_first: true
     activation: relu
@@ -72,19 +77,16 @@ model:
   loss_params:
     loss_names:
       - cross_entropy
-      # - mse_attribute_reconstruction
-      # - nb_attribute_reconstruction
-      # - mse_adjacency_reconstruction
+      - mse_attribute_reconstruction
+      - mse_adjacency_reconstruction
       - mse_commitment_loss
       - l2_codebook_loss
     loss_kwargs:
-      wt_cross_entropy: 1.0
-      wt_attr_reconstr: 0.1
-      distribution: 'nb' # for negative_binomial_attribute_reconstruction
-      dispersion_theta: 1.0 # for negative_binomial_attribute_reconstruction
-      wt_adj_reconstr: 0.1
-      commitment_weight: 0.25
-      codebook_reg_weight: 0.2
+      wt_cross_entropy: 0.01
+      wt_attr_reconstr: 10.0
+      wt_adj_reconstr: 10
+      wt_commit: 2.5
+      wt_codebook: 100.0
 
   task_params:
     task_name: multiclass
@@ -100,6 +102,6 @@ trainer:
     monitor: val_acc
     save_top_k: 1
     save_last: true
-  max_epochs: 3
+  max_epochs: 10
   enable_checkpointing: true
   ckpt_path: best
