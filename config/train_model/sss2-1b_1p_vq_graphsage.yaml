@@ -48,6 +48,7 @@ model:
   predictor_name: Linear
 
   encoder_params:
+    apply_vq_on_latent_space: true  
     graphconv_layer_name: SAGEConv
     hidden_channels: 256
     num_layers: 2
