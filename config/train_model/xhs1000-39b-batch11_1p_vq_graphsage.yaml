@@ -56,6 +56,7 @@ model:
     activation: relu
     norm: null
     dropout: 0.1
+    log_codebook_utilization: true
     codebook_params:
         learnable_codebook: true
         num_codebooks: 1
