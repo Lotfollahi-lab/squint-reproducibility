@@ -19,11 +19,10 @@ Example Usage:
 >>> python analysis/train_model.py --config_file config/train_model/sss2-1b_1p_vq_graphsage.yaml
 """
 import os
-from typing import Dict, List
+from typing import Dict
 
 import torch
 import pytorch_lightning as pl
-from torch_geometric.loader import DataLoader
 
 from vqniche.utils.config_parsers import parse_arguments, collect_configs
 from vqniche.initializers.initialize import *
@@ -42,6 +41,9 @@ def train(config: Dict):
     -------
     - None
     """
+    # --------------------- Determinism Settings ---------------------
+    pl.seed_everything(config['experiment']['seed'])
+
     # --------------------- Dataset ---------------------
     dataset_blob = initialize_dataset_blob(config)
 
