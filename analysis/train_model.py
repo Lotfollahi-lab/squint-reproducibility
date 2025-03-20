@@ -85,6 +85,7 @@ def train(config: Dict):
         checkpoints = [
                         pl.callbacks.ModelCheckpoint(
                             dirpath=ckpt_log_dir,
+                            monitor='val_acc',
                             filename='{epoch}-{val_acc:.2f}',
                             **checkpoint_params
                             )
@@ -99,8 +100,8 @@ def train(config: Dict):
                     deterministic=True,
                     logger=logger,
                     callbacks=checkpoints,
-                    strategy="ddp",
-                    # strategy="ddp_find_unused_parameters_true",
+                    # strategy="ddp",
+                    strategy="ddp_find_unused_parameters_true",
                     max_epochs=config['trainer']['max_epochs'],
                     enable_checkpointing=enable_checkpointing,
                     num_sanity_val_steps=0,
