@@ -10,8 +10,12 @@ logging:
 
 dataset:
   dataset_name: xhs1000-39b_1p
-  adata_batch_idx: [1,2]
-  adata_fname: adata_batch11.h5ad
+  adata_batch_idx:
+    - 1
+    - 2
+  adata_fname:
+    - adata_batch1.h5ad
+    - adata_batch2.h5ad
 
   feature_name: cell_gene_counts
 
@@ -49,13 +53,15 @@ model:
 
   encoder_params:
     graphconv_layer_name: SAGEConv
+    use_for_prediction: node-embeddings
+    # use_for_prediction: codebook-embeddings
+    log_codebook_utilization: true
     hidden_channels: 256
     num_layers: 2
     act_first: true
     activation: relu
     norm: null
     dropout: 0.1
-    log_codebook_utilization: true
     codebook_params:
         learnable_codebook: true
         num_codebooks: 1
@@ -67,8 +73,7 @@ model:
         sync_kmeans: true
         threshold_ema_dead_code: 0
         use_ddp: false
-        sample_codebook_temp: 0.0
-
+        sample_codebook_temp: 1.0
 
   optimizer_params:
     optimizer_name: adam
@@ -100,8 +105,7 @@ model:
 trainer:
   checkpoint_params:
     mode: max
-    monitor: val_acc
-    save_top_k: 1
+    save_top_k: 10
     save_last: true
   max_epochs: 10
   enable_checkpointing: true
