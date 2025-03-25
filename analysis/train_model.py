@@ -100,13 +100,12 @@ def train(config: Dict):
                     deterministic=True,
                     logger=logger,
                     callbacks=checkpoints,
-                    # strategy="ddp",
-                    strategy="ddp_find_unused_parameters_true",
+                    strategy="ddp",
                     max_epochs=config['trainer']['max_epochs'],
                     enable_checkpointing=enable_checkpointing,
                     num_sanity_val_steps=0,
-                    enable_progress_bar=True,
-                    enable_model_summary=False,
+                    enable_progress_bar=False,
+                    enable_model_summary=True,
                 )
     
     # --------------------- Train Model ---------------------
@@ -118,18 +117,21 @@ def train(config: Dict):
     )
 
     # --------------------- Validate Model ---------------------
-    print("Validating Model...")
     if enable_checkpointing:
+        print("Validating Model using the best checkpoint...")
         trainer.validate(
             ckpt_path="best",
             datamodule=datamodule_batch,
-        )[0]['val_acc']
+            verbose=True,
+        )
     else:
+        print("Validating Model using the last checkpoint...")
         trainer.validate(
             model=model,
             ckpt_path=None,
             datamodule=datamodule_batch,
-        )[0]['val_acc']
+            verbose=True,
+        )
 
 
 if __name__ == '__main__':
