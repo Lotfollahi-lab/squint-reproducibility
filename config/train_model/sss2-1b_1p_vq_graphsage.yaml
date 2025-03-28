@@ -40,9 +40,9 @@ datamodule:
     batch_size: 1024
   sampler_name: NeighborSampler
   sampler_params:
-    num_neighbors: [25, 10]
+    num_neighbors: [5, 5]
   inference_params:
-    use_full_graph_for_inference: true
+    sample_neighbors_for_inference: false
 
 model:
   model_name: VQGraph
@@ -93,8 +93,8 @@ model:
       wt_attr_reconstr: 0.1
       wt_adj_reconstr: 0.1
       # wt_joint_code_commit: 0.25
-      wt_commit: 0.005
-      wt_code: 0.005
+      wt_commit: 0.01
+      wt_code: 0.01
       # wt_codebook_orthogonal_regularization: 0.25
 
   inference_params:

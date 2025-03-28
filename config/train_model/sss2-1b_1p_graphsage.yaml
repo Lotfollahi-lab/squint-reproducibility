@@ -42,7 +42,7 @@ datamodule:
   sampler_params:
     num_neighbors: [25, 10]
   inference_params:
-    use_full_graph_for_inference: true
+    sample_neighbors_for_inference: false
 
 model:
   model_name: GraphSAGE
