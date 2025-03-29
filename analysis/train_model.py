@@ -94,13 +94,18 @@ def train(config: Dict):
         checkpoints = False
     
     # --------------------- Trainer ---------------------
+    if config['model']['encoder_params']['use_for_prediction'] == 'codebook-embeddings':
+        strategy = "ddp_find_unused_parameters_true"
+    else:
+        strategy = "ddp"
+    
     trainer = pl.Trainer(
                     accelerator="auto",
                     devices="auto",
                     deterministic=True,
                     logger=logger,
                     callbacks=checkpoints,
-                    strategy="ddp",
+                    strategy=strategy,
                     max_epochs=config['trainer']['max_epochs'],
                     enable_checkpointing=enable_checkpointing,
                     num_sanity_val_steps=0,
