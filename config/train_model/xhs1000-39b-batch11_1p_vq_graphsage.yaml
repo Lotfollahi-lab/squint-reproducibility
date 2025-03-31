@@ -51,8 +51,8 @@ model:
 
   encoder_params:
     apply_vq_on_latent_space: true  
-    use_for_prediction: node-embeddings
-    # use_for_prediction: codebook-embeddings
+    # use_for_prediction: node-embeddings
+    use_for_prediction: codebook-embeddings
     log_codebook_utilization: true
     graphconv_layer_name: SAGEConv
     hidden_channels: 32
@@ -61,6 +61,7 @@ model:
     activation: relu
     norm: null
     dropout: 0.1
+    init_method: kaiming_uniform
     codebook_params:
         learnable_codebook: true
         num_codebooks: 1
