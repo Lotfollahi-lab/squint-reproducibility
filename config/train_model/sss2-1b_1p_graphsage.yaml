@@ -50,12 +50,13 @@ model:
   predictor_name: Linear
   
   encoder_params:
-    hidden_channels: 256
+    hidden_channels: 500
     num_layers: 2
     act_first: true
     activation: relu
-    norm: null
+    norm: BatchNorm
     dropout: 0.1
+    init_method: kaiming_uniform
 
   optimizer_params:
     optimizer_name: adam
