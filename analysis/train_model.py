@@ -97,6 +97,8 @@ def train(config: Dict):
     if config['model']['encoder_name'] == 'VQGraph_Encoder':
         if config['model']['encoder_params']['use_for_prediction'] == 'codebook-embeddings':
             strategy = "ddp_find_unused_parameters_true"
+        else:
+            strategy = "ddp"
     else:
         strategy = "ddp"
     
