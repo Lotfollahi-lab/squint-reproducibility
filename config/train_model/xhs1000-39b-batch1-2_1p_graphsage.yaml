@@ -9,11 +9,13 @@ logging:
   enabled: true
 
 dataset:
-  dataset_name: sss2-1b_1p
-  adata_batch_idx: 
-    - 0
+  dataset_name: xhs1000-39b_1p
+  adata_batch_idx:
+    - 1
+    - 2
   adata_fname:
-    - sim1_1105fts_10000locs.h5ad
+    - adata_batch1.h5ad
+    - adata_batch2.h5ad
 
   feature_name: cell_gene_counts
 
@@ -24,7 +26,7 @@ dataset:
     n_neighs: 4
     radius: null
 
-  label_name: cell_types
+  label_name: cell_type
 
   transform_names:
     - RandomNodeSplit
@@ -37,7 +39,7 @@ dataset:
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 1024
+    batch_size: 128
   sampler_name: NeighborSampler
   sampler_params:
     num_neighbors: [25, 10]
@@ -45,62 +47,33 @@ datamodule:
     sample_neighbors_for_inference: false
 
 model:
-  model_name: VQGraph
-  encoder_name: VQGraph_Encoder
+  model_name: GraphSAGE
+  encoder_name: SAGE_Encoder
   predictor_name: Linear
-
+  
   encoder_params:
-    apply_vq_on_latent_space: true
-    # use_for_prediction: node-embeddings
-    use_for_prediction: codebook-embeddings
-    log_codebook_utilization: true
-    graphconv_layer_name: SAGEConv
     hidden_channels: 32
     num_layers: 2
     act_first: true
     activation: relu
-    norm: null
+    norm: BatchNorm
     dropout: 0.1
     init_method: kaiming_uniform
-    codebook_params:
-        learnable_codebook: true
-        num_codebooks: 1
-        codebook_size: 256
-        decay: 0.01
-        eps: 0.00001
-        kmeans_init: false
-        kmeans_iters: 10
-        sync_kmeans: true
-        threshold_ema_dead_code: 0
-        use_ddp: false
-        sample_codebook_temp: 1.0
 
   optimizer_params:
     optimizer_name: adam
-    lr: 0.04
-    weight_decay: 0.0001
+    lr: 0.01
+    weight_decay: 0.0
 
   loss_params:
     loss_names:
       - cross_entropy
-      - mse_attribute_reconstruction
-      - mse_adjacency_reconstruction
-      # - mse_joint_code_commit_loss
-      - mse_commit_loss
-      - mse_code_loss
-      # - l2_codebook_orthogonal_regularization_loss
     loss_kwargs:
       wt_cross_entropy: 1.0
-      wt_attr_reconstr: 0.1
-      wt_adj_reconstr: 0.1
-      # wt_joint_code_commit: 0.25
-      wt_commit: 0.01
-      wt_code: 0.01
-      # wt_codebook_orthogonal_regularization: 0.25
 
   inference_params:
-    inference_mode: batch-wise
-    # inference_mode': layer-wise
+    # inference_mode: batch-wise
+    inference_mode: layer-wise
 
 trainer:
   checkpoint_params:
