@@ -10,7 +10,10 @@ logging:
 
 dataset:
   dataset_name: sss2-1b_1p
-  adata_batch_idx: 0
+  adata_batch_idx: 
+    - 0
+  adata_fname:
+    - sim1_1105fts_10000locs.h5ad
 
   feature_name: cell_gene_counts
 
@@ -39,7 +42,7 @@ datamodule:
   sampler_params:
     num_neighbors: [25, 10]
   inference_params:
-    use_full_graph_for_inference: true
+    sample_neighbors_for_inference: false
 
 model:
   model_name: GraphSAGE
@@ -47,12 +50,13 @@ model:
   predictor_name: Linear
   
   encoder_params:
-    hidden_channels: 256
+    hidden_channels: 500
     num_layers: 2
     act_first: true
     activation: relu
-    norm: null
-    dropout: 0.5
+    norm: BatchNorm
+    dropout: 0.1
+    init_method: kaiming_uniform
 
   optimizer_params:
     optimizer_name: adam
@@ -65,10 +69,6 @@ model:
     loss_kwargs:
       wt_cross_entropy: 1.0
 
-  task_params:
-    task_name: multiclass
-    task_kwargs: {}
-
   inference_params:
     # inference_mode: batch-wise
     inference_mode: layer-wise
@@ -76,9 +76,8 @@ model:
 trainer:
   checkpoint_params:
     mode: max
-    monitor: val_acc
     save_top_k: 1
     save_last: true
-  max_epochs: 3
+  max_epochs: 10
   enable_checkpointing: true
   ckpt_path: best

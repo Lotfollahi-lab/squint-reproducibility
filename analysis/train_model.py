@@ -19,11 +19,10 @@ Example Usage:
 >>> python analysis/train_model.py --config_file config/train_model/sss2-1b_1p_vq_graphsage.yaml
 """
 import os
-from typing import Dict, List
+from typing import Dict
 
 import torch
 import pytorch_lightning as pl
-from torch_geometric.loader import DataLoader
 
 from vqniche.utils.config_parsers import parse_arguments, collect_configs
 from vqniche.initializers.initialize import *
@@ -42,25 +41,17 @@ def train(config: Dict):
     -------
     - None
     """
+    # --------------------- Determinism Settings ---------------------
+    pl.seed_everything(config['experiment']['seed'])
+
     # --------------------- Dataset ---------------------
     dataset_blob = initialize_dataset_blob(config)
 
-    # load PyG data object corresponding to adata_batch_idx (e.g. 0 -> AnnData batch0)
-    # NOTE: sss2-1b_1p is 1-indexed, while others are 0-indexed
-    adata_batch_idx = config['dataset']['adata_batch_idx']
-    if isinstance(adata_batch_idx, int):
-        data_batch = dataset_blob[adata_batch_idx]
-    elif isinstance(adata_batch_idx, List[int]):
-        data_batch = DataLoader(
-                        [dataset_blob[idx] for idx in adata_batch_idx],
-                        batch_size=len(adata_batch_idx),
-                        shuffle=False,
-                        num_workers=0,
-                        pin_memory=True,
-                        drop_last=False,
-                    ).collate_fn([dataset_blob[idx] for idx in adata_batch_idx])
-    print(f"Batch ID: {data_batch.adata_batch_id}")
-    print(f"Data Batch: {data_batch}")
+    # --------------------- Databatch ---------------------
+    data_batch = initialize_databatch(
+                    config=config,
+                    dataset_blob=dataset_blob,
+                )
     
     # --------------------- Dataloader ---------------------
     datamodule_batch = initialize_datamodule(
@@ -94,6 +85,7 @@ def train(config: Dict):
         checkpoints = [
                         pl.callbacks.ModelCheckpoint(
                             dirpath=ckpt_log_dir,
+                            monitor='val_acc',
                             filename='{epoch}-{val_acc:.2f}',
                             **checkpoint_params
                             )
@@ -102,23 +94,24 @@ def train(config: Dict):
         checkpoints = False
     
     # --------------------- Trainer ---------------------
+    strategy = "ddp_find_unused_parameters_true"
+    # strategy = "ddp"
+    
     trainer = pl.Trainer(
                     accelerator="auto",
                     devices="auto",
                     deterministic=True,
                     logger=logger,
                     callbacks=checkpoints,
-                    strategy="ddp",
-                    # strategy="ddp_find_unused_parameters_true",
+                    strategy=strategy,
                     max_epochs=config['trainer']['max_epochs'],
                     enable_checkpointing=enable_checkpointing,
                     num_sanity_val_steps=0,
-                    enable_progress_bar=True,
-                    enable_model_summary=False,
+                    enable_progress_bar=False,
+                    enable_model_summary=True,
                 )
     
     # --------------------- Train Model ---------------------
-    
     print("Training Model...")
     trainer.fit(
         model=model,
@@ -126,18 +119,21 @@ def train(config: Dict):
     )
 
     # --------------------- Validate Model ---------------------
-    print("Validating Model...")
     if enable_checkpointing:
+        print("Validating Model using the best checkpoint...")
         trainer.validate(
             ckpt_path="best",
             datamodule=datamodule_batch,
-        )[0]['val_acc']
+            verbose=True,
+        )
     else:
+        print("Validating Model using the last checkpoint...")
         trainer.validate(
             model=model,
             ckpt_path=None,
             datamodule=datamodule_batch,
-        )[0]['val_acc']
+            verbose=True,
+        )
 
 
 if __name__ == '__main__':
