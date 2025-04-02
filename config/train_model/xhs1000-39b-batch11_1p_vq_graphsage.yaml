@@ -50,16 +50,13 @@ model:
   predictor_name: Linear
 
   encoder_params:
-    apply_vq_on_latent_space: true  
-    # use_for_prediction: node-embeddings
-    use_for_prediction: codebook-embeddings
     log_codebook_utilization: true
     graphconv_layer_name: SAGEConv
-    hidden_channels: 32
+    hidden_channels: 128
     num_layers: 2
     act_first: true
     activation: relu
-    norm: null
+    norm: BatchNorm
     dropout: 0.1
     init_method: kaiming_uniform
     codebook_params:
@@ -73,11 +70,11 @@ model:
         sync_kmeans: true
         threshold_ema_dead_code: 0
         use_ddp: false
-        sample_codebook_temp: 1.0
+        sample_codebook_temp: 0.0
 
   optimizer_params:
     optimizer_name: adam
-    lr: 0.04
+    lr: 0.005
     weight_decay: 0.0001
 
   loss_params:
@@ -91,11 +88,11 @@ model:
       # - l2_codebook_orthogonal_regularization_loss
     loss_kwargs:
       wt_cross_entropy: 1.0
-      wt_attr_reconstr: 0.1
-      wt_adj_reconstr: 0.1
+      wt_attr_reconstr: 1.0
+      wt_adj_reconstr: 1.0
       # wt_joint_code_commit: 0.25
-      wt_commit: 0.005
-      wt_code: 0.005
+      wt_commit: 1.0
+      wt_code: 1.0
       # wt_codebook_orthogonal_regularization: 0.25
 
   inference_params:
