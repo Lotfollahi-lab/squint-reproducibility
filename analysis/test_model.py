@@ -49,12 +49,7 @@ def test(config: Dict):
                         )
 
     # --------------------- Model ---------------------
-    if config['model']['model_name'] == 'GraphSAGE':
-        Model = GraphSAGE
-    elif config['model']['model_name'] == 'VQGraph':
-        Model = VQGraph
-    else:
-        raise ValueError(f"Model {config['model']['model_name']} not recognized")
+    Model = set_model_class(config['model']['model_name'])
     model = Model.load_from_checkpoint(config['model']['model_ckpt'])
     
     # --------------------- Trainer ---------------------
@@ -77,13 +72,13 @@ def test(config: Dict):
     
     # --------------------- Accuracy ---------------------
     # compute model accuracy on validation and test sets
-    print("Validating Model...")
+    print("Computing Model Validation Accuracy...")
     trainer.validate(
         model=model,
         datamodule=datamodule_batch,
         verbose=True,
     )
-    print("Testing Model...")
+    print("Computing Model Test Accuracy...")
     trainer.test(
         model=model,
         datamodule=datamodule_batch,
