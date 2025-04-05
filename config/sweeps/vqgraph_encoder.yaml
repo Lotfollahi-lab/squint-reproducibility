@@ -1,0 +1,47 @@
+name: vqgraph-encoder
+method: bayes
+run_cap: 10
+metric:
+    goal: minimize
+    name: val_loss
+parameters:
+  model.encoder_params.log_codebook_utilization:
+    value: true
+  model.encoder_params.graphconv_layer_name:
+    value: SAGEConv
+  model.encoder_params.hidden_channels:
+    values: [32, 64, 128, 256, 512, 1000]
+  model.encoder_params.num_layers:
+    value: 2
+  model.encoder_params.act_first:
+    value: true
+  model.encoder_params.activation:
+    value: relu
+  model.encoder_params.norm:
+    values: [BatchNorm, null]
+  model.encoder_params.dropout:
+    values: [0.1, 0.2, 0.3, 0.4, 0.5]
+  model.encoder_params.init_method:
+    values: [kaiming_uniform, glorot]
+  model.encoder_params.codebook_params.learnable_codebook:
+    value: true
+  model.encoder_params.codebook_params.num_codebooks:
+    value: 1
+  model.encoder_params.codebook_params.codebook_size:
+    values: [32, 64, 128, 256, 512, 1000]
+  model.encoder_params.codebook_params.decay:
+    value: 0.01
+  model.encoder_params.codebook_params.eps:
+    value: 0.00001
+  model.encoder_params.codebook_params.kmeans_init:
+    value: false
+  model.encoder_params.codebook_params.kmeans_iters:
+    value: 10
+  model.encoder_params.codebook_params.sync_kmeans:
+    value: true
+  model.encoder_params.codebook_params.threshold_ema_dead_code:
+    value: 0
+  model.encoder_params.codebook_params.use_ddp:
+    value: false
+  model.encoder_params.codebook_params.sample_codebook_temp:
+    value: 0.0

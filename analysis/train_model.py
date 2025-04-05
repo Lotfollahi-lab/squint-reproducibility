@@ -19,12 +19,14 @@ Example Usage:
 >>> python analysis/train_model.py --config_file config/train_model/sss2-1b_1p_vq_graphsage.yaml
 """
 import os
+import wandb
 from typing import Dict
+from pathlib import Path
 
 import torch
 import pytorch_lightning as pl
 
-from vqniche.utils.config_parsers import parse_arguments, collect_configs
+from vqniche.utils.config_parsers import parse_arguments, collect_configs, update_config
 from vqniche.initializers.initialize import *
 
 
@@ -67,18 +69,12 @@ def train(config: Dict):
             )
     
     # --------------------- Logger ---------------------
-    if config['logging']['enabled']:
-        logger = initialize_logger(config)
-    else:
-        logger = False
+    logger = initialize_logger(config)
 
     # --------------------- Checkpoints ---------------------
     enable_checkpointing = config['trainer']['enable_checkpointing']
     if enable_checkpointing:
-        try:
-            ckpt_log_dir = Path(logger.experiment.dir) / 'checkpoints'
-        except:
-            ckpt_log_dir = Path.cwd() / 'checkpoints'
+        ckpt_log_dir = Path(logger.experiment.dir) / 'checkpoints'
         ckpt_log_dir.mkdir(parents=True, exist_ok=True)
         
         checkpoint_params = config['trainer']['checkpoint_params']
@@ -150,7 +146,75 @@ if __name__ == '__main__':
     
     # --------------------- Parse Arguments ---------------------
     args = parse_arguments()
-    config = collect_configs(args)
+    base_config, sweep_config = collect_configs(args)
     
-    # --------------------- Train ---------------------
-    train(config)
+    # -------------- Initiate WandB Sweep/Run ------------------
+    if base_config['experiment']['mode'] == 'sweep':
+        # registers sweep with specified hyperparameter grid
+        if 'sweep_id' not in base_config['experiment']:
+            sweep_id = wandb.sweep(
+                project="VQNiche",
+                sweep=sweep_config,
+            )
+        else:
+            sweep_id = base_config['experiment']['sweep_id']
+
+        # sets directory for sweep runs
+        sweep_dir = set_wandb_experiment_dir(
+                            config=base_config,
+                            experiment_mode='sweep',
+                            sweep_id=sweep_id,
+                        )
+
+        # defines training function for an individual run of the sweep
+        def single_sweep_run_train_wrapper():
+            # initializes a run for the current config from the sweep
+            sweep_run = wandb.init(
+                        dir=str(sweep_dir),
+                        project="VQNiche",
+                        mode="offline" if base_config['logging']['offline'] else "online",
+                        group=f"{base_config['dataset']['dataset_name']}:batch={base_config['dataset']['adata_batch_idx']}",
+                        job_type="train",
+                    )
+            # updates base config with run config
+            config = update_config(
+                base_config,
+                dict(sweep_run.config)
+            )
+            # trains the model with the full config
+            train(config)
+            # shuts down the run
+            sweep_run.finish()
+
+        # calls wandb agent to train the sweep
+        wandb.agent(
+            sweep_id=sweep_id,
+            function=single_sweep_run_train_wrapper,
+            count=sweep_config['run_cap']
+        )
+        
+        # shuts down the sweep
+        wandb.teardown()
+        
+    elif base_config['experiment']['mode'] == 'standalone':
+        # sets directory for standalone run
+        standalone_dir = set_wandb_experiment_dir(
+                            config=base_config,
+                            experiment_mode='standalone',
+                        )
+        # initializes a run for the standalone config
+        standalone_run = wandb.init(
+                            dir=str(standalone_dir),
+                            project="VQNiche",
+                            mode="offline" if base_config['logging']['offline'] else "online",
+                            group=f"{base_config['dataset']['dataset_name']}:batch={base_config['dataset']['adata_batch_idx']}",
+                            job_type="train",
+                        )
+
+        # trains the model with the full config
+        train(base_config)
+
+        # shuts down the run
+        standalone_run.finish()
+    else:
+        raise ValueError(f"Invalid experiment mode: {base_config['experiment']['mode']}")
