@@ -55,7 +55,7 @@ def test(config: Dict):
         Model = VQGraph
     else:
         raise ValueError(f"Model {config['model']['model_name']} not recognized")
-    model = Model(config['model']['model_ckpt'])
+    model = Model.load_from_checkpoint(config['model']['model_ckpt'])
     
     # --------------------- Trainer ---------------------
     # strategy = "ddp_find_unused_parameters_true"
