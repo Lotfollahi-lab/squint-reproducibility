@@ -216,7 +216,7 @@ if __name__ == '__main__':
     
     # --------------------- Parse Arguments ---------------------
     args = parse_test_arguments()
-    config = collect_configs(args)
+    config = collect_test_configs(args)
     
     # --------------------- Test ---------------------
     test(config)

@@ -26,7 +26,7 @@ from pathlib import Path
 import torch
 import pytorch_lightning as pl
 
-from vqniche.utils.config_parsers import parse_arguments, collect_configs, update_config
+from vqniche.utils.parse_train_configs import parse_train_arguments, collect_train_configs, update_config
 from vqniche.initializers.initialize import *
 
 
@@ -145,8 +145,8 @@ if __name__ == '__main__':
     print(f"Number of GPU devices: {num_gpus}")
     
     # --------------------- Parse Arguments ---------------------
-    args = parse_arguments()
-    base_config, sweep_config = collect_configs(args)
+    args = parse_train_arguments()
+    base_config, sweep_config = collect_train_configs(args)
     
     # -------------- Initiate WandB Sweep/Run ------------------
     if base_config['experiment']['mode'] == 'sweep':
