@@ -4,7 +4,7 @@ This script provides a pipeline for a single training run of a Model on a single
 The pipeline consists of the following steps:
 1. Parse the arguments from the config file.
 2. Initialize the DatasetBlob (see vqniche.dataset.in_memory_dataset_blob.py).
-3. Load the data corresponding to the batch index specified in the config file.
+3. Load the data corresponding to the batches specified in the config file.
 4. Initialize the DataModule (see vqniche.dataloaders.in_memory_datamodule.py).
 5. Initialize the Model (see vqniche.models.vqgraph.py).
 6. Initialize the Logger (if enabled).
@@ -13,10 +13,15 @@ The pipeline consists of the following steps:
 9. Train the Model.
 10. Validate the Model.
 
-The pipeline employs PyTorch Lightning to support distributed data parallel (DDP) training across multiple GPUs. 
+The pipeline employs PyTorch Lightning to support distributed data parallel (DDP) training across multiple GPUs. With wandb, the script supports a standalone run via a base config file and a sweep run via a base config file and a list of sweep config files.
 
-Example Usage:
->>> python analysis/train_model.py --config_file config/train_model/sss2-1b_1p_vq_graphsage.yaml
+Example Usage for a standalone run:
+>>> python analysis/train_model.py --base_config_file config/train_model/sss2-1b_1p_vq_graphsage.yaml
+
+Example Usage for a sweep run:
+>>> python analysis/train_model.py --base_config_file config/train_model/sss2-1b_1p_vq_graphsage.yaml --sweep_config_files config/sweep/vqgraph_encoder.yaml config/sweep/optimizer.yaml
+
+
 """
 import os
 import wandb

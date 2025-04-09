@@ -1,4 +1,20 @@
 """
+This script provides a pipeline for a single testing run of a Model on a single batch of data. It requires that the data has previously been processed and stored as a PyTorch Geometric dataset in the "gold" directory. The input to this file is a YAML config file containing all the relevant parameters for the testing run. 
+
+The pipeline consists of the following steps:
+1. Parse the arguments from the config file.
+2. Initialize the DatasetBlob (see vqniche.dataset.in_memory_dataset_blob.py).
+3. Load the data corresponding to the batches specified in the config file.
+4. Initialize the DataModule (see vqniche.dataloaders.in_memory_datamodule.py).
+5. Load the Model from the checkpoint file specified in the config file (see vqniche.models.vqgraph.py).
+6. Initialize the Trainer (see vqniche.utils.initialize.py).
+7. Test the Model.
+8. Compute the Pearson correlation between the original and reconstructed cell-gene matrices.
+9. Compute the Codebook Utilization.
+10. Compute the Graph Metrics: MMD for Node Degree Distribution.
+
+Example Usage:
+>>> python analysis/test_model.py --wandb_run_dir /path/to/wandb/run
 
 """
 import os
