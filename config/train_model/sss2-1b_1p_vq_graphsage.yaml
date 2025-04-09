@@ -81,7 +81,7 @@ model:
     loss_names:
       - cross_entropy
       - mse_attribute_reconstruction
-      # - mse_adjacency_reconstruction
+      - mse_adjacency_reconstruction
       # - mse_joint_code_commit_loss
       - mse_commit_loss
       - mse_code_loss
