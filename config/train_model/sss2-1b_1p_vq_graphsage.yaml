@@ -53,7 +53,9 @@ model:
   predictor_name: Linear
 
   encoder_params:
+    log_similarity_stats: true
     log_codebook_utilization: true
+    log_pearson_correlation: true
     graphconv_layer_name: SAGEConv
     hidden_channels: 1105
     num_layers: 2
