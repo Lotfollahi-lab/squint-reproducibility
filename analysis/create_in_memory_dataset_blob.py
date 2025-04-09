@@ -5,7 +5,7 @@ Usage:
 >>> python analysis/create_in_memory_dataset_blob.py --config_file config/create_in_memory_dataset_blob/sss2-1b_1p.yaml
 """
 from vqniche.dataset.in_memory_dataset_blob import InMemoryDatasetBlob
-from vqniche.utils.config_parsers import parse_arguments, collect_configs
+from vqniche.utils.parse_datasetblob_configs import parse_datasetblob_arguments, collect_datasetblob_configs
 
 
 def main(config: dict):
@@ -42,7 +42,7 @@ def main(config: dict):
 
 
 if __name__ == '__main__':
-    args = parse_arguments()
-    config = collect_configs(args)
+    args = parse_datasetblob_arguments()
+    config = collect_datasetblob_configs(args)
     
     main(config)
