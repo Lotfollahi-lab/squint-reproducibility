@@ -27,8 +27,11 @@ dataset:
   label_name: cell_types
 
   transform_names:
+    - NormalizeFeatures
     - RandomNodeSplit
   transform_params:
+    norm_method: total_log1p
+    apply_CPM: true
     val_ratio: 0.1
     test_ratio: 0.1
 
