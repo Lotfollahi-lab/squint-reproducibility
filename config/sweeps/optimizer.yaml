@@ -6,13 +6,13 @@ metric:
     name: val_loss
     
 parameters:
-    optimizer_params.optimizer_name:
+    model.optimizer_params.optimizer_name:
         values: 'adam'
-    optimizer_params.lr:
+    model.optimizer_params.lr:
         distribution: 'log_uniform_values'
         min: 0.00001
         max: 0.1
-    optimizer_params.weight_decay:
+    model.optimizer_params.weight_decay:
         distribution: 'log_uniform_values'
         min: 0.00001
         max: 0.1
