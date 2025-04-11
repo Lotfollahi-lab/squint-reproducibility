@@ -9,8 +9,8 @@ dataset:
     - cell_gene_counts
 
   label_names: 
-    - cell_types
-    - niche_types
+    - cell_types=cell_types
+    - niche_types=niche_types
 
   graph_kwargs:
     coord_type: generic
