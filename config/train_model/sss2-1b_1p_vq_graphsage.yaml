@@ -27,11 +27,11 @@ dataset:
   label_name: cell_types
 
   transform_names:
-    - NormalizeFeatures
+    # - NormalizeFeatures
     - RandomNodeSplit
   transform_params:
     norm_method: total_log1p
-    apply_CPM: true
+    apply_CPM: false
     val_ratio: 0.1
     test_ratio: 0.1
 
@@ -57,11 +57,11 @@ model:
     log_codebook_utilization: true
     log_pearson_correlation: true
     graphconv_layer_name: SAGEConv
-    hidden_channels: 1105
+    hidden_channels: 200
     num_layers: 2
     act_first: true
     activation: relu
-    norm: BatchNorm
+    norm: null
     dropout: 0.2
     init_method: kaiming_uniform
     codebook_params:
@@ -87,22 +87,17 @@ model:
       - cross_entropy
       - mse_attribute_reconstruction
       - mse_adjacency_reconstruction
-      # - mse_joint_code_commit_loss
       - mse_commit_loss
       - mse_code_loss
-      # - l2_codebook_orthogonal_regularization_loss
     loss_kwargs:
       wt_cross_entropy: 1.0
       wt_attr_reconstr: 1.0
       wt_adj_reconstr: 1.0
-      # wt_joint_code_commit: 0.25
       wt_commit: 1.0
       wt_code: 1.0
-      # wt_codebook_orthogonal_regularization: 0.25
 
   inference_params:
     inference_mode: batch-wise
-    # inference_mode': layer-wise
 
 trainer:
   checkpoint_params:
