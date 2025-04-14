@@ -21,14 +21,17 @@ dataset:
     coord_type: generic
     spatial_key: spatial
     delaunay: false
-    n_neighs: 4
+    n_neighs: 12
     radius: null
 
-  label_name: cell_type
+  label_name: cell_types
 
   transform_names:
+    # - NormalizeFeatures
     - RandomNodeSplit
   transform_params:
+    # norm_method: total_log1p
+    # apply_CPM: false
     val_ratio: 0.1
     test_ratio: 0.1
 
@@ -37,7 +40,7 @@ dataset:
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 128
+    batch_size: 32
   sampler_name: NeighborSampler
   sampler_params:
     num_neighbors: [25, 10]
@@ -50,19 +53,23 @@ model:
   predictor_name: Linear
 
   encoder_params:
+    log_similarity_stats: true
     log_codebook_utilization: true
+    log_pearson_correlation: true
     graphconv_layer_name: SAGEConv
-    hidden_channels: 128
+    # attribute_decoder_name: Linear
+    attribute_decoder_name: LinearSoftmax
+    hidden_channels: 500
     num_layers: 2
     act_first: true
     activation: relu
-    norm: BatchNorm
+    norm: null
     dropout: 0.1
     init_method: kaiming_uniform
     codebook_params:
         learnable_codebook: true
         num_codebooks: 1
-        codebook_size: 256
+        codebook_size: 128
         decay: 0.8
         eps: 0.00001
         kmeans_init: false
@@ -80,24 +87,20 @@ model:
   loss_params:
     loss_names:
       - cross_entropy
-      - mse_attribute_reconstruction
+      # - mse_attribute_reconstruction
+      - nb_attribute_reconstruction
       - mse_adjacency_reconstruction
-      # - mse_joint_code_commit_loss
-      - mse_commit_loss
-      - mse_code_loss
-      # - l2_codebook_orthogonal_regularization_loss
+      # - mse_commit_loss
+      # - mse_code_loss
     loss_kwargs:
       wt_cross_entropy: 1.0
       wt_attr_reconstr: 1.0
       wt_adj_reconstr: 1.0
-      # wt_joint_code_commit: 0.25
       wt_commit: 1.0
       wt_code: 1.0
-      # wt_codebook_orthogonal_regularization: 0.25
 
   inference_params:
     inference_mode: batch-wise
-    # inference_mode': layer-wise
 
 trainer:
   checkpoint_params:

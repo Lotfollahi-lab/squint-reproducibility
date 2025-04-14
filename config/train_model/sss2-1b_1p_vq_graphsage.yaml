@@ -30,8 +30,8 @@ dataset:
     # - NormalizeFeatures
     - RandomNodeSplit
   transform_params:
-    norm_method: total_log1p
-    apply_CPM: false
+    # norm_method: total_log1p
+    # apply_CPM: false
     val_ratio: 0.1
     test_ratio: 0.1
 
@@ -40,7 +40,7 @@ dataset:
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 1024
+    batch_size: 128
   sampler_name: NeighborSampler
   sampler_params:
     num_neighbors: [25, 10]
@@ -57,17 +57,19 @@ model:
     log_codebook_utilization: true
     log_pearson_correlation: true
     graphconv_layer_name: SAGEConv
-    hidden_channels: 200
+    # attribute_decoder_name: Linear
+    attribute_decoder_name: LinearSoftmax
+    hidden_channels: 500
     num_layers: 2
     act_first: true
     activation: relu
     norm: null
-    dropout: 0.2
+    dropout: 0.1
     init_method: kaiming_uniform
     codebook_params:
         learnable_codebook: true
         num_codebooks: 1
-        codebook_size: 256
+        codebook_size: 128
         decay: 0.01
         eps: 0.00001
         kmeans_init: false
@@ -85,10 +87,11 @@ model:
   loss_params:
     loss_names:
       - cross_entropy
-      - mse_attribute_reconstruction
+      # - mse_attribute_reconstruction
+      - nb_attribute_reconstruction
       - mse_adjacency_reconstruction
-      - mse_commit_loss
-      - mse_code_loss
+      # - mse_commit_loss
+      # - mse_code_loss
     loss_kwargs:
       wt_cross_entropy: 1.0
       wt_attr_reconstr: 1.0
