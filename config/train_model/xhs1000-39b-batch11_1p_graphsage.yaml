@@ -38,7 +38,7 @@ dataset:
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 128
+    batch_size: 32
   sampler_name: NeighborSampler
   sampler_params:
     num_neighbors: [25, 10]
@@ -51,7 +51,7 @@ model:
   predictor_name: Linear
   
   encoder_params:
-    hidden_channels: 32
+    hidden_channels: 500
     num_layers: 2
     act_first: true
     activation: relu
@@ -62,17 +62,19 @@ model:
   optimizer_params:
     optimizer_name: adam
     lr: 0.01
-    weight_decay: 0.0
+    weight_decay: 0.0001
 
   loss_params:
     loss_names:
-      - cross_entropy
+      # - cross_entropy
+      - nb_attribute_reconstruction
     loss_kwargs:
       wt_cross_entropy: 1.0
+      wt_attr_reconstr: 1.0
 
   inference_params:
-    # inference_mode: batch-wise
-    inference_mode: layer-wise
+    inference_mode: batch-wise
+    # inference_mode: layer-wise
 
 trainer:
   checkpoint_params:
