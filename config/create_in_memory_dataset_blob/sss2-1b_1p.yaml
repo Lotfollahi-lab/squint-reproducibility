@@ -18,6 +18,7 @@ dataset:
     n_neighs_list: 
       - 4
       - 7
+      - 8
       - 10
       - 12
     radius_list:
