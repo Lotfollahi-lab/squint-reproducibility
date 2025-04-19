@@ -23,10 +23,11 @@ dataset:
     coord_type: generic
     spatial_key: spatial
     delaunay: false
-    n_neighs: 4
+    n_neighs: 8
     radius: null
+    include_self_loop: true
 
-  label_name: cell_type
+  label_name: cell_types
 
   transform_names:
     - RandomNodeSplit
