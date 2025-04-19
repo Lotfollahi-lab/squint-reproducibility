@@ -51,6 +51,8 @@ model:
   predictor_name: Linear
   
   encoder_params:
+    log_similarity_stats: true
+    log_pearson_correlation: true
     hidden_channels: 500
     num_layers: 2
     act_first: true
@@ -66,7 +68,7 @@ model:
 
   loss_params:
     loss_names:
-      # - cross_entropy
+      - cross_entropy
       - nb_attribute_reconstruction
     loss_kwargs:
       wt_cross_entropy: 1.0
