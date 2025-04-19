@@ -41,7 +41,7 @@ dataset:
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 128
+    batch_size: 1000
   sampler_name: NeighborSampler
   sampler_params:
     num_neighbors: [25, 10]
@@ -57,7 +57,7 @@ model:
     log_similarity_stats: true
     log_pearson_correlation: true
     hidden_channels: 500
-    num_layers: 2
+    num_layers: 1
     act_first: true
     activation: relu
     norm: null
@@ -66,12 +66,13 @@ model:
 
   optimizer_params:
     optimizer_name: adam
-    lr: 0.01
+    lr: 0.005
     weight_decay: 0.0001
 
   loss_params:
     loss_names:
       # - cross_entropy
+      # - mse_attribute_reconstruction
       - nb_attribute_reconstruction
     loss_kwargs:
       wt_cross_entropy: 1.0
@@ -86,6 +87,6 @@ trainer:
     mode: max
     save_top_k: 1
     save_last: true
-  max_epochs: 10
+  max_epochs: 30
   enable_checkpointing: true
   ckpt_path: best
