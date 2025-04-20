@@ -51,6 +51,7 @@ datamodule:
 model:
   model_name: VQGraph
   encoder_name: VQGraph_Encoder
+  attribute_decoder_name: LinearSoftmax
   predictor_name: Linear
 
   encoder_params:
@@ -58,8 +59,6 @@ model:
     log_codebook_utilization: true
     log_pearson_correlation: true
     graphconv_layer_name: SAGEConv
-    # attribute_decoder_name: Linear
-    attribute_decoder_name: LinearSoftmax
     hidden_channels: 500
     num_layers: 2
     act_first: true

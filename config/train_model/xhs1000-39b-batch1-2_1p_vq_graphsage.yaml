@@ -50,6 +50,7 @@ datamodule:
 model:
   model_name: VQGraph
   encoder_name: VQGraph_Encoder
+  attribute_decoder_name: LinearSoftmax
   predictor_name: Linear
 
   encoder_params:
