@@ -53,6 +53,8 @@ model:
   encoder_name: VQGraph_Encoder
   attribute_decoder_name: LinearSoftmax
   predictor_name: Linear
+
+  train_log_flags:
   log_similarity_stats: true
   log_codebook_utilization: true
   log_pearson_correlation: true
