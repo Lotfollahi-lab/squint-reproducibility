@@ -41,7 +41,7 @@ dataset:
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 128
+    batch_size: 32
   sampler_name: NeighborSampler
   sampler_params:
     num_neighbors: [25, 10]
@@ -64,13 +64,13 @@ model:
     num_layers: 2
     act_first: true
     activation: relu
-    norm: null
+    norm: BatchNorm
     dropout: 0.1
     init_method: kaiming_uniform
     codebook_params:
         learnable_codebook: true
         num_codebooks: 1
-        codebook_size: 128
+        codebook_size: 256
         decay: 0.01
         eps: 0.00001
         kmeans_init: false
@@ -82,15 +82,15 @@ model:
 
   optimizer_params:
     optimizer_name: adam
-    lr: 0.005
+    lr: 0.01
     weight_decay: 0.0001
 
   loss_params:
     loss_names:
-      - cross_entropy
+      # - cross_entropy
       # - mse_attribute_reconstruction
       - nb_attribute_reconstruction
-      - mse_adjacency_reconstruction
+      # - mse_adjacency_reconstruction
       # - mse_commit_loss
       # - mse_code_loss
     loss_kwargs:
@@ -99,9 +99,6 @@ model:
       wt_adj_reconstr: 1.0
       wt_commit: 1.0
       wt_code: 1.0
-
-  inference_params:
-    inference_mode: batch-wise
 
 trainer:
   checkpoint_params:

@@ -78,10 +78,6 @@ model:
       wt_cross_entropy: 1.0
       wt_attr_reconstr: 1.0
 
-  inference_params:
-    inference_mode: batch-wise
-    # inference_mode: layer-wise
-
 trainer:
   checkpoint_params:
     mode: max

@@ -98,10 +98,6 @@ model:
       wt_code: 1.0
       # wt_codebook_orthogonal_regularization: 0.25
 
-  inference_params:
-    inference_mode: batch-wise
-    # inference_mode': layer-wise
-
 trainer:
   checkpoint_params:
     mode: max
