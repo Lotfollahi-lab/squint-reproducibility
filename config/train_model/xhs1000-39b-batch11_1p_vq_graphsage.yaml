@@ -53,14 +53,12 @@ model:
   encoder_name: VQGraph_Encoder
   attribute_decoder_name: LinearSoftmax
   predictor_name: Linear
+  log_similarity_stats: true
+  log_codebook_utilization: true
+  log_pearson_correlation: true
 
   encoder_params:
-    log_similarity_stats: true
-    log_codebook_utilization: true
-    log_pearson_correlation: true
     graphconv_layer_name: SAGEConv
-    # attribute_decoder_name: Linear
-    attribute_decoder_name: LinearSoftmax
     hidden_channels: 500
     num_layers: 2
     act_first: true
@@ -88,10 +86,10 @@ model:
 
   loss_params:
     loss_names:
-      - cross_entropy
+      # - cross_entropy
       # - mse_attribute_reconstruction
       - nb_attribute_reconstruction
-      - mse_adjacency_reconstruction
+      # - mse_adjacency_reconstruction
       # - mse_commit_loss
       # - mse_code_loss
     loss_kwargs:
