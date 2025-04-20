@@ -60,7 +60,7 @@ model:
     log_pearson_correlation: true
 
   encoder_params:
-    graphconv_layer_name: SAGEConv
+    gnn_layer_name: SAGEConv
     hidden_channels: 500
     num_layers: 2
     act_first: true
