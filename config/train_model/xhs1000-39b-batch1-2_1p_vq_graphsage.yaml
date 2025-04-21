@@ -54,18 +54,19 @@ model:
   predictor_name: Linear
 
   train_log_flags:
-    log_similarity_stats: true
+    log_similarity_stats: false
     log_codebook_utilization: true
     log_pearson_correlation: true
 
   encoder_params:
     gnn_layer_name: SAGEConv
-    hidden_channels: 32
-    num_layers: 2
+    num_linear_layers: 0
+    hidden_channels: 100
+    num_gnn_layers: 2
     act_first: true
     activation: relu
     norm: BatchNorm
-    dropout: 0.1
+    dropout: 0.2
     init_method: kaiming_uniform
     codebook_params:
         learnable_codebook: true
@@ -82,7 +83,7 @@ model:
 
   optimizer_params:
     optimizer_name: adam
-    lr: 0.005
+    lr: 0.001
     weight_decay: 0.0001
 
   loss_params:

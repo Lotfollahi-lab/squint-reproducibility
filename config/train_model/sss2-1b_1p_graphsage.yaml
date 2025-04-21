@@ -28,11 +28,8 @@ dataset:
   label_name: cell_types
 
   transform_names:
-    # - NormalizeFeatures
     - RandomNodeSplit
   transform_params:
-    # norm_method: total_log1p
-    # apply_CPM: false
     val_ratio: 0.1
     test_ratio: 0.1
 
@@ -59,17 +56,18 @@ model:
     log_pearson_correlation: true
     
   encoder_params:
+    num_linear_layers: 1
     hidden_channels: 500
-    num_layers: 2
+    num_gnn_layers: 2
     act_first: true
     activation: relu
     norm: BatchNorm
-    dropout: 0.1
+    dropout: 0.2
     init_method: kaiming_uniform
 
   optimizer_params:
     optimizer_name: adam
-    lr: 0.01
+    lr: 0.001
     weight_decay: 0.0001
 
   loss_params:

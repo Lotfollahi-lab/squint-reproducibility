@@ -58,24 +58,27 @@ model:
     log_pearson_correlation: true
   
   encoder_params:
-    hidden_channels: 32
+    num_linear_layers: 0
+    hidden_channels: 100
     num_layers: 2
     act_first: true
     activation: relu
     norm: BatchNorm
-    dropout: 0.1
+    dropout: 0.2
     init_method: kaiming_uniform
 
   optimizer_params:
     optimizer_name: adam
-    lr: 0.01
+    lr: 0.001
     weight_decay: 0.0
 
   loss_params:
     loss_names:
-      - cross_entropy
+      # - cross_entropy
+      - nb_attribute_reconstruction
     loss_kwargs:
       wt_cross_entropy: 1.0
+      wt_attr_reconstr: 1.0
 
 trainer:
   checkpoint_params:
