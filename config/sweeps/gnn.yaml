@@ -1,0 +1,17 @@
+name: gnn
+method: bayes
+run_cap: 10
+metric:
+    goal: minimize
+    name: val_loss
+parameters:
+  model.encoder_params.gnn_params.hidden_channels:
+    values: [100, 600, 1000, 2000, 3000, 4000, 5000]
+  model.encoder_params.gnn_params.num_gnn_layers:
+    values: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
+  model.encoder_params.gnn_params.activation:
+    values: [relu]
+  model.encoder_params.gnn_params.norm:
+    values: [BatchNorm, null]
+  model.encoder_params.gnn_params.dropout:
+    values: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
