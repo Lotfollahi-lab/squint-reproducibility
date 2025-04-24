@@ -28,8 +28,11 @@ dataset:
   label_name: cell_types
 
   transform_names:
+    # - NormalizeFeatures
     - RandomNodeSplit
   transform_params:
+    # norm_method: total_log1p
+    # apply_CPM: false
     val_ratio: 0.1
     test_ratio: 0.1
 
@@ -46,8 +49,8 @@ datamodule:
     sample_neighbors_for_inference: false
 
 model:
-  model_name: GraphSAGE
-  encoder_name: SAGEConv
+  model_name: GIN
+  encoder_name: GINConv
   attribute_decoder_name: LinearSoftmax
   predictor_name: Linear
 
@@ -74,7 +77,7 @@ model:
   optimizer_params:
     optimizer_name: adam
     lr: 0.0005
-    weight_decay: 0.1
+    weight_decay: 0.0001
 
   loss_params:
     loss_names:

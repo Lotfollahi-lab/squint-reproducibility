@@ -28,11 +28,8 @@ dataset:
   label_name: cell_types
 
   transform_names:
-    # - NormalizeFeatures
     - RandomNodeSplit
   transform_params:
-    # norm_method: total_log1p
-    # apply_CPM: false
     val_ratio: 0.1
     test_ratio: 0.1
 
@@ -60,32 +57,38 @@ model:
     log_pearson_correlation: true
 
   encoder_params:
-    gnn_layer_name: SAGEConv
-    num_linear_layers: 0
-    hidden_channels: 100
-    num_gnn_layers: 2
-    act_first: true
-    activation: relu
-    norm: BatchNorm
-    dropout: 0.1
+    gnn_name: SAGEConv
+    mlp_params:
+      num_layers: 1
+      hidden_channels: 2000
+      dropout: 0.0
+      activation: relu
+      norm: BatchNorm1d
+    gnn_params:
+      hidden_channels: 600
+      num_gnn_layers: 1
+      act_first: true
+      activation: relu
+      norm: BatchNorm
+      dropout: 0.0
     init_method: kaiming_uniform
     codebook_params:
-        learnable_codebook: true
-        num_codebooks: 1
-        codebook_size: 1024
-        decay: 0.01
-        eps: 0.00001
-        kmeans_init: false
-        kmeans_iters: 10
-        sync_kmeans: true
-        threshold_ema_dead_code: 0
-        use_ddp: false
-        sample_codebook_temp: 0.0
+      learnable_codebook: true
+      num_codebooks: 1
+      codebook_size: 256
+      decay: 0.01
+      eps: 0.00001
+      kmeans_init: false
+      kmeans_iters: 10
+      sync_kmeans: true
+      threshold_ema_dead_code: 0
+      use_ddp: false
+      sample_codebook_temp: 0.0
 
   optimizer_params:
     optimizer_name: adam
-    lr: 0.005
-    weight_decay: 0.0001
+    lr: 0.001
+    weight_decay: 0.1
 
   loss_params:
     loss_names:
@@ -93,12 +96,14 @@ model:
       # - mse_attribute_reconstruction
       - nb_attribute_reconstruction
       # - mse_adjacency_reconstruction
+      - mse_joint_code_commit_loss
       # - mse_commit_loss
       # - mse_code_loss
     loss_kwargs:
       wt_cross_entropy: 1.0
       wt_attr_reconstr: 1.0
       wt_adj_reconstr: 1.0
+      wt_joint_code_commit: 1.0
       wt_commit: 1.0
       wt_code: 1.0
 

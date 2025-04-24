@@ -46,16 +46,18 @@ datamodule:
     sample_neighbors_for_inference: false
 
 model:
-  model_name: GraphSAGE
-  encoder_name: SAGEConv
+  model_name: VQGraph
+  encoder_name: VQGraph_Encoder
   attribute_decoder_name: LinearSoftmax
   predictor_name: Linear
 
   train_log_flags:
     log_similarity_stats: false
+    log_codebook_utilization: true
     log_pearson_correlation: true
-    
+
   encoder_params:
+    gnn_name: GINConv
     mlp_params:
       num_layers: 1
       hidden_channels: 2000
@@ -70,10 +72,22 @@ model:
       norm: BatchNorm
       dropout: 0.0
     init_method: kaiming_uniform
+    codebook_params:
+      learnable_codebook: true
+      num_codebooks: 1
+      codebook_size: 256
+      decay: 0.01
+      eps: 0.00001
+      kmeans_init: false
+      kmeans_iters: 10
+      sync_kmeans: true
+      threshold_ema_dead_code: 0
+      use_ddp: false
+      sample_codebook_temp: 0.0
 
   optimizer_params:
     optimizer_name: adam
-    lr: 0.0005
+    lr: 0.001
     weight_decay: 0.1
 
   loss_params:
@@ -81,9 +95,17 @@ model:
       # - cross_entropy
       # - mse_attribute_reconstruction
       - nb_attribute_reconstruction
+      # - mse_adjacency_reconstruction
+      - mse_joint_code_commit_loss
+      # - mse_commit_loss
+      # - mse_code_loss
     loss_kwargs:
       wt_cross_entropy: 1.0
       wt_attr_reconstr: 1.0
+      wt_adj_reconstr: 1.0
+      wt_joint_code_commit: 1.0
+      wt_commit: 1.0
+      wt_code: 1.0
 
 trainer:
   checkpoint_params:

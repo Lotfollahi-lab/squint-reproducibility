@@ -28,8 +28,11 @@ dataset:
   label_name: cell_types
 
   transform_names:
+    # - NormalizeFeatures
     - RandomNodeSplit
   transform_params:
+    # norm_method: total_log1p
+    # apply_CPM: false
     val_ratio: 0.1
     test_ratio: 0.1
 
@@ -46,8 +49,8 @@ datamodule:
     sample_neighbors_for_inference: false
 
 model:
-  model_name: GraphSAGE
-  encoder_name: SAGEConv
+  model_name: MLP
+  encoder_name: Linear
   attribute_decoder_name: LinearSoftmax
   predictor_name: Linear
 
@@ -62,13 +65,6 @@ model:
       dropout: 0.0
       activation: relu
       norm: BatchNorm1d
-    gnn_params:
-      hidden_channels: 600
-      num_gnn_layers: 1
-      act_first: true
-      activation: relu
-      norm: BatchNorm
-      dropout: 0.0
     init_method: kaiming_uniform
 
   optimizer_params:

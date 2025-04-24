@@ -25,3 +25,18 @@ On Sanger's `farm22`, the recommended usage is to use the wrapper script as foll
 ```
 
 The other datasets in the list above should work by appropriately adding/modifying config files and the wrapper script for job requirements.
+
+
+## Results
+
+### Pearson Scores After 10 Epochs
+
+| Model | `sss2-1b_1p` | `xhs1000-39b-batch11_1p` |
+|-------|-------------------|--------------|
+| MLP | 0.8186 |  |
+| GraphSAGE | 0.78454 | |
+| GATv2 | 0.7576 | |
+| GIN | 0.4463 | |
+| VQGraphSAGE | 0.2442 | |
+| VQGATv2 | 0.1969 | |
+| VQGIN | 0.2187 | |
