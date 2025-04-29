@@ -29,14 +29,13 @@ The other datasets in the list above should work by appropriately adding/modifyi
 
 ## Results
 
-### Pearson Scores After 10 Epochs
+### Pearson Scores
+- No Cross Entropy Loss
+- Num Epochs: 10
 
-| Model | `sss2-1b_1p` | `xhs1000-39b-batch11_1p` |
+| Model | `sss2-1b_1p` | `xhs1000-39b-batch11_1p` | `xhs1000-39b-batch1_1p` |
 |-------|-------------------|--------------|
-| MLP | 0.8186 |  |
-| GraphSAGE | 0.78454 | |
-| GATv2 | 0.7576 | |
-| GIN | 0.4463 | |
-| VQGraphSAGE | 0.2442 | |
-| VQGATv2 | 0.1969 | |
-| VQGIN | 0.2187 | |
+| MLP | 0.8173 | 0.8615 | 0.8099
+| GraphSAGE | | |
+| VQNiche-MLP | | |
+| VQNiche-GraphSAGE | | |
