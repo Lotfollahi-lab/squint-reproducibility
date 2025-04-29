@@ -9,11 +9,11 @@ logging:
   enabled: true
 
 dataset:
-  dataset_name: sss2-1b_1p
-  adata_batch_idx: 
-    - 0
+  dataset_name: xhs1000-39b_1p
+  adata_batch_idx:
+    - 11
   adata_fname:
-    - sim1_1105fts_10000locs.h5ad
+    - adata_batch11.h5ad
 
   feature_name: cell_gene_counts
 
@@ -31,6 +31,7 @@ dataset:
     - SubsetHVG
     - RandomNodeSplit
   transform_params:
+    n_genes: 1000
     val_ratio: 0.1
     test_ratio: 0.1
 
@@ -52,27 +53,26 @@ model:
   attribute_decoder_name: MLPSoftmax
   predictor_name: Linear
 
-
   train_log_flags:
     log_similarity_stats: false
     log_pearson_correlation: true
     
   encoder_params:
-    out_channels: 1000
+    out_channels: 600
     mlp_params:
       num_layers: 2
-      hidden_channels: 1100 # only if num_layers > 1
+      hidden_channels: 750 # only if num_layers > 1
       dropout: 0.1
       act: relu
-      norm: "batch_norm"
+      norm: null
 
   attribute_decoder_params:
     mlp_params:
       num_layers: 2
-      hidden_channels: 1100 # only if num_layers > 1
+      hidden_channels: 750 # only if num_layers > 1
       dropout: 0.1
       act: relu
-      norm: "batch_norm"
+      norm: null
 
   optimizer_params:
     optimizer_name: adam
@@ -93,6 +93,6 @@ trainer:
     mode: max
     save_top_k: 1
     save_last: true
-  max_epochs: 10
+  max_epochs: 20
   enable_checkpointing: true
   ckpt_path: best
