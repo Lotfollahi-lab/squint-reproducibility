@@ -11,9 +11,9 @@ logging:
 dataset:
   dataset_name: xhs1000-39b_1p
   adata_batch_idx:
-    - 11
+    - 1
   adata_fname:
-    - adata_batch11.h5ad
+    - adata_batch1.h5ad
 
   feature_name: cell_gene_counts
 

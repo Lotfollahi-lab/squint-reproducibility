@@ -31,6 +31,7 @@ dataset:
     - SubsetHVG
     - RandomNodeSplit
   transform_params:
+    n_genes: 1000
     val_ratio: 0.1
     test_ratio: 0.1
 
@@ -52,37 +53,32 @@ model:
   attribute_decoder_name: MLPSoftmax
   predictor_name: Linear
 
-
   train_log_flags:
     log_similarity_stats: false
     log_pearson_correlation: true
     
   encoder_params:
-    out_channels: 1000
     mlp_params:
-      num_layers: 2
-      hidden_channels: 1100 # only if num_layers > 1
+      hidden_channels: [600]
       dropout: 0.1
       act: relu
-      norm: "batch_norm"
+      norm: null
 
   attribute_decoder_params:
     mlp_params:
-      num_layers: 2
-      hidden_channels: 1100 # only if num_layers > 1
+      hidden_channels: [600]
       dropout: 0.1
       act: relu
-      norm: "batch_norm"
+      norm: null
 
   optimizer_params:
     optimizer_name: adam
-    lr: 0.0005
-    weight_decay: 0.00001
+    lr: 0.001
+    weight_decay: 0.1
 
   loss_params:
     loss_names:
       # - cross_entropy
-      # - mse_attribute_reconstruction
       - nb_attribute_reconstruction
     loss_kwargs:
       wt_cross_entropy: 1.0
@@ -93,6 +89,6 @@ trainer:
     mode: max
     save_top_k: 1
     save_last: true
-  max_epochs: 10
+  max_epochs: 20
   enable_checkpointing: true
   ckpt_path: best

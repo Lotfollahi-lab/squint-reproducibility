@@ -28,8 +28,10 @@ dataset:
   label_name: cell_types
 
   transform_names:
+    - SubsetHVG
     - RandomNodeSplit
   transform_params:
+    n_genes: 1000
     val_ratio: 0.1
     test_ratio: 0.1
 
@@ -38,7 +40,7 @@ dataset:
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 128
+    batch_size: 512
   sampler_name: NeighborSampler
   sampler_params:
     num_neighbors: [25, 10]
@@ -48,7 +50,7 @@ datamodule:
 model:
   model_name: GraphSAGE
   encoder_name: SAGEConv
-  attribute_decoder_name: LinearSoftmax
+  attribute_decoder_name: MLPSoftmax
   predictor_name: Linear
 
   train_log_flags:
@@ -57,29 +59,34 @@ model:
     
   encoder_params:
     mlp_params:
-      num_layers: 1
-      hidden_channels: 2000
-      dropout: 0.0
-      activation: relu
-      norm: BatchNorm1d
+      hidden_channels: [600]
+      dropout: 0.1
+      act: relu
+      norm: batch_norm
     gnn_params:
-      hidden_channels: 600
-      num_gnn_layers: 1
+      num_layers: 1
+      hidden_channels: 500
       act_first: true
       activation: relu
       norm: BatchNorm
       dropout: 0.0
-    init_method: kaiming_uniform
+      init_method: kaiming_uniform
+
+  attribute_decoder_params:
+    mlp_params:
+      hidden_channels: [500]
+      dropout: 0.1
+      act: relu
+      norm: batch_norm
 
   optimizer_params:
     optimizer_name: adam
     lr: 0.0005
-    weight_decay: 0.1
+    weight_decay: 0.00001
 
   loss_params:
     loss_names:
       # - cross_entropy
-      # - mse_attribute_reconstruction
       - nb_attribute_reconstruction
     loss_kwargs:
       wt_cross_entropy: 1.0
@@ -90,6 +97,6 @@ trainer:
     mode: max
     save_top_k: 1
     save_last: true
-  max_epochs: 10
+  max_epochs: 20
   enable_checkpointing: true
   ckpt_path: best

@@ -31,11 +31,11 @@ The other datasets in the list above should work by appropriately adding/modifyi
 
 ### Pearson Scores
 - No Cross Entropy Loss
-- Num Epochs: 10
+- Num Epochs: 20
 
 | Model | `sss2-1b_1p` | `xhs1000-39b-batch11_1p` | `xhs1000-39b-batch1_1p` |
-|-------|-------------------|--------------|
-| MLP | 0.8173 | 0.8615 | 0.8099
-| GraphSAGE | | |
-| VQNiche-MLP | | |
-| VQNiche-GraphSAGE | | |
+|-------|-------------------|--------------|--------------|
+| MLP | 0.8055 | 0.8681 | 0.8229 |
+| GraphSAGE | 0.7563 | 0.8215 | 0.8101 |
+| VQNiche-MLP | | | |
+| VQNiche-GraphSAGE | | | |
