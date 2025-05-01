@@ -37,5 +37,5 @@ The other datasets in the list above should work by appropriately adding/modifyi
 |-------|-------------------|--------------|--------------|
 | MLP | 0.8055 | 0.8681 | 0.8229 |
 | GraphSAGE | 0.7563 | 0.8215 | 0.8101 |
-| VQNiche-MLP | | | |
-| VQNiche-GraphSAGE | | | |
+| VQNiche-MLP | 0.2989 | 0.6438 | 0.5970 |
+| VQNiche-GraphSAGE | 0.3055 | 0.5498 | 0.5271 |
