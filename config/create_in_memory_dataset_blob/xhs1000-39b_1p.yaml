@@ -16,14 +16,18 @@ dataset:
     coord_type: generic
     spatial_key: spatial
     n_neighs_list: 
-      - 4
-      - 7
+      # - 4
+      # - 7
       - 8
-      - 10
-      - 12
+      # - 10
+      # - 12
     radius_list:
-      - 27.5
+      # - 27.5
     include_self_loop: true
+    k: 
+      lm_eigvecs: 128
+      deepwalk: 128
+      gosh: 128
 
   data_directory_path: /lustre/scratch126/cellgen/team361/DATASETS
 
@@ -32,3 +36,7 @@ dataset:
   pre_filter: null
 
   overwrite: true
+
+software_paths:
+  deepwalk: /lustre/scratch126/cellgen/team361/am84/software/Snap-6.0/examples/node2vec/node2vec
+  gosh: /lustre/scratch126/cellgen/team361/am84/software/GOSH/execs/gosh.out
