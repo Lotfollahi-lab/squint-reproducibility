@@ -15,27 +15,32 @@ dataset:
   adata_fname:
     - sim1_1105fts_10000locs.h5ad
 
-  feature_name: cell_gene_counts
+  root_data_dir: /lustre/scratch126/cellgen/team361/DATASETS
+
+  gene_count_transform_names:
+    - SubsetHVG
+  gene_count_transform_params:
+    n_genes: 1000
 
   graph_params:
-    coord_type: generic
     spatial_key: spatial
     delaunay: false
     n_neighs: 8
     radius: null
-    include_self_loop: true
+
+  feature_names:
+      - X
+      # - U_lm_eigvecs
+      # - U_deepwalk
+      # - U_gosh
 
   label_name: cell_types
 
-  transform_names:
-    - SubsetHVG
+  train_transform_names:
     - RandomNodeSplit
-  transform_params:
-    n_genes: 1000
+  train_transform_params:
     val_ratio: 0.1
     test_ratio: 0.1
-
-  root_data_dir: /lustre/scratch126/cellgen/team361/DATASETS
 
 datamodule:
   loader_name: NeighborLoader
@@ -65,6 +70,7 @@ model:
       norm: null
 
   attribute_decoder_params:
+    use_xy_coordinates: false
     mlp_params:
       hidden_channels: [600]
       dropout: 0.1
@@ -89,6 +95,6 @@ trainer:
     mode: max
     save_top_k: 1
     save_last: true
-  max_epochs: 20
+  max_epochs: 10
   enable_checkpointing: true
   ckpt_path: best
