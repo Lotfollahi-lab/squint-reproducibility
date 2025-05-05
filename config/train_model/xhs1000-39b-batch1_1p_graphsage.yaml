@@ -62,7 +62,8 @@ model:
   train_log_flags:
     log_similarity_stats: false
     log_pearson_correlation: true
-    
+    log_mmd_degree: true
+
   encoder_params:
     mlp_params:
       hidden_channels: [900, 750]
@@ -102,9 +103,11 @@ model:
     loss_names:
       # - cross_entropy
       - nb_attribute_reconstruction
+      # - mse_adjacency_reconstruction
     loss_kwargs:
       wt_cross_entropy: 1.0
       wt_attr_reconstr: 1.0
+      wt_adj_reconstr: 100.0
 
 trainer:
   checkpoint_params:
