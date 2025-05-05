@@ -56,6 +56,7 @@ model:
   model_name: VanillaMLP
   encoder_name: MLP_Encoder
   attribute_decoder_name: MLPSoftmax
+  adjacency_decoder_name: MLP_AdjacencyDecoder
   predictor_name: Linear
 
   train_log_flags:
@@ -77,6 +78,13 @@ model:
       act: relu
       norm: null
 
+  adjacency_decoder_params:
+    mlp_params:
+      hidden_channels: []
+      dropout: 0.1
+      act: relu
+      norm: null
+  
   optimizer_params:
     optimizer_name: adam
     lr: 0.0005
