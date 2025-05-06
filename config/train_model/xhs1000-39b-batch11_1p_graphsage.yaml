@@ -62,7 +62,7 @@ model:
   train_log_flags:
     log_similarity_stats: false
     log_pearson_correlation: true
-    log_mmd_degree: true
+    log_mmd_degree: false
 
   encoder_params:
     mlp_params:

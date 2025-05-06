@@ -41,3 +41,12 @@ The other datasets in the list above should work by appropriately adding/modifyi
 | VQNiche-MLP-with-annealing | | 0.6458 | |
 | VQNiche-MLP-with-xy | | 0.5498 | |
 | VQNiche-GraphSAGE | 0.3055 | 0.5498 | 0.5271 |
+
+### `xhs1000-39b-batch11_1p`
+
+| Model | Pearson (gene-wise) | Pearson (cell-wise) | Pearson (1-hop Nbr) | MMD (Node Degree) |
+|-------|-------------------|--------------|--------------|--------------|
+| MLP | 0.7192 | 0.8681 | 0.9567 | |
+| GraphSAGE | 0.6590 | 0.8213 | 0.9081 | |
+| VQNiche-MLP | 0.3906 | 0.6456 | 0.8886 | |
+| VQNiche-GraphSAGE | 0.3136 | 0.5691 | 0.8038 | |
