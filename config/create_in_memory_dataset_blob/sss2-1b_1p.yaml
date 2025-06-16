@@ -29,7 +29,7 @@ dataset:
       deepwalk: 128
       gosh: 128
 
-  data_directory_path: /lustre/scratch126/cellgen/team361/DATASETS
+  data_directory_path: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
   pre_transform: null
 
@@ -38,5 +38,5 @@ dataset:
   overwrite: true
 
 software_paths:
-  deepwalk: /lustre/scratch126/cellgen/team361/am84/software/Snap-6.0/examples/node2vec/node2vec
-  gosh: /lustre/scratch126/cellgen/team361/am84/software/GOSH/execs/gosh.out
+  deepwalk: /software/cellgen/team361/am84/third-party-software/Snap-6.0/examples/node2vec/node2vec
+  gosh: /software/cellgen/team361/am84/third-party-software/GOSH/execs/gosh.out
