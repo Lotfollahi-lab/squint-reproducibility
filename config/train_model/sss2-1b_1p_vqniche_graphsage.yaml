@@ -3,7 +3,7 @@ experiment:
   mode: standalone
 
 logging:
-  root_log_dir: /lustre/scratch126/cellgen/team361/am84/VQNiche/reproducibility/logs
+  root_log_dir: /nfs/team361/am84/VQNiche/logs/
   log_model: false
   offline: true
   enabled: true
@@ -15,7 +15,7 @@ dataset:
   adata_fname:
     - sim1_1105fts_10000locs.h5ad
 
-  root_data_dir: /lustre/scratch126/cellgen/team361/DATASETS
+  root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
   gene_count_transform_names:
     - SubsetHVG
