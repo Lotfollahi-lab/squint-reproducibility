@@ -15,20 +15,23 @@ case $DATASET_NAME in
     mmb0-4b_1p)
         RAM="25G"
         TIME="0:30"
-        CORES=1
-        QUEUE="normal"
+        NUM_GPUS=2
+        CORES=4
+        QUEUE="gpu-lotfollahi"
         ;;
     sss2-1b_1p)
         RAM="10G"
         TIME="0:30"
+        NUM_GPUS=1
         CORES=1
-        QUEUE="normal"
+        QUEUE="gpu-lotfollahi"
         ;;
     xhs1000-39b_1p)
         RAM="40G"
-        TIME="0:30"
-        CORES=4
-        QUEUE="normal"
+        TIME="4:00"
+        NUM_GPUS=2
+        CORES=8
+        QUEUE="gpu-lotfollahi"
         ;;
     *)
         echo "Invalid dataset name"
@@ -54,6 +57,7 @@ bsub \
     -M "${RAM}" -R "select[mem>${RAM}] rusage[mem=${RAM}]" \
     -W "${TIME}" \
     -cwd "${CWD}" \
+    -gpu "num=${NUM_GPUS}:mode=exclusive_process:block=yes" \
     -o "${OUTPUT_FILE}" \
     -e "${ERROR_FILE}" \
     -J "${JOB_NAME}" \
