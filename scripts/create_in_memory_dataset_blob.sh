@@ -6,6 +6,7 @@ CONFIG_FILE=$1  # path to the config file
 source /etc/profile.d/modules.sh
 if [ "$USER" == "am84" ]; then
     module load cellgen/conda
+    module load cuda-12.1.1
     conda activate vqniche-reproducibility
 elif [ "$USER" == "ls34" ]; then
     # edit

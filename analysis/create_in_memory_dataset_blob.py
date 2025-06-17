@@ -21,6 +21,8 @@ def main(config: dict):
     pre_filter = config['dataset']['pre_filter']
     overwrite = config['dataset']['overwrite']
 
+    software_paths = config['software_paths']
+
     # initialize InMemoryDatasetBlob
     dataset_blob = InMemoryDatasetBlob(
                     name=dataset_name,
@@ -30,7 +32,8 @@ def main(config: dict):
                     data_directory_path=data_directory_path,
                     pre_transform=pre_transform,
                     pre_filter=pre_filter,
-                    overwrite=overwrite
+                    overwrite=overwrite,
+                    software_paths=software_paths
                 )
     
     for data_batch in dataset_blob:
