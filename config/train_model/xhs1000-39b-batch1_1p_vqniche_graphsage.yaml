@@ -11,9 +11,9 @@ logging:
 dataset:
   dataset_name: xhs1000-39b_1p
   adata_batch_idx:
-    - 11
+    - 1
   adata_fname:
-    - adata_batch11.h5ad
+    - adata_batch1.h5ad
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
@@ -48,13 +48,13 @@ datamodule:
     batch_size: 512
   sampler_name: NeighborSampler
   sampler_params:
-    num_neighbors: [25, 10]
+    num_neighbors: [5, 10]
   inference_params:
     sample_neighbors_for_inference: false
 
 model:
-  model_name: GraphSAGE
-  encoder_name: SAGEConv
+  model_name: VQNiche
+  encoder_name: VQNiche_Encoder
   attribute_decoder_name: MLPSoftmax
   adjacency_decoder_name: MLP_AdjacencyDecoder
   predictor_name: Linear
@@ -63,26 +63,75 @@ model:
     log_similarity_stats: false
     log_pearson_correlation: true
     log_mmd_degree: false
+    log_codebook_utilization: true
 
   encoder_params:
+    gnn_name: SAGEConv
     mlp_params:
-      hidden_channels: [900, 750]
+      hidden_channels: [200, 100]
       dropout: 0.1
       act: relu
-      norm: batch_norm
+      norm: null
     gnn_params:
+      hidden_channels: 50
       num_layers: 1
-      hidden_channels: 600
       act_first: true
       activation: relu
-      norm: BatchNorm
-      dropout: 0.0
+      norm: null
+      dropout: 0.1
       init_method: kaiming_uniform
+
+    vq_params:
+      vq_name: VectorQuantize
+      # VQ related params
+      freeze_codebook: false # should always be false
+
+      # EMA update related params
+      use_cosine_sim: true
+      # use_cosine_sim: false
+      ema_update: true # if true, learnable related stuff is ignored
+      manual_ema_update: false
+      threshold_ema_dead_code: 20
+      manual_in_place_optimizer_update: false # must be false if ema_update is true
+      learnable_codebook: false # must be false if ema_update is true
+
+      # Learnable update related params
+      # use_cosine_sim: false
+      # learnable_codebook: true
+      # straight_through: false
+      # rotation_trick: true
+      # in_place_codebook_optimizer: null
+      # manual_in_place_optimizer_update: false
+      # ema_update: false
+
+      # codebook related params
+      codebook_size: 4096
+      heads: 1
+      separate_codebook_per_head: false
+      decay: 0.8
+      eps: 0.00001
+      kmeans_init: false
+      kmeans_iters: 10
+      sync_kmeans: true
+      sample_codebook_temp: 0.0
+
+      # commitment loss related params
+      commitment_weight: 0.0
+      commitment_use_cross_entropy_loss: false
+
+      # codebook diversity loss related params
+      codebook_diversity_loss_weight: 0.0
+      codebook_diversity_temperature: 100.0
+
+      # orthogonal loss related params
+      orthogonal_reg_weight: 0.0
+      orthogonal_reg_max_codes: null
+      orthogonal_reg_active_codes_only: false
 
   attribute_decoder_params:
     use_xy_coordinates: false
     mlp_params:
-      hidden_channels: [600, 750]
+      hidden_channels: [50, 100]
       dropout: 0.1
       act: relu
       norm: batch_norm
@@ -102,12 +151,19 @@ model:
   loss_params:
     loss_names:
       # - cross_entropy
+      # - mse_attribute_reconstruction
       - nb_attribute_reconstruction
       # - mse_adjacency_reconstruction
+      # - mse_joint_code_commit_loss
+      - mse_commit_loss
+      - mse_code_loss
     loss_kwargs:
       wt_cross_entropy: 1.0
       wt_attr_reconstr: 1.0
-      wt_adj_reconstr: 100.0
+      wt_adj_reconstr: 1.0
+      wt_joint_code_commit: 1.0
+      wt_commit: 1.0
+      wt_code: 1.0
 
 trainer:
   checkpoint_params:

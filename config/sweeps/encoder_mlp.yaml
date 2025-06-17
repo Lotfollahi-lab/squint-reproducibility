@@ -1,0 +1,15 @@
+name: encoder_mlp
+method: bayes
+run_cap: 10
+metric:
+    goal: minimize
+    name: val_loss
+parameters:
+  model.encoder_params.mlp_params.hidden_channels:
+    values: [[600], [600, 750], [600, 900]]
+  model.encoder_params.mlp_params.dropout:
+    values: [0.0, 0.1, 0.2]
+  model.encoder_params.mlp_params.act:
+    values: [relu]
+  model.encoder_params.mlp_params.norm:
+    values: [batch_norm, null]

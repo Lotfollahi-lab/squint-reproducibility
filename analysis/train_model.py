@@ -214,6 +214,7 @@ if __name__ == '__main__':
                             mode="offline" if base_config['logging']['offline'] else "online",
                             group=f"{base_config['dataset']['dataset_name']}:batch={base_config['dataset']['adata_batch_idx']}",
                             job_type="train",
+                            monitor_gym=True,
                         )
 
         # trains the model with the full config

@@ -11,9 +11,9 @@ logging:
 dataset:
   dataset_name: xhs1000-39b_1p
   adata_batch_idx:
-    - 11
+    - 1
   adata_fname:
-    - adata_batch11.h5ad
+    - adata_batch1.h5ad
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
@@ -107,7 +107,7 @@ model:
     loss_kwargs:
       wt_cross_entropy: 1.0
       wt_attr_reconstr: 1.0
-      wt_adj_reconstr: 100.0
+      wt_adj_reconstr: 1.0
 
 trainer:
   checkpoint_params:

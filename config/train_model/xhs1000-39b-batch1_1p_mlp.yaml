@@ -11,9 +11,9 @@ logging:
 dataset:
   dataset_name: xhs1000-39b_1p
   adata_batch_idx:
-    - 11
+    - 1
   adata_fname:
-    - adata_batch11.h5ad
+    - adata_batch1.h5ad
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
@@ -45,7 +45,7 @@ dataset:
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 512
+    batch_size: 128
   sampler_name: NeighborSampler
   sampler_params:
     num_neighbors: [25, 10]
@@ -53,8 +53,8 @@ datamodule:
     sample_neighbors_for_inference: false
 
 model:
-  model_name: GraphSAGE
-  encoder_name: SAGEConv
+  model_name: VanillaMLP
+  encoder_name: MLP_Encoder
   attribute_decoder_name: MLPSoftmax
   adjacency_decoder_name: MLP_AdjacencyDecoder
   predictor_name: Linear
@@ -69,23 +69,15 @@ model:
       hidden_channels: [900, 750]
       dropout: 0.1
       act: relu
-      norm: batch_norm
-    gnn_params:
-      num_layers: 1
-      hidden_channels: 600
-      act_first: true
-      activation: relu
-      norm: BatchNorm
-      dropout: 0.0
-      init_method: kaiming_uniform
+      norm: null
 
   attribute_decoder_params:
     use_xy_coordinates: false
     mlp_params:
-      hidden_channels: [600, 750]
+      hidden_channels: [750, 900]
       dropout: 0.1
       act: relu
-      norm: batch_norm
+      norm: null
 
   adjacency_decoder_params:
     mlp_params:
@@ -93,11 +85,11 @@ model:
       dropout: 0.1
       act: relu
       norm: null
-
+  
   optimizer_params:
     optimizer_name: adam
     lr: 0.0005
-    weight_decay: 0.001
+    weight_decay: 0.00001
 
   loss_params:
     loss_names:
@@ -107,7 +99,7 @@ model:
     loss_kwargs:
       wt_cross_entropy: 1.0
       wt_attr_reconstr: 1.0
-      wt_adj_reconstr: 100.0
+      wt_adj_reconstr: 1.0
 
 trainer:
   checkpoint_params:
