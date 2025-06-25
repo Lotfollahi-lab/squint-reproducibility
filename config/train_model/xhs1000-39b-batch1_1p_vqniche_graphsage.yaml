@@ -153,11 +153,14 @@ model:
       # - cross_entropy
       # - mse_attribute_reconstruction
       - nb_attribute_reconstruction
-      # - mse_adjacency_reconstruction
+      - mse_adjacency_reconstruction
       # - mse_joint_code_commit_loss
       - mse_commit_loss
       - mse_code_loss
     loss_kwargs:
+      estimate_adj_kwargs:
+        nonlinearity: sigmoid
+        k: 8
       wt_cross_entropy: 1.0
       wt_attr_reconstr: 1.0
       wt_adj_reconstr: 1.0
