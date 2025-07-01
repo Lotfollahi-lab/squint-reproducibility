@@ -159,7 +159,7 @@ model:
       - mse_code_loss
     loss_kwargs:
       estimate_adj_kwargs:
-        nonlinearity: sigmoid
+        nonlinearity: relu-clamp
         k: 8
       wt_cross_entropy: 1.0
       wt_attr_reconstr: 1.0
