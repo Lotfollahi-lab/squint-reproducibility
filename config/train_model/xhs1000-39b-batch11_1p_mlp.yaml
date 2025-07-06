@@ -60,9 +60,11 @@ model:
   predictor_name: Linear
 
   train_log_flags:
-    log_similarity_stats: false
-    log_pearson_correlation: true
-    log_mmd_degree: true
+    log_metrics_during_training: true
+    log_similarity: false
+    log_attribute_imputation: true
+    log_graph_imputation: true
+    log_codebook_utilization: true
 
   encoder_params:
     mlp_params:
