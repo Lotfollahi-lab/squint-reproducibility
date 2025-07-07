@@ -86,8 +86,8 @@ def train(config: Dict):
         checkpoints = [
                         pl.callbacks.ModelCheckpoint(
                             dirpath=ckpt_log_dir,
-                            monitor='val_acc',
-                            filename='{epoch}-{val_acc:.2f}',
+                            monitor='pearson_1hop_nbr',
+                            filename='{epoch}-{pearson_1hop_nbr:.2f}',
                             **checkpoint_params
                             )
                         ]
