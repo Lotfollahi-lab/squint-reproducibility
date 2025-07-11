@@ -30,7 +30,7 @@ import pytorch_lightning as pl
 
 from vqniche.utils.parse_test_configs import *
 from vqniche.initializers.initialize import *
-from vqniche.utils.metrics import *
+from vqniche import metrics
 from vqniche.utils.type_conversions import *
 
 
@@ -71,11 +71,11 @@ def test(config: Dict):
 
     # --------------------- Model ---------------------
     Model = set_model_class(config['model']['model_name'])
-    model = Model.load_from_checkpoint(config['model']['model_ckpt'])
+    model = Model.load_from_checkpoint(config['model']['model_ckpt_fname'])
     
     # --------------------- Trainer ---------------------
-    # strategy = "ddp_find_unused_parameters_true"
-    strategy = "ddp"
+    strategy = "ddp_find_unused_parameters_true"
+    # strategy = "ddp"
     
     trainer = pl.Trainer(
                     accelerator="auto",
@@ -91,131 +91,102 @@ def test(config: Dict):
                     enable_model_summary=True,
                 )
     
-    # --------------------- Accuracy ---------------------
+    # --------------------- Validation and Test ---------------------
     # compute model accuracy on validation and test sets
-    print("Computing Model Validation Accuracy...")
-    trainer.validate(
-        model=model,
-        datamodule=datamodule_batch,
-        verbose=True,
-    )
-    print("Computing Model Test Accuracy...")
-    trainer.test(
-        model=model,
-        datamodule=datamodule_batch,
-        verbose=True,
-    )
+    # print("Computing Model Validation Accuracy...")
+    # trainer.validate(
+    #     model=model,
+    #     datamodule=datamodule_batch,
+    #     verbose=True,
+    # )
+    # print("Computing Model Test Accuracy...")
+    # trainer.test(
+    #     model=model,
+    #     datamodule=datamodule_batch,
+    #     verbose=True,
+    # )
 
     # --------------------- Inference on the full dataset ---------------------
-    X, \
-    Labels_cell_type, \
-    Labels_niche_type, \
-    _, \
-    _, \
-    Indices, \
-    X_hat, \
-    H_edge = model.inference()
+    print("Collecting Inference Data...")
+    inference_data = model.collect_inference_data(
+                        datamodule_batch.infer_dataloader()
+                    )
     
-    # --------------------- Compute Attribute Metrics ---------------------
-    # compute Pearson correlation
-    pearson_correlation = compute_pearson_correlation(
-                            X.numpy(),
-                            X_hat.numpy(),
-                            compare_genes=False,
-                            mean=False,
-                        )
-    print("Pearson Correlation between original and reconstructed cell-gene matrices:")
-    print(f"Mean: {pearson_correlation.mean()}")
-    print(f"Std: {pearson_correlation.std()}")
-    print(f"Min: {pearson_correlation.min()}")
-    print(f"Max: {pearson_correlation.max()}")
-    
-    fig, ax = plt.subplots(1, 2, figsize=(10, 5))
-    sns.heatmap(
-        X.numpy(),
-        cmap='viridis',
-        ax=ax[0]
-    )
-    sns.heatmap(
-        X_hat.numpy(),
-        cmap='viridis',
-        ax=ax[1]
-    )
-    title = f"{config['dataset']['dataset_name']}, batch {config['dataset']['adata_batch_idx']}\n" \
-            f"{config['model']['model_name']}, h={config['model']['encoder_params']['hidden_channels']}, " \
-            f"k={config['model']['encoder_params']['codebook_params']['codebook_size']}\n" \
-            f"Mean Pearson Correlation: {pearson_correlation.mean():.3f}"
-    plt.suptitle(title)
-    results_dir = Path(config['experiment']['wandb_run_dir']) / 'results'
-    results_dir.mkdir(parents=True, exist_ok=True)
-    plt.savefig(
-        results_dir / 'pearson_correlation.png',
-        dpi=300,
-        bbox_inches='tight'
-    )
-    
-    # ------------------ Codebook Utilization ------------------
-    codebook_utilization = 1.0 * len(set(Indices)) / model.encoder.codebook.shape[0]
-    print(f"Codebook Utilization: {codebook_utilization}")
-    
-    # Create a DataFrame to store Indices and Labels
-    df = pd.DataFrame({
-        'Indices': Indices.squeeze().numpy(),
-        'Labels_Cell_Type': torch.argmax(Labels_cell_type, dim=1).squeeze().numpy(),
-        'Labels_Niche_Type': torch.argmax(Labels_niche_type, dim=1).squeeze().numpy()
-    })
+    # compute Pearson correlation between the original and reconstructed cell-gene matrices
+    attribute_imputation_metrics = model.compute_attribute_imputation_metrics(
+                                        data_dict=inference_data
+                                    )
+    print(attribute_imputation_metrics)
 
-    fig, ax = plt.subplots(1, 2, figsize=(10, 5))
-    sns.histplot(
-        data=df,
-        x='Indices',
-        hue='Labels_Cell_Type',
-        ax=ax[0]
-    )
-    sns.histplot(
-        data=df,
-        x='Indices',
-        hue='Labels_Niche_Type',
-        ax=ax[1]
-    )
-    title = f"{config['dataset']['dataset_name']}, batch {config['dataset']['adata_batch_idx']}\n" \
-            f"{config['model']['model_name']}, h={config['model']['encoder_params']['hidden_channels']}, " \
-            f"k={config['model']['encoder_params']['codebook_params']['codebook_size']}\n" \
-            f"Codebook Utilization: {codebook_utilization}"
-    plt.suptitle(title)
+    # compute graph imputation metrics such as MMD between the degree distribution and eigenvalue distribution of the original and reconstructed graphs
+    graph_imputation_metrics = model.compute_graph_imputation_metrics(
+                                    data_dict=inference_data
+                                )
+    print(graph_imputation_metrics)
+
+    # # --------------------- Plot ---------------------
+    # results_dir = Path(config['experiment']['wandb_run_dir']) / 'results'
+    # results_dir.mkdir(parents=True, exist_ok=True)
     
-    results_dir = Path(config['experiment']['wandb_run_dir']) / 'results'
-    results_dir.mkdir(parents=True, exist_ok=True)
-    plt.savefig(
-        results_dir / 'codebook_utilization.png',
-        dpi=300,
-        bbox_inches='tight'
-    )
+    # fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+    # sns.heatmap(
+    #     inference_data['X'].numpy(),
+    #     cmap='viridis',
+    #     ax=ax[0]
+    # )
+    # sns.heatmap(
+    #     inference_data['X_hat'].numpy(),
+    #     cmap='viridis',
+    #     ax=ax[1]
+    # )
+    # title = f"{config['dataset']['dataset_name']}, batch {config['dataset']['adata_batch_idx']}\n" \
+    #         f"{config['model']['model_name']}, h={config['model']['encoder_params']['hidden_channels']}, " \
+    #         f"k={config['model']['encoder_params']['codebook_params']['codebook_size']}\n" \
+    #         f"Mean Pearson 1-hop NBR: {attribute_imputation_metrics['pearson_1hop_nbr'].mean():.3f}"
+    # plt.suptitle(title)
+    # plt.savefig(
+    #     results_dir / 'X_X_hat.png',
+    #     dpi=300,
+    #     bbox_inches='tight'
+    # )
+    
+    # # ------------------ Codebook Utilization ------------------
+    # codebook_utilization = 1.0 * len(set(Indices)) / model.encoder.codebook.shape[0]
+    # print(f"Codebook Utilization: {codebook_utilization}")
+    
+    # # Create a DataFrame to store Indices and Labels
+    # df = pd.DataFrame({
+    #     'Indices': Indices.squeeze().numpy(),
+    #     'Labels_Cell_Type': torch.argmax(Labels_cell_type, dim=1).squeeze().numpy(),
+    #     'Labels_Niche_Type': torch.argmax(Labels_niche_type, dim=1).squeeze().numpy()
+    # })
 
-    # --------------------- Compute Graph Metrics ---------------------
-    print("Building Original Graph...")
-    G = nx.from_numpy_array(
-            edge_index_to_adjacency_tensor(
-                data_batch.edge_index
-            ).numpy()
-        )
-
-    print("Building Reconstructed Graph...")
-    G_hat = nx.from_numpy_array(
-            build_reconstructed_adjacency_matrix(
-                H_edge
-            ).numpy()
-        )
-
-    node_degree_distribution = compute_node_degree_distribution(G)
-    node_degree_distribution_hat = compute_node_degree_distribution(G_hat)
-    mmd_degree = compute_mmd(
-                    [node_degree_distribution],
-                    [node_degree_distribution_hat],
-                    method='l1_gaussian_tv',
-                    sigma=1.0,
-                )
-    print(f"MMD Node Degree: {mmd_degree}")
+    # fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+    # sns.histplot(
+    #     data=df,
+    #     x='Indices',
+    #     hue='Labels_Cell_Type',
+    #     ax=ax[0]
+    # )
+    # sns.histplot(
+    #     data=df,
+    #     x='Indices',
+    #     hue='Labels_Niche_Type',
+    #     ax=ax[1]
+    # )
+    # title = f"{config['dataset']['dataset_name']}, batch {config['dataset']['adata_batch_idx']}\n" \
+    #         f"{config['model']['model_name']}, h={config['model']['encoder_params']['hidden_channels']}, " \
+    #         f"k={config['model']['encoder_params']['codebook_params']['codebook_size']}\n" \
+    #         f"Codebook Utilization: {codebook_utilization}"
+    # plt.suptitle(title)
+    
+    # results_dir = Path(config['experiment']['wandb_run_dir']) / 'results'
+    # results_dir.mkdir(parents=True, exist_ok=True)
+    # plt.savefig(
+    #     results_dir / 'codebook_utilization.png',
+    #     dpi=300,
+    #     bbox_inches='tight'
+    # )
 
 
 if __name__ == '__main__':

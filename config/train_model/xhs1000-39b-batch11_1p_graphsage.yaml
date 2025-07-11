@@ -48,7 +48,7 @@ datamodule:
     batch_size: 512
   sampler_name: NeighborSampler
   sampler_params:
-    num_neighbors: [25, 10]
+    num_neighbors: [5, 10]
   inference_params:
     sample_neighbors_for_inference: false
 
@@ -60,29 +60,31 @@ model:
   predictor_name: Linear
 
   train_log_flags:
-    log_similarity_stats: false
-    log_pearson_correlation: true
-    log_mmd_degree: false
+    log_metrics_during_training: true
+    log_similarity: false
+    log_attribute_imputation: true
+    log_graph_imputation: true
+    log_codebook_utilization: true
 
   encoder_params:
     mlp_params:
-      hidden_channels: [900, 750]
+      hidden_channels: [200, 100]
       dropout: 0.1
       act: relu
-      norm: batch_norm
+      norm: null
     gnn_params:
       num_layers: 1
-      hidden_channels: 600
+      hidden_channels: 50
       act_first: true
       activation: relu
-      norm: BatchNorm
-      dropout: 0.0
+      norm: null
+      dropout: 0.1
       init_method: kaiming_uniform
 
   attribute_decoder_params:
     use_xy_coordinates: false
     mlp_params:
-      hidden_channels: [600, 750]
+      hidden_channels: [50, 100]
       dropout: 0.1
       act: relu
       norm: batch_norm
@@ -103,17 +105,20 @@ model:
     loss_names:
       # - cross_entropy
       - nb_attribute_reconstruction
-      # - mse_adjacency_reconstruction
+      - mse_adjacency_reconstruction
     loss_kwargs:
+      estimate_adj_kwargs:
+        nonlinearity: min-max
+        k: 8
       wt_cross_entropy: 1.0
       wt_attr_reconstr: 1.0
-      wt_adj_reconstr: 100.0
+      wt_adj_reconstr: 1.0
 
 trainer:
   checkpoint_params:
     mode: max
     save_top_k: 1
     save_last: true
-  max_epochs: 20
+  max_epochs: 10
   enable_checkpointing: true
   ckpt_path: best

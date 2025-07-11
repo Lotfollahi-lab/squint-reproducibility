@@ -4,16 +4,16 @@ experiment:
 
 logging:
   root_log_dir: /nfs/team361/am84/VQNiche/logs/
-  log_model: false
-  offline: true
+  log_model: true
+  offline: false
   enabled: true
 
 dataset:
   dataset_name: xhs1000-39b_1p
   adata_batch_idx:
-    - 1
+    - 11
   adata_fname:
-    - adata_batch1.h5ad
+    - adata_batch11.h5ad
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
@@ -60,9 +60,10 @@ model:
   predictor_name: Linear
 
   train_log_flags:
-    log_similarity_stats: false
-    log_pearson_correlation: true
-    log_mmd_degree: false
+    log_metrics_during_training: true
+    log_similarity: false
+    log_attribute_imputation: true
+    log_graph_imputation: true
     log_codebook_utilization: true
 
   encoder_params:
@@ -150,16 +151,16 @@ model:
 
   loss_params:
     loss_names:
-      # - cross_entropy
-      # - mse_attribute_reconstruction
-      - nb_attribute_reconstruction
+      - cross_entropy
+      - mse_attribute_reconstruction
+      # - nb_attribute_reconstruction
       - mse_adjacency_reconstruction
       # - mse_joint_code_commit_loss
       - mse_commit_loss
       - mse_code_loss
     loss_kwargs:
       estimate_adj_kwargs:
-        nonlinearity: sigmoid
+        nonlinearity: min-max
         k: 8
       wt_cross_entropy: 1.0
       wt_attr_reconstr: 1.0
@@ -173,6 +174,6 @@ trainer:
     mode: max
     save_top_k: 1
     save_last: true
-  max_epochs: 20
+  max_epochs: 10
   enable_checkpointing: true
   ckpt_path: best
