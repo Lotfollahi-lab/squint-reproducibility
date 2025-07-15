@@ -59,12 +59,13 @@ model:
   adjacency_decoder_name: MLP_AdjacencyDecoder
   predictor_name: Linear
 
-  train_log_flags:
-    log_metrics_during_training: true
-    log_similarity: false
-    log_attribute_imputation: true
-    log_graph_imputation: true
-    log_codebook_utilization: true
+  train_metrics_list:
+    - pearson_cell_wise
+    - pearson_1hop_nbr
+    - mmd_degree
+    - mmd_eigenvalues
+    - num_edges
+    - max_degree
 
   encoder_params:
     mlp_params:
