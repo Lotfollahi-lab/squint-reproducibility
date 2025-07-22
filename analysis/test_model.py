@@ -101,7 +101,7 @@ def test(config: Dict):
                     enable_model_summary=True,
                 )
 
-    # --------------------- Results ---------------------
+    # # --------------------- Results ---------------------
     results_dir = Path(config['experiment']['wandb_run_dir']) / 'results'
     results_dir.mkdir(parents=True, exist_ok=True)
 
@@ -140,13 +140,15 @@ def test(config: Dict):
         ])
     df = df.round(4)
     
-    # print the metrics to the console
+    # print the metrics to the console and save to a text file
     print(tabulate(df, headers='keys', tablefmt='grid'))
+    with open(results_dir / 'metrics.txt', 'w') as f:
+        f.write(tabulate(df, headers='keys', tablefmt='grid'))
 
     # save the metrics to a CSV file
     df.to_csv(results_dir / 'metrics.csv', index=False)
 
-    # # --------------------- Plot ---------------------
+    # --------------------- Plot UMAP of original and imputed attributes ---------------------
     # compute UMAP embeddings for the original and imputed attributes
     adata = compute_umap(
             adata=adata,
@@ -170,6 +172,35 @@ def test(config: Dict):
             label_key='niche_types',
             save_fname=save_fname,
         )
+    
+    # --------------------- Plot Loss and Metrics as a function of epoch ---------------------
+    # read the on_train_epoch_end_logs.csv file from the wandb run directory
+    df_fname = Path(config['experiment']['wandb_run_dir']) / 'files' / 'on_train_epoch_end_logs.csv'
+    df_loss, df_metrics = read_on_train_epoch_end_logs(
+                                file_path=df_fname,
+                            )
+    
+    # plot the loss and metrics as a function of epoch
+    save_fname = results_dir / 'loss_vs_epoch.png'
+    plot_logged_values_vs_epoch(
+        df=df_loss,
+        value_col="Value",
+        name_col="Loss Term",
+        mode_col="Mode",
+        title="Losses vs Epoch",
+        save_fname=save_fname,
+    )
+
+    # plot the metrics as a function of epoch
+    save_fname = results_dir / 'metrics_vs_epoch.png'
+    plot_logged_values_vs_epoch(
+        df=df_metrics,
+        value_col="Value",
+        name_col="Metric",
+        mode_col="Mode",
+        title="Metrics vs Epoch",
+        save_fname=save_fname,
+    )
 
 
 if __name__ == '__main__':
