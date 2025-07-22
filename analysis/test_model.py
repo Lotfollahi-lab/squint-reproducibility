@@ -17,13 +17,13 @@ Example Usage:
 >>> python analysis/test_model.py --wandb_run_dir /path/to/wandb/run
 
 """
-import os
-import scanpy as sc
-from pathlib import Path
 from typing import Dict
-import matplotlib.pyplot as plt
-import seaborn as sns
+
+import os
+import pickle
+from pathlib import Path
 import pandas as pd
+from tabulate import tabulate
 
 import torch
 import pytorch_lightning as pl
@@ -32,6 +32,17 @@ from vqniche.utils.parse_test_configs import *
 from vqniche.initializers.initialize import *
 from vqniche import metrics
 from vqniche.utils.type_conversions import *
+from vqniche.plotting import *
+
+
+attr_impute_metrics = ['pearson_cell_wise', 'pearson_1hop_nbr']
+graph_impute_metrics = ["mmd_degree", "mmd_eigenvalues", "num_edges", "max_degree"]
+sup_global_spatial_conserve_metrics = ['cas']
+unsup_global_spatial_conserve_metrics = ['mlami']
+unsup_local_spatial_conserve_metrics = ['gcs']
+sup_niche_cohere_metrics = ['cnmi', 'cari', 'casw']
+unsup_niche_cohere_metrics = ['nasw']
+METRICS_LIST = attr_impute_metrics + graph_impute_metrics + unsup_global_spatial_conserve_metrics + unsup_local_spatial_conserve_metrics + unsup_niche_cohere_metrics + sup_global_spatial_conserve_metrics + sup_niche_cohere_metrics
 
 
 def test(config: Dict):
@@ -50,12 +61,10 @@ def test(config: Dict):
     # --------------------- Determinism Settings ---------------------
     pl.seed_everything(config['experiment']['seed'])
 
-    # --------------------- Load Adata ---------------------
-    f = Path(config['dataset']['root_data_dir']) / 'silver' / config['dataset']['dataset_name'] / config['dataset']['adata_fname'][0]
-    adata = sc.read_h5ad(f)
-
     # --------------------- Dataset ---------------------
     dataset_blob = initialize_dataset_blob(config)
+    with open(Path(dataset_blob.processed_dir) / 'label_categories.pkl', 'rb') as f:
+        label_categories = pickle.load(f)
 
     # --------------------- Databatch ---------------------
     data_batch = initialize_databatch(
@@ -67,126 +76,131 @@ def test(config: Dict):
     datamodule_batch = initialize_datamodule(
                             config=config,
                             data=data_batch,
+                            
                         )
 
     # --------------------- Model ---------------------
     Model = set_model_class(config['model']['model_name'])
-    model = Model.load_from_checkpoint(config['model']['model_ckpt_fname'])
+    model = Model.load_from_checkpoint(
+                config['model']['model_ckpt_fname'],
+            )
+    model.eval()
     
     # --------------------- Trainer ---------------------
     strategy = "ddp_find_unused_parameters_true"
-    # strategy = "ddp"
-    
+
     trainer = pl.Trainer(
                     accelerator="auto",
                     devices="auto",
                     deterministic=True,
                     logger=False,
-                    callbacks=False,
                     strategy=strategy,
-                    max_epochs=config['trainer']['max_epochs'],
                     enable_checkpointing=False,
                     num_sanity_val_steps=0,
                     enable_progress_bar=False,
                     enable_model_summary=True,
                 )
-    
-    # --------------------- Validation and Test ---------------------
-    # compute model accuracy on validation and test sets
-    # print("Computing Model Validation Accuracy...")
-    # trainer.validate(
-    #     model=model,
-    #     datamodule=datamodule_batch,
-    #     verbose=True,
-    # )
-    # print("Computing Model Test Accuracy...")
-    # trainer.test(
-    #     model=model,
-    #     datamodule=datamodule_batch,
-    #     verbose=True,
-    # )
 
-    # --------------------- Inference on the full dataset ---------------------
-    print("Collecting Inference Data...")
+    # # --------------------- Results ---------------------
+    results_dir = Path(config['experiment']['wandb_run_dir']) / 'results'
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    # --------------------- Validate and Test ---------------------
+    # TODO: replace with trainer.test() that computes metrics for nodes in the test set
+    # compute loss term values for nodes in the validation set and metrics that were computed during training for the entire tissue section 
+    print("Validating Model...")
+    trainer.validate(
+        model=model,
+        ckpt_path=None,
+        datamodule=datamodule_batch,
+        verbose=True,
+    )
+
+    # --------------------- Infer ---------------------
     inference_data = model.collect_inference_data(
-                        datamodule_batch.infer_dataloader()
-                    )
-    
-    # compute Pearson correlation between the original and reconstructed cell-gene matrices
-    attribute_imputation_metrics = model.compute_attribute_imputation_metrics(
-                                        data_dict=inference_data
-                                    )
-    print(attribute_imputation_metrics)
+                    datamodule_batch.infer_dataloader()
+                )
+    adata = inference_data_dict_to_adata(
+                inference_data=inference_data,
+                label_categories_dict=label_categories,
+            )
 
-    # compute graph imputation metrics such as MMD between the degree distribution and eigenvalue distribution of the original and reconstructed graphs
-    graph_imputation_metrics = model.compute_graph_imputation_metrics(
-                                    data_dict=inference_data
-                                )
-    print(graph_imputation_metrics)
+    # --------------------- Metrics ---------------------
+    metrics_values = metrics.compute_benchmarking_metrics(
+                    adata=adata,
+                    metrics=METRICS_LIST,
+                    cell_type_key='cell_types',
+                    spatial_key='spatial',
+                    latent_key='H_adj',
+                    seed=0
+                )
+    df = pd.DataFrame([
+            {'metric': metric, 'score': score} 
+            for metric, score in metrics_values.items()
+        ])
+    df = df.round(4)
+    
+    # print the metrics to the console and save to a text file
+    print(tabulate(df, headers='keys', tablefmt='grid'))
+    with open(results_dir / 'metrics.txt', 'w') as f:
+        f.write(tabulate(df, headers='keys', tablefmt='grid'))
 
-    # # --------------------- Plot ---------------------
-    # results_dir = Path(config['experiment']['wandb_run_dir']) / 'results'
-    # results_dir.mkdir(parents=True, exist_ok=True)
-    
-    # fig, ax = plt.subplots(1, 2, figsize=(10, 5))
-    # sns.heatmap(
-    #     inference_data['X'].numpy(),
-    #     cmap='viridis',
-    #     ax=ax[0]
-    # )
-    # sns.heatmap(
-    #     inference_data['X_hat'].numpy(),
-    #     cmap='viridis',
-    #     ax=ax[1]
-    # )
-    # title = f"{config['dataset']['dataset_name']}, batch {config['dataset']['adata_batch_idx']}\n" \
-    #         f"{config['model']['model_name']}, h={config['model']['encoder_params']['hidden_channels']}, " \
-    #         f"k={config['model']['encoder_params']['codebook_params']['codebook_size']}\n" \
-    #         f"Mean Pearson 1-hop NBR: {attribute_imputation_metrics['pearson_1hop_nbr'].mean():.3f}"
-    # plt.suptitle(title)
-    # plt.savefig(
-    #     results_dir / 'X_X_hat.png',
-    #     dpi=300,
-    #     bbox_inches='tight'
-    # )
-    
-    # # ------------------ Codebook Utilization ------------------
-    # codebook_utilization = 1.0 * len(set(Indices)) / model.encoder.codebook.shape[0]
-    # print(f"Codebook Utilization: {codebook_utilization}")
-    
-    # # Create a DataFrame to store Indices and Labels
-    # df = pd.DataFrame({
-    #     'Indices': Indices.squeeze().numpy(),
-    #     'Labels_Cell_Type': torch.argmax(Labels_cell_type, dim=1).squeeze().numpy(),
-    #     'Labels_Niche_Type': torch.argmax(Labels_niche_type, dim=1).squeeze().numpy()
-    # })
+    # save the metrics to a CSV file
+    df.to_csv(results_dir / 'metrics.csv', index=False)
 
-    # fig, ax = plt.subplots(1, 2, figsize=(10, 5))
-    # sns.histplot(
-    #     data=df,
-    #     x='Indices',
-    #     hue='Labels_Cell_Type',
-    #     ax=ax[0]
-    # )
-    # sns.histplot(
-    #     data=df,
-    #     x='Indices',
-    #     hue='Labels_Niche_Type',
-    #     ax=ax[1]
-    # )
-    # title = f"{config['dataset']['dataset_name']}, batch {config['dataset']['adata_batch_idx']}\n" \
-    #         f"{config['model']['model_name']}, h={config['model']['encoder_params']['hidden_channels']}, " \
-    #         f"k={config['model']['encoder_params']['codebook_params']['codebook_size']}\n" \
-    #         f"Codebook Utilization: {codebook_utilization}"
-    # plt.suptitle(title)
+    # --------------------- Plot UMAP of original and imputed attributes ---------------------
+    # compute UMAP embeddings for the original and imputed attributes
+    adata = compute_umap(
+            adata=adata,
+            embedding_keys=['X', 'X_hat'],
+        )
     
-    # results_dir = Path(config['experiment']['wandb_run_dir']) / 'results'
-    # results_dir.mkdir(parents=True, exist_ok=True)
-    # plt.savefig(
-    #     results_dir / 'codebook_utilization.png',
-    #     dpi=300,
-    #     bbox_inches='tight'
-    # )
+    # plot UMAP embeddings for the original and imputed attributes colored by the cell types
+    save_fname = results_dir / 'UMAP_X_X_hat_cell_types.png'
+    plot_umap_attribute_imputation(
+            adata=adata,
+            embedding_keys=['X', 'X_hat'],
+            label_key='cell_types',
+            save_fname=save_fname,
+        )
+    
+    # plot UMAP embeddings for the original and imputed attributes colored by the niche types
+    save_fname = results_dir / 'UMAP_X_X_hat_niche_types.png'
+    plot_umap_attribute_imputation(
+            adata=adata,
+            embedding_keys=['X', 'X_hat'],
+            label_key='niche_types',
+            save_fname=save_fname,
+        )
+    
+    # --------------------- Plot Loss and Metrics as a function of epoch ---------------------
+    # read the on_train_epoch_end_logs.csv file from the wandb run directory
+    df_fname = Path(config['experiment']['wandb_run_dir']) / 'files' / 'on_train_epoch_end_logs.csv'
+    df_loss, df_metrics = read_on_train_epoch_end_logs(
+                                file_path=df_fname,
+                            )
+    
+    # plot the loss and metrics as a function of epoch
+    save_fname = results_dir / 'loss_vs_epoch.png'
+    plot_logged_values_vs_epoch(
+        df=df_loss,
+        value_col="Value",
+        name_col="Loss Term",
+        mode_col="Mode",
+        title="Losses vs Epoch",
+        save_fname=save_fname,
+    )
+
+    # plot the metrics as a function of epoch
+    save_fname = results_dir / 'metrics_vs_epoch.png'
+    plot_logged_values_vs_epoch(
+        df=df_metrics,
+        value_col="Value",
+        name_col="Metric",
+        mode_col="Mode",
+        title="Metrics vs Epoch",
+        save_fname=save_fname,
+    )
 
 
 if __name__ == '__main__':
@@ -205,5 +219,5 @@ if __name__ == '__main__':
     args = parse_test_arguments()
     config = collect_test_configs(args)
     
-    # --------------------- Test ---------------------
+    # --------------------- Test Pipeline---------------------
     test(config)

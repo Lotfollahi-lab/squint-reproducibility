@@ -59,12 +59,13 @@ model:
   adjacency_decoder_name: MLP_AdjacencyDecoder
   predictor_name: Linear
 
-  train_log_flags:
-    log_metrics_during_training: true
-    log_similarity: false
-    log_attribute_imputation: true
-    log_graph_imputation: true
-    log_codebook_utilization: true
+  train_metrics_list:
+    - pearson_cell_wise
+    - pearson_1hop_nbr
+    - mmd_degree
+    - mmd_eigenvalues
+    - num_edges
+    - max_degree
 
   encoder_params:
     mlp_params:
@@ -95,9 +96,9 @@ model:
 
   loss_params:
     loss_names:
-      # - cross_entropy
-      - nb_attribute_reconstruction
-      - mse_adjacency_reconstruction
+      # - cross_entropy_loss
+      - nb_attribute_reconstruction_loss
+      - mse_adjacency_reconstruction_loss
     loss_kwargs:
       estimate_adj_kwargs:
         nonlinearity: relu-clamp
