@@ -4,6 +4,8 @@ experiment:
 
 logging:
   root_log_dir: /nfs/team361/am84/VQNiche/logs/
+  # log_model: true
+  # offline: false
   log_model: false
   offline: true
   enabled: true
@@ -29,12 +31,15 @@ dataset:
     radius: null
 
   feature_names:
-      - X
-      # - U_lm_eigvecs
-      # - U_deepwalk
-      # - U_gosh
+    - X
 
   label_name: cell_types
+
+  conditioning_sources:
+    # - absolute_xy
+    - U_lm_eigvecs
+    # - U_deepwalk
+    # - U_gosh
 
   train_transform_names:
     - RandomNodeSplit
@@ -82,6 +87,11 @@ model:
       norm: null
       dropout: 0.1
       init_method: kaiming_uniform
+
+    conditioning_params:
+      conditioning_module_name: FiLM
+      conditioning_kwargs:
+        use_bias: true
 
     vq_params:
       vq_name: VectorQuantize

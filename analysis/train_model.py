@@ -70,6 +70,7 @@ def train(config: Dict):
     model = initialize_model(
                 config=config,
                 in_channels=data_batch.num_features,
+                condition_dim=data_batch.condition_dim,
                 out_channels=data_batch.num_classes,
             )
     
