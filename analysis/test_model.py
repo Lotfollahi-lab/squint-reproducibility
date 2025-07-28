@@ -33,16 +33,20 @@ from vqniche.initializers.initialize import *
 from vqniche import metrics
 from vqniche.utils.type_conversions import *
 from vqniche.plotting import *
+from vqniche.utils.loss_utils import aggregate_1hop_neighbor_features
 
 
+codebook_metrics = ['codebook_utilization']
 attr_impute_metrics = ['pearson_cell_wise', 'pearson_1hop_nbr']
 graph_impute_metrics = ["mmd_degree", "mmd_eigenvalues", "num_edges", "max_degree"]
 sup_global_spatial_conserve_metrics = ['cas']
 unsup_global_spatial_conserve_metrics = ['mlami']
 unsup_local_spatial_conserve_metrics = ['gcs']
-sup_niche_cohere_metrics = ['cnmi', 'cari', 'casw']
+sup_niche_cohere_metrics = ['casw']
+sup_niche_cohere_metrics = []
 unsup_niche_cohere_metrics = ['nasw']
-METRICS_LIST = attr_impute_metrics + graph_impute_metrics + unsup_global_spatial_conserve_metrics + unsup_local_spatial_conserve_metrics + unsup_niche_cohere_metrics + sup_global_spatial_conserve_metrics + sup_niche_cohere_metrics
+# unsup_niche_cohere_metrics = []
+METRICS_LIST = codebook_metrics + attr_impute_metrics + graph_impute_metrics + unsup_global_spatial_conserve_metrics + unsup_local_spatial_conserve_metrics + unsup_niche_cohere_metrics + sup_global_spatial_conserve_metrics + sup_niche_cohere_metrics
 
 
 def test(config: Dict):
@@ -117,13 +121,24 @@ def test(config: Dict):
     )
 
     # --------------------- Infer ---------------------
+    infer_dict_fname = results_dir / 'inference_data_dict.pkl'
+    print(f"Computing inference data and saving to {infer_dict_fname}...")
     inference_data = model.collect_inference_data(
                     datamodule_batch.infer_dataloader()
                 )
+    with open(infer_dict_fname, 'wb') as f:
+        pickle.dump(inference_data, f)
+    
+    # --------------------- Convert Inference Data to AnnData ---------------------
+    adata_fname = results_dir / 'inference_adata.pkl'
+    print(f"Converting inference data to AnnData and saving to {adata_fname}...")
     adata = inference_data_dict_to_adata(
                 inference_data=inference_data,
                 label_categories_dict=label_categories,
             )
+    if not adata_fname.exists():
+        with open(adata_fname, 'wb') as f:
+            pickle.dump(adata, f)
 
     # --------------------- Metrics ---------------------
     metrics_values = metrics.compute_benchmarking_metrics(
@@ -134,6 +149,7 @@ def test(config: Dict):
                     latent_key='H_adj',
                     seed=0
                 )
+    
     df = pd.DataFrame([
             {'metric': metric, 'score': score} 
             for metric, score in metrics_values.items()
@@ -149,17 +165,27 @@ def test(config: Dict):
     df.to_csv(results_dir / 'metrics.csv', index=False)
 
     # --------------------- Plot UMAP of original and imputed attributes ---------------------
-    # compute UMAP embeddings for the original and imputed attributes
+    # compute UMAP embeddings for the original and imputed 1-hop neighbor attributes
+    adata.uns['X_nbr'] = aggregate_1hop_neighbor_features(
+        X=adata.uns['X'],
+        edge_index=adata.uns['edge_index'],
+        return_mean=False,
+    )
+    adata.uns['X_hat_nbr'] = aggregate_1hop_neighbor_features(
+        X=adata.uns['X_hat'],
+        edge_index=adata.uns['edge_index'],
+        return_mean=False,
+    )
     adata = compute_umap(
             adata=adata,
-            embedding_keys=['X', 'X_hat'],
+            embedding_keys=['X', 'X_hat', 'X_nbr', 'X_hat_nbr'],
         )
     
     # plot UMAP embeddings for the original and imputed attributes colored by the cell types
     save_fname = results_dir / 'UMAP_X_X_hat_cell_types.png'
     plot_umap_attribute_imputation(
             adata=adata,
-            embedding_keys=['X', 'X_hat'],
+            embedding_keys=['X', 'X_hat', 'X_nbr', 'X_hat_nbr'],
             label_key='cell_types',
             save_fname=save_fname,
         )
@@ -168,7 +194,7 @@ def test(config: Dict):
     save_fname = results_dir / 'UMAP_X_X_hat_niche_types.png'
     plot_umap_attribute_imputation(
             adata=adata,
-            embedding_keys=['X', 'X_hat'],
+            embedding_keys=['X', 'X_hat', 'X_nbr', 'X_hat_nbr'],
             label_key='niche_types',
             save_fname=save_fname,
         )
