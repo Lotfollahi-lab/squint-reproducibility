@@ -67,6 +67,8 @@ def train(config: Dict):
                         )
 
     # --------------------- Model ---------------------
+    config['model']['encoder_params']['conditioning_params']['condition_dim'] = data_batch.encoder_condition_dim
+
     model = initialize_model(
                 config=config,
                 in_channels=data_batch.num_features,
