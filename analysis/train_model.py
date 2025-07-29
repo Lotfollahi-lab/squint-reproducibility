@@ -67,7 +67,8 @@ def train(config: Dict):
                         )
 
     # --------------------- Model ---------------------
-    config['model']['encoder_params']['conditioning_params']['condition_dim'] = data_batch.encoder_condition_dim
+    if hasattr(config['model']['encoder_params'], 'conditioning_params'):
+        config['model']['encoder_params']['conditioning_params']['condition_dim'] = data_batch.encoder_condition_dim
 
     model = initialize_model(
                 config=config,
