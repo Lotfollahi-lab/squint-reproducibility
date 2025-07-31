@@ -39,8 +39,9 @@ from vqniche.utils.loss_utils import aggregate_1hop_neighbor_features
 
 
 codebook_metrics = ['codebook_utilization']
+codebook_metrics = []
 attr_impute_metrics = ['pearson_cell_wise', 'pearson_1hop_nbr']
-graph_impute_metrics = ["mmd_degree", "mmd_eigenvalues", "num_edges", "max_degree"]
+graph_impute_metrics = ["mmd_degree", "num_edges", "max_degree"]
 sup_global_spatial_conserve_metrics = ['cas']
 unsup_global_spatial_conserve_metrics = ['mlami']
 unsup_local_spatial_conserve_metrics = ['gcs']
@@ -109,7 +110,7 @@ def test(config: Dict):
 
     # --------------------- Results ---------------------
     # create a results directory for the model run with the name of the model checkpoint file
-    results_dir = Path(config['experiment']['wandb_run_dir']) / 'results' / config['model']['model_ckpt_fname'].split('/')[-1].split('.')[0]
+    results_dir = Path(config['experiment']['wandb_run_dir']) / 'results' / config['model']['model_ckpt_fname'].stem
     results_dir.mkdir(parents=True, exist_ok=True)
 
     # --------------------- Validate and Test ---------------------
