@@ -30,9 +30,6 @@ dataset:
 
   feature_names:
       - X
-      # - U_lm_eigvecs
-      # - U_deepwalk
-      # - U_gosh
 
   label_name: cell_types
 
@@ -107,10 +104,12 @@ model:
   loss_params:
     loss_names:
       # - cross_entropy_loss
-      # - nb_attribute_reconstruction_loss
+      - nb_attribute_reconstruction_loss
       # - mse_adjacency_reconstruction_loss
       - bce_adjacency_reconstruction_loss
     loss_kwargs:
+      edge_sampling_ratio: 1.0
+      use_pos_weight: true
       estimate_adj_kwargs:
         nonlinearity: sigmoid
         k: 8
