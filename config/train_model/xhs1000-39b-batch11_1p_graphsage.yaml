@@ -45,10 +45,10 @@ dataset:
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 512
+    batch_size: 256
   sampler_name: NeighborSampler
   sampler_params:
-    num_neighbors: [5, 10]
+    num_neighbors: [16, 16]
   inference_params:
     sample_neighbors_for_inference: false
 
@@ -62,20 +62,22 @@ model:
   train_metrics_list:
     - pearson_cell_wise
     - pearson_1hop_nbr
-    - mmd_degree
-    - mmd_eigenvalues
-    - num_edges
-    - max_degree
+    - cas
+    - mlami
+    # - mmd_degree
+    # - mmd_eigenvalues
+    # - num_edges
+    # - max_degree
 
   encoder_params:
     mlp_params:
-      hidden_channels: [200, 100]
+      hidden_channels: [600, 200]
       dropout: 0.1
       act: relu
       norm: null
     gnn_params:
-      num_layers: 1
-      hidden_channels: 50
+      num_layers: 3
+      hidden_channels: 200
       act_first: true
       activation: relu
       norm: null
@@ -85,17 +87,17 @@ model:
   attribute_decoder_params:
     use_xy_coordinates: false
     mlp_params:
-      hidden_channels: [50, 100]
+      hidden_channels: [200, 600]
       dropout: 0.1
       act: relu
-      norm: batch_norm
+      norm: layer_norm
 
   adjacency_decoder_params:
     mlp_params:
-      hidden_channels: []
-      dropout: 0.1
+      hidden_channels: [200, 600]
+      dropout: 0.2
       act: relu
-      norm: null
+      norm: layer_norm
 
   optimizer_params:
     optimizer_name: adam
@@ -105,11 +107,12 @@ model:
   loss_params:
     loss_names:
       # - cross_entropy_loss
-      - nb_attribute_reconstruction_loss
-      - mse_adjacency_reconstruction_loss
+      # - nb_attribute_reconstruction_loss
+      # - mse_adjacency_reconstruction_loss
+      - bce_adjacency_reconstruction_loss
     loss_kwargs:
       estimate_adj_kwargs:
-        nonlinearity: min-max
+        nonlinearity: sigmoid
         k: 8
       wt_cross_entropy: 1.0
       wt_attr_reconstr: 1.0

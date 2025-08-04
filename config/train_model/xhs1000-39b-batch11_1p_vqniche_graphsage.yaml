@@ -4,6 +4,8 @@ experiment:
 
 logging:
   root_log_dir: /nfs/team361/am84/VQNiche/logs/
+  # log_model: true
+  # offline: false
   log_model: false
   offline: true
   enabled: true
@@ -29,10 +31,7 @@ dataset:
     radius: null
 
   feature_names:
-      - X
-      # - U_lm_eigvecs
-      # - U_deepwalk
-      # - U_gosh
+    - X
 
   label_name: cell_types
 
@@ -45,10 +44,10 @@ dataset:
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 512
+    batch_size: 256
   sampler_name: NeighborSampler
   sampler_params:
-    num_neighbors: [5, 10]
+    num_neighbors: [16, 16]
   inference_params:
     sample_neighbors_for_inference: false
 
@@ -63,25 +62,32 @@ model:
     - pearson_cell_wise
     - pearson_1hop_nbr
     - mmd_degree
-    - mmd_eigenvalues
+    # - mmd_eigenvalues
     - num_edges
     - max_degree
 
   encoder_params:
     gnn_name: SAGEConv
     mlp_params:
-      hidden_channels: [200, 100]
+      hidden_channels: [600, 200]
       dropout: 0.1
       act: relu
       norm: null
     gnn_params:
-      hidden_channels: 50
+      hidden_channels: 200
       num_layers: 1
       act_first: true
       activation: relu
       norm: null
       dropout: 0.1
       init_method: kaiming_uniform
+
+    conditioning_params:
+      condition_list:
+        - rbf_distances
+      conditioning_module_name: FiLM
+      conditioning_kwargs:
+        use_bias: true
 
     vq_params:
       vq_name: VectorQuantize
@@ -107,7 +113,7 @@ model:
       # ema_update: false
 
       # codebook related params
-      codebook_size: 4096
+      codebook_size: 5000
       heads: 1
       separate_codebook_per_head: false
       decay: 0.8
@@ -133,7 +139,7 @@ model:
   attribute_decoder_params:
     use_xy_coordinates: false
     mlp_params:
-      hidden_channels: [50, 100]
+      hidden_channels: [200, 600]
       dropout: 0.1
       act: relu
       norm: batch_norm
@@ -141,7 +147,7 @@ model:
   adjacency_decoder_params:
     mlp_params:
       hidden_channels: []
-      dropout: 0.1
+      dropout: 0.2
       act: relu
       norm: null
 
@@ -155,7 +161,8 @@ model:
       # - cross_entropy_loss
       # - mse_attribute_reconstruction_loss
       - nb_attribute_reconstruction_loss
-      - mse_adjacency_reconstruction_loss
+      # - mse_adjacency_reconstruction_loss
+      - bce_adjacency_reconstruction_loss
       # - mse_joint_code_commit_loss
       - mse_commit_loss
       - mse_code_loss

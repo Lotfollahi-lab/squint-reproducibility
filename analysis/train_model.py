@@ -67,6 +67,9 @@ def train(config: Dict):
                         )
 
     # --------------------- Model ---------------------
+    if hasattr(config['model']['encoder_params'], 'conditioning_params'):
+        config['model']['encoder_params']['conditioning_params']['condition_dim'] = data_batch.encoder_condition_dim
+
     model = initialize_model(
                 config=config,
                 in_channels=data_batch.num_features,
@@ -119,22 +122,22 @@ def train(config: Dict):
         datamodule=datamodule_batch
     )
 
-    # --------------------- Validate Model ---------------------
-    if enable_checkpointing:
-        print("Validating Model using the best checkpoint...")
-        trainer.validate(
-            ckpt_path="best",
-            datamodule=datamodule_batch,
-            verbose=True,
-        )
-    else:
-        print("Validating Model using the last checkpoint...")
-        trainer.validate(
-            model=model,
-            ckpt_path=None,
-            datamodule=datamodule_batch,
-            verbose=True,
-        )
+    # # --------------------- Validate Model ---------------------
+    # if enable_checkpointing:
+    #     print("Validating Model using the best checkpoint...")
+    #     trainer.validate(
+    #         ckpt_path="best",
+    #         datamodule=datamodule_batch,
+    #         verbose=True,
+    #     )
+    # else:
+    #     print("Validating Model using the last checkpoint...")
+    #     trainer.validate(
+    #         model=model,
+    #         ckpt_path=None,
+    #         datamodule=datamodule_batch,
+    #         verbose=True,
+    #     )
 
 
 if __name__ == '__main__':
