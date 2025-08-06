@@ -59,10 +59,13 @@ model:
   predictor_name: Linear
 
   train_metrics_list:
+    - codebook_utilization
     - pearson_cell_wise
     - pearson_1hop_nbr
+    - cas
+    - mlami
+    - gcs
     - mmd_degree
-    # - mmd_eigenvalues
     - num_edges
     - max_degree
 
@@ -82,12 +85,12 @@ model:
       dropout: 0.1
       init_method: kaiming_uniform
 
-    conditioning_params:
-      condition_list:
-        - rbf_distances
-      conditioning_module_name: FiLM
-      conditioning_kwargs:
-        use_bias: true
+    # conditioning_params:
+    #   condition_list:
+    #     - cell_types
+    #   conditioning_module_name: FiLM
+    #   conditioning_kwargs:
+    #     use_bias: true
 
     vq_params:
       vq_name: VectorQuantize
@@ -133,8 +136,8 @@ model:
 
       # orthogonal loss related params
       orthogonal_reg_weight: 0.0
-      orthogonal_reg_max_codes: null
-      orthogonal_reg_active_codes_only: false
+      orthogonal_reg_max_codes: null # apply to a random subset of codes
+      orthogonal_reg_active_codes_only: false # apply only to actively used codes in the current batch
 
   attribute_decoder_params:
     use_xy_coordinates: false
@@ -142,14 +145,14 @@ model:
       hidden_channels: [200, 600]
       dropout: 0.1
       act: relu
-      norm: batch_norm
+      norm: layer_norm
 
   adjacency_decoder_params:
     mlp_params:
-      hidden_channels: []
+      hidden_channels: [600]
       dropout: 0.2
       act: relu
-      norm: null
+      norm: layer_norm
 
   optimizer_params:
     optimizer_name: adam
@@ -167,8 +170,10 @@ model:
       - mse_commit_loss
       - mse_code_loss
     loss_kwargs:
+      edge_sampling_ratio: 1.0
+      use_pos_weight: true
       estimate_adj_kwargs:
-        nonlinearity: relu-clamp
+        nonlinearity: sigmoid
         k: 8
       wt_cross_entropy: 1.0
       wt_attr_reconstr: 1.0
