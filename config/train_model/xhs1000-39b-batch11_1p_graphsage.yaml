@@ -82,7 +82,6 @@ model:
       init_method: kaiming_uniform
 
   attribute_decoder_params:
-    use_xy_coordinates: false
     mlp_params:
       hidden_channels: [200, 600]
       dropout: 0.1
