@@ -89,8 +89,9 @@ model:
       norm: layer_norm
 
   adjacency_decoder_params:
+    out_channels: 600
     mlp_params:
-      hidden_channels: [600]
+      hidden_channels: []
       dropout: 0.2
       act: relu
       norm: batch_norm
