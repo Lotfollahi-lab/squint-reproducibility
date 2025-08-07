@@ -83,7 +83,7 @@ model:
 
   attribute_decoder_params:
     mlp_params:
-      hidden_channels: [200, 600]
+      hidden_channels: [600]
       dropout: 0.1
       act: relu
       norm: layer_norm
