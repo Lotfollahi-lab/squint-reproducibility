@@ -62,12 +62,12 @@ model:
     - codebook_utilization
     - pearson_cell_wise
     - pearson_1hop_nbr
-    - cas
-    - mlami
-    - gcs
-    - mmd_degree
-    - num_edges
-    - max_degree
+    # - cas
+    # - mlami
+    # - gcs
+    # - mmd_degree
+    # - num_edges
+    # - max_degree
 
   encoder_params:
     gnn_name: SAGEConv
@@ -141,15 +141,20 @@ model:
 
   attribute_decoder_params:
     mlp_params:
-      hidden_channels: [600]
+      hidden_channels: [200, 200, 200]
       dropout: 0.1
       act: relu
       norm: layer_norm
 
+    # conditioning_params:
+    #   condition_list:
+    #     - rbf_distances
+    #   use_bias: false
+
   adjacency_decoder_params:
     out_channels: 600
     mlp_params:
-      hidden_channels: []
+      hidden_channels: [400]
       dropout: 0.2
       act: relu
       norm: layer_norm
@@ -165,16 +170,16 @@ model:
       # - mse_attribute_reconstruction_loss
       - nb_attribute_reconstruction_loss
       # - mse_adjacency_reconstruction_loss
-      - bce_adjacency_reconstruction_loss
+      # - bce_adjacency_reconstruction_loss
       # - mse_joint_code_commit_loss
       - mse_commit_loss
       - mse_code_loss
     loss_kwargs:
-      edge_sampling_ratio: 1.0
+      edge_sampling_ratio: null
       use_pos_weight: true
       estimate_adj_kwargs:
-        nonlinearity: sigmoid
-        k: 8
+        nonlinearity: relu-clamp
+        k: 6
       wt_cross_entropy: 1.0
       wt_attr_reconstr: 1.0
       wt_adj_reconstr: 1.0

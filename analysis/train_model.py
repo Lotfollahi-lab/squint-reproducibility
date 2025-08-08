@@ -69,6 +69,10 @@ def train(config: Dict):
     # --------------------- Model ---------------------
     if 'conditioning_params' in config['model']['encoder_params']:
         config['model']['encoder_params']['conditioning_params']['condition_dim'] = data_batch.encoder_condition_dim
+    if 'conditioning_params' in config['model']['attribute_decoder_params']:
+        config['model']['attribute_decoder_params']['conditioning_params']['condition_dim'] = data_batch.attr_decoder_condition_dim
+    if 'conditioning_params' in config['model']['adjacency_decoder_params']:
+        config['model']['adjacency_decoder_params']['conditioning_params']['condition_dim'] = data_batch.adj_decoder_condition_dim
 
     model = initialize_model(
                 config=config,
