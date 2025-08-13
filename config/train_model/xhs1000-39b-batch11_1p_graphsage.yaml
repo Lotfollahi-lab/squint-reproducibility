@@ -36,8 +36,8 @@ dataset:
   train_transform_names:
     - RandomNodeSplit
   train_transform_params:
-    val_ratio: 0.1
-    test_ratio: 0.1
+    val_ratio: 0.2
+    test_ratio: 0.2
 
 datamodule:
   loader_name: NeighborLoader
@@ -58,9 +58,9 @@ model:
 
   train_metrics_list:
     - pearson_cell_wise
-    - pearson_1hop_nbr
-    - cas
-    - mlami
+    # - pearson_1hop_nbr
+    # - cas
+    # - mlami
     # - mmd_degree
     # - mmd_eigenvalues
     # - num_edges
