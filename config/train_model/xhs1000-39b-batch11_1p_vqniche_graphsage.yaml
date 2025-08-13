@@ -35,11 +35,27 @@ dataset:
 
   label_name: cell_types
 
+  # train_transform_names:
+  #   - RandomNodeSplit
+  # train_transform_params:
+  #   val_ratio: 0.2
+  #   test_ratio: 0.2
+
   train_transform_names:
-    - RandomNodeSplit
+    - SpatialNodeSplit
   train_transform_params:
-    val_ratio: 0.1
-    test_ratio: 0.1
+    test_region:
+      x_min: 1000
+      x_max: 2000
+      y_min: 3000
+      y_max: 3500
+    val_region:
+      x_min: 3000
+      x_max: 4000
+      y_min: 3000
+      y_max: 3500
+    xy_key: xy_coordinates
+
 
 datamodule:
   loader_name: NeighborLoader
@@ -61,7 +77,7 @@ model:
   train_metrics_list:
     - codebook_utilization
     - pearson_cell_wise
-    - pearson_1hop_nbr
+    # - pearson_1hop_nbr
     # - cas
     # - mlami
     # - gcs
@@ -71,11 +87,13 @@ model:
 
   encoder_params:
     gnn_name: SAGEConv
+
     mlp_params:
       hidden_channels: [600, 200]
       dropout: 0.1
       act: relu
       norm: null
+
     gnn_params:
       hidden_channels: 200
       num_layers: 1
@@ -87,10 +105,11 @@ model:
 
     # conditioning_params:
     #   condition_list:
-    #     - cell_types
-    #   conditioning_module_name: FiLM
-    #   conditioning_kwargs:
-    #     use_bias: true
+    #     - rbf_distances
+    #   use_bias: true
+    #   use_residual: false
+    #   residual_weight: 0.0
+    #   init_mode: dependence
 
     vq_params:
       vq_name: VectorQuantize
@@ -141,18 +160,22 @@ model:
 
   attribute_decoder_params:
     mlp_params:
-      hidden_channels: [200, 200, 200]
+      hidden_channels: [600]
       dropout: 0.1
-      act: relu
+      act: gelu
       norm: layer_norm
 
-    # conditioning_params:
-    #   condition_list:
-    #     - rbf_distances
-    #   use_bias: false
+    conditioning_params:
+      condition_list:
+        - rbf_distances
+      use_bias: true
+      use_residual: false
+      residual_weight: 0.0
+      init_mode: dependence
 
   adjacency_decoder_params:
     out_channels: 600
+
     mlp_params:
       hidden_channels: [400]
       dropout: 0.2
@@ -161,7 +184,7 @@ model:
 
   optimizer_params:
     optimizer_name: adam
-    lr: 0.0005
+    lr: 0.001
     weight_decay: 0.001
 
   loss_params:
@@ -170,7 +193,7 @@ model:
       # - mse_attribute_reconstruction_loss
       - nb_attribute_reconstruction_loss
       # - mse_adjacency_reconstruction_loss
-      # - bce_adjacency_reconstruction_loss
+      - bce_adjacency_reconstruction_loss
       # - mse_joint_code_commit_loss
       - mse_commit_loss
       - mse_code_loss
@@ -178,8 +201,8 @@ model:
       edge_sampling_ratio: null
       use_pos_weight: true
       estimate_adj_kwargs:
-        nonlinearity: relu-clamp
-        k: 6
+        nonlinearity: sigmoid
+        k: 8
       wt_cross_entropy: 1.0
       wt_attr_reconstr: 1.0
       wt_adj_reconstr: 1.0
