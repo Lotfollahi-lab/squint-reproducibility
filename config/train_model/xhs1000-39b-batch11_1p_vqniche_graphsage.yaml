@@ -35,26 +35,26 @@ dataset:
 
   label_name: cell_types
 
-  # train_transform_names:
-  #   - RandomNodeSplit
-  # train_transform_params:
-  #   val_ratio: 0.2
-  #   test_ratio: 0.2
-
   train_transform_names:
-    - SpatialNodeSplit
+    - RandomNodeSplit
   train_transform_params:
-    test_region:
-      x_min: 1000
-      x_max: 2000
-      y_min: 3000
-      y_max: 3500
-    val_region:
-      x_min: 3000
-      x_max: 4000
-      y_min: 3000
-      y_max: 3500
-    xy_key: xy_coordinates
+    val_ratio: 0.2
+    test_ratio: 0.2
+
+  # train_transform_names:
+  #   - SpatialNodeSplit
+  # train_transform_params:
+  #   test_region:
+  #     x_min: 1000
+  #     x_max: 2000
+  #     y_min: 3000
+  #     y_max: 3500
+  #   val_region:
+  #     x_min: 3000
+  #     x_max: 4000
+  #     y_min: 3000
+  #     y_max: 3500
+  #   xy_key: xy_coordinates
 
 
 datamodule:
@@ -159,6 +159,10 @@ model:
       orthogonal_reg_active_codes_only: false # apply only to actively used codes in the current batch
 
   attribute_decoder_params:
+    # apply_conditioning: null # pre-MLP | in-MLP | None
+    # apply_conditioning: pre-MLP # pre-MLP | in-MLP | None
+    apply_conditioning: in-MLP # pre-MLP | in-MLP | None
+  
     mlp_params:
       hidden_channels: [600]
       dropout: 0.1
@@ -215,6 +219,6 @@ trainer:
     mode: max
     save_top_k: 1
     save_last: true
-  max_epochs: 10
+  max_epochs: 5
   enable_checkpointing: true
   ckpt_path: best
