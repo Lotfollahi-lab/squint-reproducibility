@@ -14,8 +14,12 @@ dataset:
   dataset_name: xhs1000-39b_1p
   adata_batch_idx:
     - 11
+    - 12
+    - 13
   adata_fname:
     - adata_batch11.h5ad
+    - adata_batch12.h5ad
+    - adata_batch13.h5ad
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
@@ -35,11 +39,11 @@ dataset:
 
   label_name: cell_types
 
-  train_transform_names:
-    - RandomNodeSplit
-  train_transform_params:
-    val_ratio: 0.2
-    test_ratio: 0.2
+  # train_transform_names:
+  #   - RandomNodeSplit
+  # train_transform_params:
+  #   val_ratio: 0.4
+  #   test_ratio: 0.4
 
   # train_transform_names:
   #   - SpatialNodeSplit
@@ -55,6 +59,22 @@ dataset:
   #     y_min: 3000
   #     y_max: 3500
   #   xy_key: xy_coordinates
+
+  train_transform_names:
+    - SpatialBatchSplit
+  train_transform_params:
+    region:
+      x_min: 4000
+      x_max: 5000
+      y_min: 3000
+      y_max: 3500
+    xy_key: xy_coordinates
+    train_batches:
+      - 11
+    val_batches:
+      - 12
+    test_batches:
+      - 13
 
 
 datamodule:
@@ -103,13 +123,15 @@ model:
       dropout: 0.1
       init_method: kaiming_uniform
 
-    # conditioning_params:
-    #   condition_list:
-    #     - rbf_distances
-    #   use_bias: true
-    #   use_residual: false
-    #   residual_weight: 0.0
-    #   init_mode: dependence
+    conditioning_params:
+      condition_list:
+        - rbf_distances
+      use_bias: true
+      use_residual: false
+      residual_weight: 0.0
+      init_mode: dependence
+      # s_gamma: 0.2
+      # s_beta: 0.5
 
     vq_params:
       vq_name: VectorQuantize
@@ -159,10 +181,6 @@ model:
       orthogonal_reg_active_codes_only: false # apply only to actively used codes in the current batch
 
   attribute_decoder_params:
-    # apply_conditioning: null # pre-MLP | in-MLP | None
-    # apply_conditioning: pre-MLP # pre-MLP | in-MLP | None
-    apply_conditioning: in-MLP # pre-MLP | in-MLP | None
-  
     mlp_params:
       hidden_channels: [600]
       dropout: 0.1
@@ -170,12 +188,18 @@ model:
       norm: layer_norm
 
     conditioning_params:
+      # generator_hidden: [32]
       condition_list:
         - rbf_distances
       use_bias: true
       use_residual: false
       residual_weight: 0.0
       init_mode: dependence
+      # softplus_eps: 0.001
+      # s_gamma: 0.2
+      # s_beta: 0.5
+      # tanh_cap_gamma: 0.2
+      # tanh_cap_beta: 0.05
 
   adjacency_decoder_params:
     out_channels: 600
