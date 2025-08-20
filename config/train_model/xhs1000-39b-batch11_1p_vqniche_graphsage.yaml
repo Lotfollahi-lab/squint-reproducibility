@@ -75,11 +75,10 @@ model:
 
   imputation_params:
     # mask_strategy: original
-    # mask_strategy: zeros
     mask_strategy: learnable_parameter
-    base_mask_ratio: 0.2
-    final_mask_ratio: 0.6
-    warmup_epochs: 10
+    base_mask_ratio: 0.3
+    final_mask_ratio: 0.3
+    warmup_epochs: 0
     deterministic_masking: false
     compute_mask_input_diversity: false
     mask_token_eps: 0.0001
@@ -107,7 +106,7 @@ model:
 
     gnn_params:
       hidden_channels: 200
-      num_layers: 1
+      num_layers: 3
       act_first: true
       activation: relu
       norm: null
@@ -129,10 +128,9 @@ model:
 
       # EMA update related params
       use_cosine_sim: true
-      # use_cosine_sim: false
       ema_update: true # if true, learnable related stuff is ignored
       manual_ema_update: false
-      threshold_ema_dead_code: 20
+      threshold_ema_dead_code: 100
       manual_in_place_optimizer_update: false # must be false if ema_update is true
       learnable_codebook: false # must be false if ema_update is true
 
@@ -147,7 +145,7 @@ model:
 
       # codebook related params
       codebook_size: 5000
-      heads: 1
+      heads: 20
       separate_codebook_per_head: false
       decay: 0.8
       eps: 0.00001
@@ -214,10 +212,10 @@ model:
       - mse_commit_loss
       - mse_code_loss
     loss_kwargs:
-      # k_hop_nb_loss: 0
-      k_hop_nb_loss: 1
-      # only_masked: false
-      only_masked: true
+      k_hop_nb_loss: 0
+      # k_hop_nb_loss: 1
+      only_masked: false
+      # only_masked: true
       edge_sampling_ratio: null
       use_pos_weight: true
       estimate_adj_kwargs:
