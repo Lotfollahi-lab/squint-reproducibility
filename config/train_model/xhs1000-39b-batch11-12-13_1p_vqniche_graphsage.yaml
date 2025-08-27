@@ -16,10 +16,14 @@ dataset:
     - 11
     - 12
     - 13
+    # - 14
+    # - 15
   adata_fname:
     - adata_batch11.h5ad
     - adata_batch12.h5ad
     - adata_batch13.h5ad
+    # - adata_batch14.h5ad
+    # - adata_batch15.h5ad
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
@@ -90,7 +94,9 @@ model:
   train_metrics_list:
     - codebook_utilization
     - pearson_cell_wise
-    # - pearson_1hop_nbr
+    - pearson_1hop_nbr
+    # - pearson_gene_wise
+    - pearson_gene_wise_1hop_nbr
     # - cas
     # - mlami
     # - gcs
@@ -119,7 +125,7 @@ model:
 
     # conditioning_params:
     #   condition_list:
-    #     - rbf_distances
+    #     - relative_xy
     #   use_bias: true
     #   use_residual: false
     #   residual_weight: 0.2
@@ -178,7 +184,7 @@ model:
     # apply_conditioning: in-MLP # pre-MLP | in-MLP | None
     # conditioning_params:
     #   condition_list:
-    #     - rbf_distances
+    #     - relative_xy
     #   use_bias: true
     #   use_residual: false
     #   residual_weight: 0.2

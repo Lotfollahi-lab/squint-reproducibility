@@ -86,7 +86,9 @@ model:
   train_metrics_list:
     - codebook_utilization
     - pearson_cell_wise
-    # - pearson_1hop_nbr
+    - pearson_1hop_nbr
+    # - pearson_gene_wise
+    - pearson_gene_wise_1hop_nbr
     # - cas
     # - mlami
     # - gcs
@@ -115,11 +117,11 @@ model:
 
     # conditioning_params:
     #   condition_list:
-    #     - rbf_distances
+    #     - cell_types
     #   use_bias: true
     #   use_residual: false
     #   residual_weight: 0.2
-    #   init_mode: identity
+    #   init_mode: dependence
 
     vq_params:
       vq_name: VectorQuantize
@@ -145,7 +147,7 @@ model:
 
       # codebook related params
       codebook_size: 5000
-      heads: 20
+      heads: 1
       separate_codebook_per_head: false
       decay: 0.8
       eps: 0.00001
@@ -174,11 +176,11 @@ model:
     # apply_conditioning: in-MLP # pre-MLP | in-MLP | None
     # conditioning_params:
     #   condition_list:
-    #     - rbf_distances
+    #     - cell_types
     #   use_bias: true
     #   use_residual: false
     #   residual_weight: 0.2
-    #   init_mode: identity
+    #   init_mode: dependence
 
     mlp_params:
       hidden_channels: [600]
