@@ -39,17 +39,55 @@ from vqniche.utils.loss_utils import aggregate_1hop_neighbor_features
 
 
 codebook_metrics = ['codebook_utilization']
-codebook_metrics = []
-attr_impute_metrics = ['pearson_cell_wise', 'pearson_1hop_nbr']
-graph_impute_metrics = ["mmd_degree", "num_edges", "max_degree"]
-sup_global_spatial_conserve_metrics = ['cas']
-unsup_global_spatial_conserve_metrics = ['mlami']
-unsup_local_spatial_conserve_metrics = ['gcs']
-sup_niche_cohere_metrics = ['casw']
+# codebook_metrics = []
+
+attr_impute_metrics = ['pearson_cell_wise', 'pearson_1hop_nbr', 'pearson_gene_wise_1hop_nbr']
+# attr_impute_metrics = []
+
+# graph_impute_metrics = ["mmd_degree", "num_edges", "max_degree"]
+graph_impute_metrics = []
+
+# sup_global_spatial_conserve_metrics = ['cas']
+sup_global_spatial_conserve_metrics = []
+
+# unsup_global_spatial_conserve_metrics = ['mlami']
+unsup_global_spatial_conserve_metrics = []
+
+# unsup_local_spatial_conserve_metrics = ['gcs']
+unsup_local_spatial_conserve_metrics = []
+
+# sup_niche_cohere_metrics = ['casw']
 sup_niche_cohere_metrics = []
-unsup_niche_cohere_metrics = ['nasw']
+
+# unsup_niche_cohere_metrics = ['nasw']
 unsup_niche_cohere_metrics = []
+
 METRICS_LIST = codebook_metrics + attr_impute_metrics + graph_impute_metrics + unsup_global_spatial_conserve_metrics + unsup_local_spatial_conserve_metrics + unsup_niche_cohere_metrics + sup_global_spatial_conserve_metrics + sup_niche_cohere_metrics
+
+
+def collate_predict_outputs(
+        data_cache: List[Dict],
+        model: pl.LightningModule,
+    ) -> Dict:
+    """
+    Collate a list of dicts (one per batch from trainer.predict) into a single dict with concatenated tensors or lists.
+    
+    Parameters
+    ----------
+    - data_cache: List[Dict]
+        A list of dicts, one per batch from trainer.predict
+    - model: pl.LightningModule
+        The model used for prediction
+    """
+    # --------------------- Collate Data ---------------------
+    collated_dict = {}
+    for key in data_cache[0]:
+        collated_dict[key] = torch.cat([d[key][0] for d in data_cache], dim=0)
+    collated_dict['codebook_size'] = model.encoder.vq.codebook_size
+    collated_dict['separate'] = model.encoder.vq.separate_codebook_per_head
+    collated_dict['num_heads'] = model.encoder.vq.heads
+    
+    return collated_dict
 
 
 def test(config: Dict):
@@ -114,35 +152,47 @@ def test(config: Dict):
     results_dir.mkdir(parents=True, exist_ok=True)
 
     # --------------------- Validate and Test ---------------------
-    # TODO: replace with trainer.test() that computes metrics for nodes in the test set
-    # compute loss term values for nodes in the validation set and metrics that were computed during training for the entire tissue section 
-    # print("Validating Model...")
-    # trainer.validate(
-    #     model=model,
-    #     ckpt_path=None,
-    #     datamodule=datamodule_batch,
-    #     verbose=True,
-    # )
-
-    # --------------------- Infer ---------------------
-    infer_dict_fname = results_dir / 'inference_data_dict.pkl'
-    print(f"Computing inference data and saving to {infer_dict_fname}...")
-    inference_data = model.collect_inference_data(
-                    datamodule_batch.infer_dataloader()
-                )
-    with open(infer_dict_fname, 'wb') as f:
-        pickle.dump(inference_data, f)
+    print("Validating Model...")
+    trainer.validate(
+        model=model,
+        ckpt_path=None,
+        datamodule=datamodule_batch,
+        verbose=True,
+    )
     
-    # --------------------- Convert Inference Data to AnnData ---------------------
-    adata_fname = results_dir / 'inference_adata.pkl'
+    print("Testing Model...")
+    trainer.test(
+        model=model,
+        datamodule=datamodule_batch,
+        verbose=True,
+    )
+
+    # --------------------- Predict ---------------------
+    print("Predicting Model...")
+    predict_data_cache = trainer.predict(
+        model=model,
+        datamodule=datamodule_batch,
+    )
+        
+    predict_data_dict = collate_predict_outputs(
+        data_cache=predict_data_cache,
+        model=model
+    )
+
+    predict_dict_fname = results_dir / 'predict_data_dict.pkl'
+    print(f"Saving to {predict_dict_fname}...")
+    
+    with open(predict_dict_fname, 'wb') as f:
+        pickle.dump(predict_data_dict, f)
+    
+    adata_fname = results_dir / 'predict_adata.h5ad'
     print(f"Converting inference data to AnnData and saving to {adata_fname}...")
     adata = inference_data_dict_to_adata(
-                inference_data=inference_data,
+                inference_data=predict_data_dict,
                 label_categories_dict=label_categories,
             )
-    if not adata_fname.exists():
-        with open(adata_fname, 'wb') as f:
-            pickle.dump(adata, f)
+    with open(adata_fname, 'wb') as f:
+        pickle.dump(adata, f)
 
     # --------------------- Metrics (if --compute_metrics flag is set) ---------------------
     if config['experiment']['compute_metrics']:

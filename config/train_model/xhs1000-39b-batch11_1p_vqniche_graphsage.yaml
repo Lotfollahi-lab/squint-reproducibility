@@ -56,7 +56,6 @@ dataset:
   #     y_max: 3500
   #   xy_key: xy_coordinates
 
-
 datamodule:
   loader_name: NeighborLoader
   loader_params:
@@ -74,10 +73,22 @@ model:
   adjacency_decoder_name: MLP_AdjacencyDecoder
   predictor_name: Linear
 
+  imputation_params:
+    # mask_strategy: original
+    mask_strategy: learnable_parameter
+    base_mask_ratio: 0.3
+    final_mask_ratio: 0.3
+    warmup_epochs: 0
+    deterministic_masking: false
+    compute_mask_input_diversity: false
+    mask_token_eps: 0.0001
+
   train_metrics_list:
     - codebook_utilization
     - pearson_cell_wise
-    # - pearson_1hop_nbr
+    - pearson_1hop_nbr
+    # - pearson_gene_wise
+    - pearson_gene_wise_1hop_nbr
     # - cas
     # - mlami
     # - gcs
@@ -86,6 +97,7 @@ model:
     # - max_degree
 
   encoder_params:
+  
     gnn_name: SAGEConv
 
     mlp_params:
@@ -96,7 +108,7 @@ model:
 
     gnn_params:
       hidden_channels: 200
-      num_layers: 1
+      num_layers: 3
       act_first: true
       activation: relu
       norm: null
@@ -105,10 +117,10 @@ model:
 
     # conditioning_params:
     #   condition_list:
-    #     - rbf_distances
+    #     - cell_types
     #   use_bias: true
     #   use_residual: false
-    #   residual_weight: 0.0
+    #   residual_weight: 0.2
     #   init_mode: dependence
 
     vq_params:
@@ -118,10 +130,9 @@ model:
 
       # EMA update related params
       use_cosine_sim: true
-      # use_cosine_sim: false
       ema_update: true # if true, learnable related stuff is ignored
       manual_ema_update: false
-      threshold_ema_dead_code: 20
+      threshold_ema_dead_code: 100
       manual_in_place_optimizer_update: false # must be false if ema_update is true
       learnable_codebook: false # must be false if ema_update is true
 
@@ -159,23 +170,23 @@ model:
       orthogonal_reg_active_codes_only: false # apply only to actively used codes in the current batch
 
   attribute_decoder_params:
-    # apply_conditioning: null # pre-MLP | in-MLP | None
+    apply_conditioning: null # pre-MLP | in-MLP | None
     # apply_conditioning: pre-MLP # pre-MLP | in-MLP | None
-    apply_conditioning: in-MLP # pre-MLP | in-MLP | None
-  
+
+    # apply_conditioning: in-MLP # pre-MLP | in-MLP | None
+    # conditioning_params:
+    #   condition_list:
+    #     - cell_types
+    #   use_bias: true
+    #   use_residual: false
+    #   residual_weight: 0.2
+    #   init_mode: dependence
+
     mlp_params:
       hidden_channels: [600]
       dropout: 0.1
       act: gelu
       norm: layer_norm
-
-    conditioning_params:
-      condition_list:
-        - rbf_distances
-      use_bias: true
-      use_residual: false
-      residual_weight: 0.0
-      init_mode: dependence
 
   adjacency_decoder_params:
     out_channels: 600
@@ -190,6 +201,7 @@ model:
     optimizer_name: adam
     lr: 0.001
     weight_decay: 0.001
+    mask_lr_scale: 2.0
 
   loss_params:
     loss_names:
@@ -202,6 +214,10 @@ model:
       - mse_commit_loss
       - mse_code_loss
     loss_kwargs:
+      k_hop_nb_loss: 0
+      # k_hop_nb_loss: 1
+      only_masked: false
+      # only_masked: true
       edge_sampling_ratio: null
       use_pos_weight: true
       estimate_adj_kwargs:
