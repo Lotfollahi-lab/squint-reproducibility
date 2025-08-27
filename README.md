@@ -1,5 +1,19 @@
 # vqniche-reproducibility
 
+## Software on Farm22
+
+Conda Environment:
+```
+/software/cellgen/team361/am84/envs/vqniche-reproducibility
+```
+
+Modules:
+```
+module load cellgen/conda
+module load cuda-12.1.1
+```
+
+
 ## Datasets
 
 List of datasets: https://docs.google.com/spreadsheets/d/1bfdBZ1MZEVKz2-4Ge89zwe5jVT4qnXAndStmXmJehTo/edit?gid=1836124407#gid=1836124407
@@ -27,26 +41,22 @@ On Sanger's `farm22`, the recommended usage is to use the wrapper script as foll
 The other datasets in the list above should work by appropriately adding/modifying config files and the wrapper script for job requirements.
 
 
-## Results
+## Training
 
-### Pearson Scores
-- No Cross Entropy Loss
-- Num Epochs: 20
+To train one model on one section of data, for example, Batch 11 of `xhs1000_39b_1p`, execute the following:
 
-| Model | `sss2-1b_1p` | `xhs1000-39b-batch11_1p` | `xhs1000-39b-batch1_1p` |
-|-------|-------------------|--------------|--------------|
-| MLP | 0.8055 | 0.8681 | 0.8229 |
-| GraphSAGE | 0.7563 | 0.8215 | 0.8101 |
-| VQNiche-MLP | 0.2989 | 0.6456 | 0.5970 |
-| VQNiche-MLP-with-annealing | | 0.6458 | |
-| VQNiche-MLP-with-xy | | 0.5498 | |
-| VQNiche-GraphSAGE | 0.3055 | 0.5498 | 0.5271 |
+```
+python analysis/train_model.py --base_config_file config/train_model/xhs1000-39b-batch11_1p_vqniche_graphsage.yaml
+```
 
-### `xhs1000-39b-batch11_1p`
+Hyperparameters and other experiment configurations can be adjusted via the config file. Take note of the path to the WandB Run Directory. It will look something like this:
+```
+/nfs/team361/am84/VQNiche/logs/xhs1000-39b_1p/standalone/VQNiche/batch=[11]/spatial_n_neighs_8/wandb/offline-run-20250827_085244-f04x8bzi
+```
 
-| Model | Pearson (gene-wise) | Pearson (cell-wise) | Pearson (1-hop Nbr) | MMD (Node Degree) |
-|-------|-------------------|--------------|--------------|--------------|
-| MLP | 0.7192 | 0.8681 | 0.9567 | |
-| GraphSAGE | 0.6590 | 0.8213 | 0.9081 | |
-| VQNiche-MLP | 0.3906 | 0.6456 | 0.8886 | |
-| VQNiche-GraphSAGE | 0.3136 | 0.5691 | 0.8038 | |
+## Testing
+
+To test an instance of a previously trained model, use the WandB Run Directory as follows:
+```
+python analysis/test_model.py --wandb_run_dir [WANDB_RUN_DIR]
+```
