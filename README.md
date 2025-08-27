@@ -18,7 +18,7 @@ module load cuda-12.1.1
 
 List of datasets: https://docs.google.com/spreadsheets/d/1bfdBZ1MZEVKz2-4Ge89zwe5jVT4qnXAndStmXmJehTo/edit?gid=1836124407#gid=1836124407
 
-`/lustre/scratch126/cellgen/team361/DATASETS/` houses all the datasets across experiments. A dataset is defined as a collection of AnnData objects that may be from the same or different datasets, species, tissues, gene panels, and batches. 
+`/lustre/scratch126/cellgen/lotfollahi/DATASETS/` houses all the datasets across experiments. A dataset is defined as a collection of AnnData objects that may be from the same or different datasets, species, tissues, gene panels, and batches. 
 - `silver` -- contains preprocessed AnnData files
 - `gold` -- contains the processed dataset object
 
