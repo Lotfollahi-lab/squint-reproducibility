@@ -15,7 +15,12 @@ dataset:
   adata_batch_idx:
     - 11
   adata_fname:
-    - adata_batch11.h5ad
+    - adata_batch11.h5ad # BK18 Lesional
+
+  batch_timepoint:
+    max_timepoint: 4
+    batch_timepoint_map:
+      11: 0
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
@@ -115,13 +120,15 @@ model:
       dropout: 0.1
       init_method: kaiming_uniform
 
-    # conditioning_params:
-    #   condition_list:
-    #     - cell_types
-    #   use_bias: true
-    #   use_residual: false
-    #   residual_weight: 0.2
-    #   init_mode: dependence
+    conditioning_params:
+      condition_list:
+        # - relative_xy
+        # - cell_batch_id
+        # - timepoint_id
+      use_bias: true
+      use_residual: false
+      residual_weight: 0.2
+      init_mode: identity
 
     vq_params:
       vq_name: VectorQuantize
@@ -176,11 +183,13 @@ model:
     # apply_conditioning: in-MLP # pre-MLP | in-MLP | None
     # conditioning_params:
     #   condition_list:
-    #     - cell_types
+    #     - relative_xy
+    #     # - cell_batch_id
+    #     # - timepoint_id
     #   use_bias: true
     #   use_residual: false
     #   residual_weight: 0.2
-    #   init_mode: dependence
+    #   init_mode: identity
 
     mlp_params:
       hidden_channels: [600]
