@@ -54,6 +54,16 @@ Hyperparameters and other experiment configurations can be adjusted via the conf
 /nfs/team361/am84/VQNiche/logs/xhs1000-39b_1p/standalone/VQNiche/batch=[11]/spatial_n_neighs_8/wandb/offline-run-20250827_085244-f04x8bzi
 ```
 
+Config file for training a model on the 3 published Skin tissue sections:
+```
+/lustre/scratch126/cellgen/lotfollahi/am84/VQNiche/reproducibility/config/train_model/xhs1000-39b-1p_public3_vqniche_graphsage.yaml
+```
+
+Config file for training a model on the 5 unpublished Skin tissue sections from a single patient at different time points:
+```
+/lustre/scratch126/cellgen/lotfollahi/am84/VQNiche/reproducibility/config/train_model/xhs1000-39b-1p_patient-BK21_vqniche_graphsage.yaml
+```
+
 ## Testing
 
 To test an instance of a previously trained model, use the WandB Run Directory as follows:
