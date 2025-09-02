@@ -122,6 +122,7 @@ model:
 
     conditioning_params:
       condition_list:
+        - rbf_distances
         # - relative_xy
         # - cell_batch_id
         # - timepoint_id
@@ -129,6 +130,11 @@ model:
       use_residual: false
       residual_weight: 0.2
       init_mode: identity
+
+    # spatial_prior_params:
+    #   spatial_prior_feature: rbf_distances
+    #   hidden_channels: []
+    #   act: relu
 
     vq_params:
       vq_name: VectorQuantize
@@ -177,19 +183,20 @@ model:
       orthogonal_reg_active_codes_only: false # apply only to actively used codes in the current batch
 
   attribute_decoder_params:
-    apply_conditioning: null # pre-MLP | in-MLP | None
+    # apply_conditioning: null # pre-MLP | in-MLP | None
     # apply_conditioning: pre-MLP # pre-MLP | in-MLP | None
 
-    # apply_conditioning: in-MLP # pre-MLP | in-MLP | None
-    # conditioning_params:
-    #   condition_list:
-    #     - relative_xy
-    #     # - cell_batch_id
-    #     # - timepoint_id
-    #   use_bias: true
-    #   use_residual: false
-    #   residual_weight: 0.2
-    #   init_mode: identity
+    apply_conditioning: in-MLP # pre-MLP | in-MLP | None
+    conditioning_params:
+      condition_list:
+        - rbf_distances
+        # - relative_xy
+        # - cell_batch_id
+        # - timepoint_id
+      use_bias: true
+      use_residual: false
+      residual_weight: 0.2
+      init_mode: identity
 
     mlp_params:
       hidden_channels: [600]
@@ -244,6 +251,6 @@ trainer:
     mode: max
     save_top_k: 1
     save_last: true
-  max_epochs: 5
+  max_epochs: 1
   enable_checkpointing: true
   ckpt_path: best
