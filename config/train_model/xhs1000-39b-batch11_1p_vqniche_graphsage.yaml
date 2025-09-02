@@ -43,8 +43,8 @@ dataset:
   train_transform_names:
     - RandomNodeSplit
   train_transform_params:
-    val_ratio: 0.2
-    test_ratio: 0.2
+    val_ratio: 0.0
+    test_ratio: 0.0
 
   # train_transform_names:
   #   - SpatialNodeSplit
@@ -123,7 +123,7 @@ model:
     conditioning_params:
       condition_list:
         # - relative_xy
-        # - cell_batch_id
+        - cell_batch_id
         # - timepoint_id
       use_bias: true
       use_residual: false
@@ -177,19 +177,19 @@ model:
       orthogonal_reg_active_codes_only: false # apply only to actively used codes in the current batch
 
   attribute_decoder_params:
-    apply_conditioning: null # pre-MLP | in-MLP | None
+    # apply_conditioning: null # pre-MLP | in-MLP | None
     # apply_conditioning: pre-MLP # pre-MLP | in-MLP | None
 
-    # apply_conditioning: in-MLP # pre-MLP | in-MLP | None
-    # conditioning_params:
-    #   condition_list:
-    #     - relative_xy
-    #     # - cell_batch_id
-    #     # - timepoint_id
-    #   use_bias: true
-    #   use_residual: false
-    #   residual_weight: 0.2
-    #   init_mode: identity
+    apply_conditioning: in-MLP # pre-MLP | in-MLP | None
+    conditioning_params:
+      condition_list:
+        # - relative_xy
+        - cell_batch_id
+        # - timepoint_id
+      use_bias: true
+      use_residual: false
+      residual_weight: 0.2
+      init_mode: identity
 
     mlp_params:
       hidden_channels: [600]
@@ -222,9 +222,10 @@ model:
       # - mse_joint_code_commit_loss
       - mse_commit_loss
       - mse_code_loss
+      - mask_token_regularization
     loss_kwargs:
-      k_hop_nb_loss: 0
-      # k_hop_nb_loss: 1
+      # k_hop_nb_loss: 0
+      k_hop_nb_loss: 1
       only_masked: false
       # only_masked: true
       edge_sampling_ratio: null
@@ -238,6 +239,7 @@ model:
       wt_joint_code_commit: 1.0
       wt_commit: 1.0
       wt_code: 1.0
+      wt_mask_token_regularization: 1.0
 
 trainer:
   checkpoint_params:
