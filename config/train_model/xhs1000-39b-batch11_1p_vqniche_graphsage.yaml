@@ -131,10 +131,11 @@ model:
       residual_weight: 0.2
       init_mode: identity
 
-    # spatial_prior_params:
-    #   spatial_prior_feature: rbf_distances
-    #   hidden_channels: []
-    #   act: relu
+    spatial_prior_params:
+      spatial_prior_feature: rbf_distances
+      # spatial_prior_feature: fourier_xy
+      hidden_channels: []
+      act: relu
 
     vq_params:
       vq_name: VectorQuantize
@@ -227,11 +228,12 @@ model:
       # - mse_adjacency_reconstruction_loss
       - bce_adjacency_reconstruction_loss
       # - mse_joint_code_commit_loss
+      - ce_spatial_prior_loss
       - mse_commit_loss
       - mse_code_loss
     loss_kwargs:
-      k_hop_nb_loss: 0
-      # k_hop_nb_loss: 1
+      # k_hop_nb_loss: 0
+      k_hop_nb_loss: 1
       only_masked: false
       # only_masked: true
       edge_sampling_ratio: null
@@ -243,6 +245,7 @@ model:
       wt_attr_reconstr: 1.0
       wt_adj_reconstr: 1.0
       wt_joint_code_commit: 1.0
+      wt_spatial_prior: 1.0
       wt_commit: 1.0
       wt_code: 1.0
 
@@ -251,6 +254,6 @@ trainer:
     mode: max
     save_top_k: 1
     save_last: true
-  max_epochs: 1
+  max_epochs: 5
   enable_checkpointing: true
   ckpt_path: best
