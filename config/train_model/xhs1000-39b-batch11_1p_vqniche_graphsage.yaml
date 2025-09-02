@@ -43,8 +43,8 @@ dataset:
   train_transform_names:
     - RandomNodeSplit
   train_transform_params:
-    val_ratio: 0.2
-    test_ratio: 0.2
+    val_ratio: 0.0
+    test_ratio: 0.0
 
   # train_transform_names:
   #   - SpatialNodeSplit
@@ -124,7 +124,7 @@ model:
       condition_list:
         - rbf_distances
         # - relative_xy
-        # - cell_batch_id
+        - cell_batch_id
         # - timepoint_id
       use_bias: true
       use_residual: false
@@ -190,9 +190,8 @@ model:
     apply_conditioning: in-MLP # pre-MLP | in-MLP | None
     conditioning_params:
       condition_list:
-        - rbf_distances
         # - relative_xy
-        # - cell_batch_id
+        - cell_batch_id
         # - timepoint_id
       use_bias: true
       use_residual: false
@@ -231,6 +230,7 @@ model:
       - ce_spatial_prior_loss
       - mse_commit_loss
       - mse_code_loss
+      - mask_token_regularization
     loss_kwargs:
       # k_hop_nb_loss: 0
       k_hop_nb_loss: 1
@@ -248,6 +248,7 @@ model:
       wt_spatial_prior: 1.0
       wt_commit: 1.0
       wt_code: 1.0
+      wt_mask_token_regularization: 1.0
 
 trainer:
   checkpoint_params:

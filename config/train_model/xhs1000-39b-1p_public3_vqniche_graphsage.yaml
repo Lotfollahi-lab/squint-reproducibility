@@ -228,9 +228,10 @@ model:
       # - mse_joint_code_commit_loss
       - mse_commit_loss
       - mse_code_loss
+      - mask_token_regularization
     loss_kwargs:
-      k_hop_nb_loss: 0
-      # k_hop_nb_loss: 1
+      # k_hop_nb_loss: 0
+      k_hop_nb_loss: 1
       only_masked: false
       # only_masked: true
       edge_sampling_ratio: null
@@ -244,12 +245,13 @@ model:
       wt_joint_code_commit: 1.0
       wt_commit: 1.0
       wt_code: 1.0
+      wt_mask_token_regularization: 1.0
 
 trainer:
   checkpoint_params:
     mode: max
     save_top_k: 1
     save_last: true
-  max_epochs: 1
+  max_epochs: 5
   enable_checkpointing: true
   ckpt_path: best
