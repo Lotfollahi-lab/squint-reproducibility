@@ -43,8 +43,8 @@ dataset:
   train_transform_names:
     - RandomNodeSplit
   train_transform_params:
-    val_ratio: 0.0
-    test_ratio: 0.0
+    val_ratio: 0.1
+    test_ratio: 0.1
 
   # train_transform_names:
   #   - SpatialNodeSplit
@@ -122,6 +122,7 @@ model:
 
     conditioning_params:
       condition_list:
+        - rbf_distances
         # - relative_xy
         - cell_batch_id
         # - timepoint_id
@@ -129,6 +130,11 @@ model:
       use_residual: false
       residual_weight: 0.2
       init_mode: identity
+
+    spatial_prior_params:
+      spatial_prior_feature: rbf_distances
+      hidden_channels: []
+      act: relu
 
     vq_params:
       vq_name: VectorQuantize
@@ -183,6 +189,7 @@ model:
     apply_conditioning: in-MLP # pre-MLP | in-MLP | None
     conditioning_params:
       condition_list:
+        - rbf_distances
         # - relative_xy
         - cell_batch_id
         # - timepoint_id
@@ -219,7 +226,7 @@ model:
       - nb_attribute_reconstruction_loss
       # - mse_adjacency_reconstruction_loss
       - bce_adjacency_reconstruction_loss
-      # - mse_joint_code_commit_loss
+      - ce_spatial_prior_loss
       - mse_commit_loss
       - mse_code_loss
       - mask_token_regularization
@@ -237,6 +244,7 @@ model:
       wt_attr_reconstr: 1.0
       wt_adj_reconstr: 1.0
       wt_joint_code_commit: 1.0
+      wt_spatial_prior: 1.0
       wt_commit: 1.0
       wt_code: 1.0
       wt_mask_token_regularization: 1.0
