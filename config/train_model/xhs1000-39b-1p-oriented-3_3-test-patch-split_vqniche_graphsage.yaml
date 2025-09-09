@@ -13,26 +13,20 @@ logging:
 dataset:
   dataset_name: xhs1000-39b_1p
   adata_batch_idx:
-    - 14
     - 2
-    - 5
-    - 10
-    - 16
+    - 11
+    - 12
   adata_fname:
-    - adata_batch14.h5ad # BK21 Non-lesional
-    - adata_batch2.h5ad # BK21 Lesional
-    - adata_batch5.h5ad # BK21 Day 3
-    - adata_batch10.h5ad # BK21 Day 14
-    - adata_batch16.h5ad # BK21 Week 12
+    - adata_batch2.h5ad # BK21_Lesional Baseline
+    - adata_batch11.h5ad # BK18_Lesional Baseline
+    - adata_batch12.h5ad # BK18_Day 3
 
-  batch_timepoint:
-    max_timepoint: 4
-    batch_timepoint_map:
-      14: 0
-      2: 0
-      5: 1
-      10: 2
-      16: 3
+  # batch_timepoint:
+  #   max_timepoint: 4
+  #   batch_timepoint_map:
+  #     2: 0
+  #     11: 0
+  #     12: 1
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
@@ -53,25 +47,35 @@ dataset:
   label_name: cell_types
 
   train_transform_names:
-    - RandomNodeSplit
+    - SpatialBatchSplit
   train_transform_params:
-    val_ratio: 0.1
-    test_ratio: 0.0
-
-  # train_transform_names:
-  #   - SpatialNodeSplit
-  # train_transform_params:
-  #   test_region:
-  #     x_min: 1000
-  #     x_max: 2000
-  #     y_min: 3000
-  #     y_max: 3500
-  #   val_region:
-  #     x_min: 3000
-  #     x_max: 4000
-  #     y_min: 3000
-  #     y_max: 3500
-  #   xy_key: xy_coordinates
+    region: [
+      {
+        x_min: 3000,
+        x_max: 3500,
+        y_min: 3500,
+        y_max: 4000,
+      },
+      {
+        x_min: 1500,
+        x_max: 2000,
+        y_min: 3000,
+        y_max: 3500,
+      },
+      {
+        x_min: 2000,
+        x_max: 2500,
+        y_min: 2000,
+        y_max: 2500,
+      }
+    ]
+    train_batches:
+      - 2
+      - 11
+    val_batches: []
+    test_batches:
+      - 12
+    xy_key: xy_coordinates
 
 datamodule:
   loader_name: NeighborLoader
@@ -137,7 +141,7 @@ model:
         - rbf_distances
         # - relative_xy
         - cell_batch_id
-        - timepoint_id
+        # - timepoint_id
       use_bias: true
       use_residual: false
       residual_weight: 0.2
@@ -204,7 +208,7 @@ model:
         - rbf_distances
         # - relative_xy
         - cell_batch_id
-        - timepoint_id
+        # - timepoint_id
       use_bias: true
       use_residual: false
       residual_weight: 0.2
@@ -238,7 +242,7 @@ model:
       - nb_attribute_reconstruction_loss
       # - mse_adjacency_reconstruction_loss
       - bce_adjacency_reconstruction_loss
-      - ce_spatial_prior_loss
+      # - ce_spatial_prior_loss
       - mse_commit_loss
       - mse_code_loss
       - mask_token_regularization
@@ -261,6 +265,7 @@ model:
       wt_mask_token_regularization: 1.0
 
 trainer:
+  monitor: train_pearson_1hop_nbr
   checkpoint_params:
     mode: max
     save_top_k: 1
