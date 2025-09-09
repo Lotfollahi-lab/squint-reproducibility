@@ -16,7 +16,7 @@ The pipeline consists of the following steps:
 12. Plot the loss and metrics as a function of epoch if the --plot_figures flag is set.
 
 Example Usage:
->>> python analysis/test_model.py --wandb_run_dir /path/to/wandb/run
+>>> python analysis/test_model.py --wandb_run_dir /path/to/wandb/run --model_ckpt_fname /path/to/model/checkpoint.ckpt
 """
 from typing import Dict
 

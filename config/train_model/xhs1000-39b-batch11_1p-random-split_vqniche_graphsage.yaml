@@ -46,21 +46,6 @@ dataset:
     val_ratio: 0.1
     test_ratio: 0.1
 
-  # train_transform_names:
-  #   - SpatialNodeSplit
-  # train_transform_params:
-  #   test_region:
-  #     x_min: 1000
-  #     x_max: 2000
-  #     y_min: 3000
-  #     y_max: 3500
-  #   val_region:
-  #     x_min: 3000
-  #     x_max: 4000
-  #     y_min: 3000
-  #     y_max: 3500
-  #   xy_key: xy_coordinates
-
 datamodule:
   loader_name: NeighborLoader
   loader_params:
@@ -226,7 +211,7 @@ model:
       - nb_attribute_reconstruction_loss
       # - mse_adjacency_reconstruction_loss
       - bce_adjacency_reconstruction_loss
-      - ce_spatial_prior_loss
+      # - ce_spatial_prior_loss
       - mse_commit_loss
       - mse_code_loss
       - mask_token_regularization
@@ -250,6 +235,7 @@ model:
       wt_mask_token_regularization: 1.0
 
 trainer:
+  monitor: val_pearson_1hop_nbr
   checkpoint_params:
     mode: max
     save_top_k: 1

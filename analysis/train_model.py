@@ -16,10 +16,10 @@ The pipeline consists of the following steps:
 The pipeline employs PyTorch Lightning to support distributed data parallel (DDP) training across multiple GPUs. With wandb, the script supports a standalone run via a base config file and a sweep run via a base config file and a list of sweep config files.
 
 Example Usage for a standalone run:
->>> python analysis/train_model.py --base_config_file config/train_model/sss2-1b_1p_vq_graphsage.yaml
+>>> python analysis/train_model.py --base_config_file config/train_model/xhs1000-39b-batch11_1p-random-split_vqniche_graphsage.yaml
 
 Example Usage for a sweep run:
->>> python analysis/train_model.py --base_config_file config/train_model/sss2-1b_1p_vq_graphsage.yaml --sweep_config_files config/sweep/vqgraph_encoder.yaml config/sweep/optimizer.yaml
+>>> python analysis/train_model.py --base_config_file config/train_model/xhs1000-39b-batch11_1p-random-split_vqniche_graphsage.yaml --sweep_config_files config/sweep/vqgraph_encoder.yaml config/sweep/optimizer.yaml
 
 
 """
@@ -91,12 +91,33 @@ def train(config: Dict):
         ckpt_log_dir = Path(logger.experiment.dir) / 'checkpoints'
         ckpt_log_dir.mkdir(parents=True, exist_ok=True)
         
+        monitor = config['trainer']['monitor']
+        if monitor == 'val_pearson_cell_wise':
+            filename = '{epoch}-{val_pearson_cell_wise:.2f}'
+        elif monitor == 'val_pearson_1hop_nbr':
+            filename = '{epoch}-{val_pearson_1hop_nbr:.2f}'
+        elif monitor == 'val_pearson_gene_wise':
+            filename = '{epoch}-{val_pearson_gene_wise:.2f}'
+        elif monitor == 'val_pearson_gene_wise_1hop_nbr':
+            filename = '{epoch}-{val_pearson_gene_wise_1hop_nbr:.2f}'
+        elif monitor == 'train_pearson_cell_wise':
+            filename = '{epoch}-{train_pearson_cell_wise:.2f}'
+        elif monitor == 'train_pearson_1hop_nbr':
+            filename = '{epoch}-{train_pearson_1hop_nbr:.2f}'
+        elif monitor == 'train_pearson_gene_wise':
+            filename = '{epoch}-{train_pearson_gene_wise:.2f}'
+        elif monitor == 'train_pearson_gene_wise_1hop_nbr':
+            filename = '{epoch}-{train_pearson_gene_wise_1hop_nbr:.2f}'
+        else:
+            monitor = 'val_pearson_cell_wise'
+            filename = '{epoch}-{val_pearson_cell_wise:.2f}'
+            
         checkpoint_params = config['trainer']['checkpoint_params']
         checkpoints = [
                         pl.callbacks.ModelCheckpoint(
                             dirpath=ckpt_log_dir,
-                            monitor='val_pearson_cell_wise',
-                            filename='{epoch}-{val_pearson_cell_wise:.2f}',
+                            monitor=monitor,
+                            filename=filename,
                             **checkpoint_params
                             )
                         ]
