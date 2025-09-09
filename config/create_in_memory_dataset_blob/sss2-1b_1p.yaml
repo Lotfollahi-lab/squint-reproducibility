@@ -16,11 +16,11 @@ dataset:
     coord_type: generic
     spatial_key: spatial
     n_neighs_list: 
-      # - 4
-      # - 7
+      - 4
       - 8
-      # - 10
-      # - 12
+      - 12
+      - 16
+      - 20
     radius_list:
       # - 27.5
     include_self_loop: true
