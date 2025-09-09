@@ -46,22 +46,12 @@ The other datasets in the list above should work by appropriately adding/modifyi
 To train one model on one section of data, for example, Batch 11 of `xhs1000_39b_1p`, execute the following:
 
 ```
-python analysis/train_model.py --base_config_file config/train_model/xhs1000-39b-batch11_1p_vqniche_graphsage.yaml
+python analysis/train_model.py --base_config_file config/train_model/xhs1000-39b-batch11_1p-random-split_vqniche_graphsage.yaml
 ```
 
 Hyperparameters and other experiment configurations can be adjusted via the config file. Take note of the path to the WandB Run Directory. It will look something like this:
 ```
 /nfs/team361/am84/VQNiche/logs/xhs1000-39b_1p/standalone/VQNiche/batch=[11]/spatial_n_neighs_8/wandb/offline-run-20250827_085244-f04x8bzi
-```
-
-Config file for training a model on the 3 published Skin tissue sections:
-```
-/lustre/scratch126/cellgen/lotfollahi/am84/VQNiche/reproducibility/config/train_model/xhs1000-39b-1p_public3_vqniche_graphsage.yaml
-```
-
-Config file for training a model on the 5 unpublished Skin tissue sections from a single patient at different time points:
-```
-/lustre/scratch126/cellgen/lotfollahi/am84/VQNiche/reproducibility/config/train_model/xhs1000-39b-1p_patient-BK21_vqniche_graphsage.yaml
 ```
 
 ## Testing
