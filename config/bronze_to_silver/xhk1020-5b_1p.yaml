@@ -1,0 +1,36 @@
+experiment:
+  name: xhk1020-CV1-CV2-5b_1p
+  description: Xenium Human Kidney (dataset-id 1020) | 5 batch | 1 panel | Preprocess to silver
+  study: Kidney Patient Classification data from Daniyal Jafree
+
+paths:
+  data_directory_path: null
+  bronze_directory_path: /nfs/team361/am84/VQNiche/DATASETS/bronze
+  silver_directory_path: /lustre/scratch126/cellgen/lotfollahi/DATASETS/silver
+
+dataset:
+  source: sanger
+  download_params: {}
+  file_names: []
+  overwrite: False
+
+harmonization:
+  uns: 
+    dataset_id: 1020
+    assay: xenium
+    species: homo_sapiens
+    tissue: kidney
+  batch: 
+    split_by_batch: true
+    batch_key: batch
+    sample_batch_map:
+      Core1: 0
+      Core2: 1
+      Core3: 2
+      Core4: 3
+      Core5: 4
+  
+  key_mappings: {}
+  misc: 
+    min_genes: 10
+  
