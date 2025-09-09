@@ -2,7 +2,7 @@
 Source: NicheJEPA/reproducibility/analysis/data_preparation/harmonize_silver_to_bronze.py
 
 Usage:
->>> python analysis/data_preparation/harmonize_silver_to_bronze.py --config_file config/bronze_to_silver/xhk1020-5b_1p.yaml
+>>> python analysis/data_preparation/harmonize_silver_to_bronze.py --config_file config/bronze_to_silver/xhk1020-CV1-CV2-5b_1p.yaml
 '''
 
 import os
