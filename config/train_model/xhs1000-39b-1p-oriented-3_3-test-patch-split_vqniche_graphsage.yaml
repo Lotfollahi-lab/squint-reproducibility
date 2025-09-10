@@ -108,7 +108,7 @@ model:
     - codebook_utilization
     - pearson_cell_wise
     - pearson_1hop_nbr
-    # - pearson_gene_wise
+    - pearson_gene_wise
     - pearson_gene_wise_1hop_nbr
     # - cas
     # - mlami

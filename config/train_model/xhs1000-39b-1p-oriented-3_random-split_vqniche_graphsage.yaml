@@ -83,7 +83,7 @@ model:
     - codebook_utilization
     - pearson_cell_wise
     - pearson_1hop_nbr
-    # - pearson_gene_wise
+    - pearson_gene_wise
     - pearson_gene_wise_1hop_nbr
     # - cas
     # - mlami
@@ -217,7 +217,7 @@ model:
       - nb_attribute_reconstruction_loss
       # - mse_adjacency_reconstruction_loss
       - bce_adjacency_reconstruction_loss
-      - ce_spatial_prior_loss
+      # - ce_spatial_prior_loss
       - mse_commit_loss
       - mse_code_loss
       - mask_token_regularization
