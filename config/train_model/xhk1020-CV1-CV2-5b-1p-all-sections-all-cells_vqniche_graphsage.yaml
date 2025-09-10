@@ -4,36 +4,22 @@ experiment:
 
 logging:
   root_log_dir: /nfs/team361/am84/VQNiche/logs/
-  # log_model: true
-  # offline: false
-  log_model: false
-  offline: true
+  log_model: true
+  offline: false
+  # log_model: false
+  # offline: true
   enabled: true
 
 dataset:
-  dataset_name: xhs1000-39b_1p
-  adata_batch_idx:
-    - 2
-    - 11
-    - 12
-  adata_fname:
-    - adata_batch2.h5ad # BK21_Lesional Baseline
-    - adata_batch11.h5ad # BK18_Lesional Baseline
-    - adata_batch12.h5ad # BK18_Day 3
-
-  # batch_timepoint:
-  #   max_timepoint: 4
-  #   batch_timepoint_map:
-  #     2: 0
-  #     11: 0
-  #     12: 1
+  dataset_name: xhk1020-CV1-CV2-5b_1p
+  adata_batch_idx: -1
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
   gene_count_transform_names:
     - SubsetHVG
   gene_count_transform_params:
-    n_genes: 2000
+    n_genes: 1000
 
   graph_params:
     spatial_key: spatial
@@ -44,31 +30,21 @@ dataset:
   feature_names:
     - X
 
-  label_name: cell_types
+  label_name: grade
 
   train_transform_names:
-    - SpatialBatchSplit
+    - RandomNodeSplit
   train_transform_params:
-    region:
-      x_min: 3000
-      x_max: 3500
-      y_min: 3500
-      y_max: 4000
-    train_batches:
-      - 2
-      - 11
-    val_batches: []
-    test_batches:
-      - 12
-    xy_key: xy_coordinates
+    val_ratio: 0.0
+    test_ratio: 0.0
 
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 256
+    batch_size: 64
   sampler_name: NeighborSampler
   sampler_params:
-    num_neighbors: [16, 16]
+    num_neighbors: [8, 8]
   inference_params:
     sample_neighbors_for_inference: false
 
@@ -80,8 +56,8 @@ model:
   predictor_name: Linear
 
   imputation_params:
-    # mask_strategy: original
-    mask_strategy: learnable_parameter
+    mask_strategy: original
+    # mask_strategy: learnable_parameter
     base_mask_ratio: 0.3
     final_mask_ratio: 0.3
     warmup_epochs: 0
@@ -230,13 +206,13 @@ model:
       # - ce_spatial_prior_loss
       - mse_commit_loss
       - mse_code_loss
-      - mask_token_regularization
+      # - mask_token_regularization
     loss_kwargs:
       # k_hop_nb_loss: 0
       k_hop_nb_loss: 1
       only_masked: false
       # only_masked: true
-      edge_sampling_ratio: null
+      edge_sampling_ratio: 1
       use_pos_weight: true
       estimate_adj_kwargs:
         nonlinearity: sigmoid
@@ -255,6 +231,6 @@ trainer:
     mode: max
     save_top_k: 1
     save_last: true
-  max_epochs: 5
+  max_epochs: 10
   enable_checkpointing: true
   ckpt_path: best

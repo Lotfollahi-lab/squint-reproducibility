@@ -11,29 +11,29 @@ logging:
   enabled: true
 
 dataset:
-  dataset_name: xhs1000-39b_1p
+  dataset_name: xhs1021-15b_1p
   adata_batch_idx:
+    - 0
+    - 1
     - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
     - 11
     - 12
-  adata_fname:
-    - adata_batch2.h5ad # BK21_Lesional Baseline
-    - adata_batch11.h5ad # BK18_Lesional Baseline
-    - adata_batch12.h5ad # BK18_Day 3
-
-  # batch_timepoint:
-  #   max_timepoint: 4
-  #   batch_timepoint_map:
-  #     2: 0
-  #     11: 0
-  #     12: 1
+    # - 13
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
   gene_count_transform_names:
     - SubsetHVG
   gene_count_transform_params:
-    n_genes: 2000
+    n_genes: 1000
 
   graph_params:
     spatial_key: spatial
@@ -50,16 +50,27 @@ dataset:
     - SpatialBatchSplit
   train_transform_params:
     region:
-      x_min: 3000
-      x_max: 3500
-      y_min: 3500
+      x_min: 1000
+      x_max: 2000
+      y_min: 3000
       y_max: 4000
     train_batches:
-      - 2
+      - 0
+      - 1
+      # - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
       - 11
+      - 12
     val_batches: []
     test_batches:
-      - 12
+      - 2
     xy_key: xy_coordinates
 
 datamodule:

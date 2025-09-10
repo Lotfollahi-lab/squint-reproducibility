@@ -11,29 +11,23 @@ logging:
   enabled: true
 
 dataset:
-  dataset_name: xhs1000-39b_1p
-  adata_batch_idx:
-    - 2
-    - 11
-    - 12
+  dataset_name: sss2-1b_1p
+  adata_batch_idx: 
+    - 0
   adata_fname:
-    - adata_batch2.h5ad # BK21_Lesional Baseline
-    - adata_batch11.h5ad # BK18_Lesional Baseline
-    - adata_batch12.h5ad # BK18_Day 3
+    - sim1_1105fts_10000locs.h5ad
+
+  root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
   # batch_timepoint:
   #   max_timepoint: 4
   #   batch_timepoint_map:
-  #     2: 0
   #     11: 0
-  #     12: 1
-
-  root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
   gene_count_transform_names:
     - SubsetHVG
   gene_count_transform_params:
-    n_genes: 2000
+    n_genes: 1000
 
   graph_params:
     spatial_key: spatial
@@ -47,28 +41,23 @@ dataset:
   label_name: cell_types
 
   train_transform_names:
-    - SpatialBatchSplit
+    - SpatialNodeSplit
   train_transform_params:
-    region:
-      x_min: 3000
-      x_max: 3500
-      y_min: 3500
-      y_max: 4000
-    train_batches:
-      - 2
-      - 11
-    val_batches: []
-    test_batches:
-      - 12
+    val_region: null
+    test_region:
+      x_min: 500
+      x_max: 750
+      y_min: 2000
+      y_max: 4500
     xy_key: xy_coordinates
 
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 256
+    batch_size: 512
   sampler_name: NeighborSampler
   sampler_params:
-    num_neighbors: [16, 16]
+    num_neighbors: [25, 10]
   inference_params:
     sample_neighbors_for_inference: false
 
@@ -107,17 +96,17 @@ model:
     gnn_name: SAGEConv
 
     mlp_params:
-      hidden_channels: [600, 200]
+      hidden_channels: [900, 800]
       dropout: 0.1
       act: relu
       norm: null
 
     gnn_params:
-      hidden_channels: 200
-      num_layers: 3
+      hidden_channels: 750
+      num_layers: 1
       act_first: true
       activation: relu
-      norm: null
+      norm: BatchNorm
       dropout: 0.1
       init_method: kaiming_uniform
 
@@ -125,7 +114,7 @@ model:
       condition_list:
         - rbf_distances
         # - relative_xy
-        - cell_batch_id
+        # - cell_batch_id
         # - timepoint_id
       use_bias: true
       use_residual: false
@@ -146,7 +135,7 @@ model:
       use_cosine_sim: true
       ema_update: true # if true, learnable related stuff is ignored
       manual_ema_update: false
-      threshold_ema_dead_code: 100
+      threshold_ema_dead_code: 5
       manual_in_place_optimizer_update: false # must be false if ema_update is true
       learnable_codebook: false # must be false if ema_update is true
 
@@ -160,8 +149,8 @@ model:
       # ema_update: false
 
       # codebook related params
-      codebook_size: 5000
-      heads: 1
+      codebook_size: 2048
+      heads: 8
       separate_codebook_per_head: false
       decay: 0.8
       eps: 0.00001
@@ -192,7 +181,7 @@ model:
       condition_list:
         - rbf_distances
         # - relative_xy
-        - cell_batch_id
+        # - cell_batch_id
         # - timepoint_id
       use_bias: true
       use_residual: false
@@ -200,23 +189,23 @@ model:
       init_mode: identity
 
     mlp_params:
-      hidden_channels: [600]
+      hidden_channels: [750, 900]
       dropout: 0.1
-      act: gelu
-      norm: layer_norm
+      act: relu
+      norm: batch_norm
 
   adjacency_decoder_params:
-    out_channels: 600
+    out_channels: 1000
 
     mlp_params:
-      hidden_channels: [400]
+      hidden_channels: [750]
       dropout: 0.2
       act: relu
-      norm: layer_norm
+      norm: null
 
   optimizer_params:
     optimizer_name: adam
-    lr: 0.001
+    lr: 0.0005
     weight_decay: 0.001
     mask_lr_scale: 2.0
 
@@ -245,6 +234,7 @@ model:
       wt_attr_reconstr: 1.0
       wt_adj_reconstr: 1.0
       wt_joint_code_commit: 1.0
+      wt_spatial_prior: 1.0
       wt_commit: 1.0
       wt_code: 1.0
       wt_mask_token_regularization: 1.0

@@ -1,16 +1,16 @@
 experiment:
   name: in_memory_dataset_blob
-  description: Xenium Human Skin | 39 batches | 1 panel
+  description: Xenium Human Kidney | 5 batches | 1 panel
 
 dataset:
-  name: xhs1000-39b_1p
+  name: xhk1020-CV1-CV2-5b_1p
 
   feature_names: 
     - cell_gene_counts
 
   label_names: 
-    - cell_types=cell_type
-    - niche_types=niche_type
+    - grade=grade
+    - clinical_risk=clinical_risk
 
   graph_kwargs:
     coord_type: generic

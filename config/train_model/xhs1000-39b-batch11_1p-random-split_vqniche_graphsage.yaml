@@ -17,10 +17,10 @@ dataset:
   adata_fname:
     - adata_batch11.h5ad # BK18 Lesional
 
-  batch_timepoint:
-    max_timepoint: 4
-    batch_timepoint_map:
-      11: 0
+  # batch_timepoint:
+  #   max_timepoint: 4
+  #   batch_timepoint_map:
+  #     11: 0
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
@@ -77,7 +77,7 @@ model:
     - codebook_utilization
     - pearson_cell_wise
     - pearson_1hop_nbr
-    # - pearson_gene_wise
+    - pearson_gene_wise
     - pearson_gene_wise_1hop_nbr
     # - cas
     # - mlami
@@ -116,10 +116,10 @@ model:
       residual_weight: 0.2
       init_mode: identity
 
-    spatial_prior_params:
-      spatial_prior_feature: rbf_distances
-      hidden_channels: []
-      act: relu
+    # spatial_prior_params:
+    #   spatial_prior_feature: rbf_distances
+    #   hidden_channels: []
+    #   act: relu
 
     vq_params:
       vq_name: VectorQuantize

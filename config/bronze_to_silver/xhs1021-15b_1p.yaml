@@ -1,0 +1,45 @@
+experiment:
+  name: xhs1021-15b_1p
+  description: Xenium Human Skin (dataset-id 1021) | 15 batch | 1 panel | Preprocess to silver
+  study: 3D Skin Data from Lloyd
+
+paths:
+  data_directory_path: null
+  bronze_directory_path: /nfs/team361/am84/VQNiche/DATASETS/bronze
+  silver_directory_path: /lustre/scratch126/cellgen/lotfollahi/DATASETS/silver
+
+dataset:
+  source: sanger
+  download_params: {}
+  file_names: []
+  overwrite: False
+
+harmonization:
+  uns: 
+    dataset_id: 1021
+    assay: xenium
+    species: homo_sapiens
+    tissue: skin
+  batch: 
+    split_by_batch: true
+    batch_key: sample_id
+    sample_batch_map:
+      output-XETG00055__0056853__BK22-SKI-27-FO-1-S17-A1__20250710__124204: 0
+      output-XETG00055__0056865__BK25-SKI-27-FO-5-S13-B1__20250710__124204: 1
+      output-XETG00055__0056865__BK25-SKI-27-FO-5-S19-C1__20250710__124204: 2
+      output-XETG00055__0056853__BK22-SKI-27-FO-1-S34-D1__20250710__124204: 3 
+      output-XETG00055__0056853__BK22-SKI-27-FO-1-S41-A2__20250710__124204: 4
+      output-XETG00055__0056865__BK25-SKI-27-FO-5-S34-A2__20250710__124204: 5
+      output-XETG00055__0056853__BK22-SKI-27-FO-1-S23-B1__20250710__124204: 6
+      output-XETG00055__0056853__BK22-SKI-27-FO-1-S46-B2__20250710__124204: 7
+      output-XETG00055__0056865__BK25-SKI-27-FO-5-S41-B2__20250710__124204: 8
+      output-XETG00055__0056853__BK22-SKI-27-FO-1-S51-C2__20250710__124204: 9
+      output-XETG00055__0056865__BK25-SKI-27-FO-5-S46-C2__20250710__124204: 10
+      output-XETG00055__0056853__BK22-SKI-27-FO-1-S57-D2__20250710__124204: 11
+      output-XETG00055__0056865__BK25-SKI-27-FO-5-S51-D2__20250710__124204: 12
+      output-XETG00055__0056865__BK25-SKI-27-FO-5-S24-D1-S29-E1__20250710__124204: 13
+  
+  key_mappings: {}
+  misc: 
+    min_genes: 10
+  
