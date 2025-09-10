@@ -128,10 +128,10 @@ model:
       residual_weight: 0.2
       init_mode: identity
 
-    spatial_prior_params:
-      spatial_prior_feature: rbf_distances
-      hidden_channels: []
-      act: relu
+    # spatial_prior_params:
+    #   spatial_prior_feature: rbf_distances
+    #   hidden_channels: []
+    #   act: relu
 
     vq_params:
       vq_name: VectorQuantize
