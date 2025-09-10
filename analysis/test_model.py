@@ -41,7 +41,7 @@ from vqniche.utils.loss_utils import aggregate_1hop_neighbor_features
 codebook_metrics = ['codebook_utilization']
 # codebook_metrics = []
 
-attr_impute_metrics = ['pearson_cell_wise', 'pearson_1hop_nbr', 'pearson_gene_wise_1hop_nbr']
+attr_impute_metrics = ['pearson_cell_wise', 'pearson_1hop_nbr', 'pearson_gene_wise', 'pearson_gene_wise_1hop_nbr']
 # attr_impute_metrics = []
 
 # graph_impute_metrics = ["mmd_degree", "num_edges", "max_degree"]
@@ -68,6 +68,7 @@ METRICS_LIST = codebook_metrics + attr_impute_metrics + graph_impute_metrics + u
 def collate_predict_outputs(
         data_cache: List[Dict],
         model: pl.LightningModule,
+        predict_dataloader: torch.utils.data.DataLoader,
     ) -> Dict:
     """
     Collate a list of dicts (one per batch from trainer.predict) into a single dict with concatenated tensors or lists.
@@ -78,6 +79,8 @@ def collate_predict_outputs(
         A list of dicts, one per batch from trainer.predict
     - model: pl.LightningModule
         The model used for prediction
+    - predict_dataloader: torch.utils.data.DataLoader
+        The dataloader used for prediction
     """
     # --------------------- Collate Data ---------------------
     collated_dict = {}
@@ -86,7 +89,7 @@ def collate_predict_outputs(
     collated_dict['codebook_size'] = model.encoder.vq.codebook_size
     collated_dict['separate'] = model.encoder.vq.separate_codebook_per_head
     collated_dict['num_heads'] = model.encoder.vq.heads
-    
+    collated_dict['edge_index'] = predict_dataloader.data.edge_index
     return collated_dict
 
 
@@ -176,7 +179,8 @@ def test(config: Dict):
         
     predict_data_dict = collate_predict_outputs(
         data_cache=predict_data_cache,
-        model=model
+        model=model,
+        predict_dataloader=datamodule_batch.predict_dataloader(),
     )
 
     predict_dict_fname = results_dir / 'predict_data_dict.pkl'
@@ -185,7 +189,7 @@ def test(config: Dict):
     with open(predict_dict_fname, 'wb') as f:
         pickle.dump(predict_data_dict, f)
     
-    adata_fname = results_dir / 'predict_adata.h5ad'
+    adata_fname = results_dir / 'predict_adata.pkl'
     print(f"Converting inference data to AnnData and saving to {adata_fname}...")
     adata = inference_data_dict_to_adata(
                 inference_data=predict_data_dict,
