@@ -1,0 +1,13 @@
+name: gnn
+method: grid
+run_cap: 4
+metric:
+    goal: minimize
+    name: val_pearson_cell_wise
+parameters:
+  experiment.seed:
+    values: [0, 1]
+  model.encoder_params.gnn_name:
+    values: [SAGEConv]
+  trainer.max_epochs:
+    values: [5, 10]
