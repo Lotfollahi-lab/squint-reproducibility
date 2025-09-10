@@ -1,0 +1,41 @@
+experiment:
+  name: in_memory_dataset_blob
+  description: Xenium Human Skin | 15 batches | 1 panel
+
+dataset:
+  name: xhs1021-15b_1p
+
+  feature_names: 
+    - cell_gene_counts
+
+  label_names: 
+    - cell_types=scanvi_predictions
+
+  graph_kwargs:
+    coord_type: generic
+    spatial_key: spatial
+    n_neighs_list: 
+      - 4
+      - 8
+      - 12
+      - 16
+      - 20
+    radius_list:
+      # - 27.5
+    include_self_loop: true
+    k: 
+      lm_eigvecs: 128
+      deepwalk: 128
+      gosh: 128
+
+  data_directory_path: /lustre/scratch126/cellgen/lotfollahi/DATASETS
+
+  pre_transform: null
+
+  pre_filter: null
+
+  overwrite: true
+
+software_paths:
+  deepwalk: /software/cellgen/team361/am84/third-party-software/Snap-6.0/examples/node2vec/node2vec
+  gosh: /software/cellgen/team361/am84/third-party-software/GOSH/execs/gosh.out

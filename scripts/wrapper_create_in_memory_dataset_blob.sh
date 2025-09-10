@@ -35,7 +35,14 @@ case $DATASET_NAME in
         ;;
     xhk1020-CV1-CV2-5b_1p)
         RAM="40G"
-        TIME="1:00"
+        TIME="2:00"
+        NUM_GPUS=1
+        CORES=8
+        QUEUE="gpu-lotfollahi"
+        ;;
+    xhs1021-15b_1p)
+        RAM="40G"
+        TIME="2:00"
         NUM_GPUS=1
         CORES=8
         QUEUE="gpu-lotfollahi"
