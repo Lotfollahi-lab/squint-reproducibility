@@ -4,6 +4,8 @@ experiment:
 
 logging:
   root_log_dir: /nfs/team361/am84/VQNiche/logs/
+  # log_model: true
+  # offline: false
   log_model: false
   offline: true
   enabled: true
@@ -17,6 +19,11 @@ dataset:
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
+  # batch_timepoint:
+  #   max_timepoint: 4
+  #   batch_timepoint_map:
+  #     11: 0
+
   gene_count_transform_names:
     - SubsetHVG
   gene_count_transform_params:
@@ -29,10 +36,7 @@ dataset:
     radius: null
 
   feature_names:
-      - X
-      # - U_lm_eigvecs
-      # - U_deepwalk
-      # - U_gosh
+    - X
 
   label_name: cell_types
 
@@ -48,7 +52,7 @@ datamodule:
     batch_size: 512
   sampler_name: NeighborSampler
   sampler_params:
-    num_neighbors: [25, 10]
+    num_neighbors: [8, 8]
   inference_params:
     sample_neighbors_for_inference: false
 
@@ -59,19 +63,39 @@ model:
   adjacency_decoder_name: MLP_AdjacencyDecoder
   predictor_name: Linear
 
-  train_log_flags:
-    log_similarity_stats: false
-    log_pearson_correlation: true
-    log_mmd_degree: false
-    log_codebook_utilization: true
+  imputation_params:
+    # mask_strategy: original
+    mask_strategy: learnable_parameter
+    base_mask_ratio: 0.1
+    final_mask_ratio: 0.1
+    warmup_epochs: 0
+    deterministic_masking: false
+    compute_mask_input_diversity: false
+    mask_token_eps: 0.0001
+
+  train_metrics_list:
+    - codebook_utilization
+    - pearson_cell_wise
+    - pearson_1hop_nbr
+    - pearson_gene_wise
+    - pearson_gene_wise_1hop_nbr
+    # - cas
+    # - mlami
+    # - gcs
+    # - mmd_degree
+    # - num_edges
+    # - max_degree
 
   encoder_params:
+  
     gnn_name: SAGEConv
+
     mlp_params:
-      hidden_channels: [900,800]
+      hidden_channels: [900, 800]
       dropout: 0.1
       act: relu
       norm: null
+
     gnn_params:
       hidden_channels: 750
       num_layers: 1
@@ -81,6 +105,22 @@ model:
       dropout: 0.1
       init_method: kaiming_uniform
 
+    conditioning_params:
+      condition_list:
+        - rbf_distances
+        # - relative_xy
+        # - cell_batch_id
+        # - timepoint_id
+      use_bias: true
+      use_residual: false
+      residual_weight: 0.2
+      init_mode: identity
+
+    # spatial_prior_params:
+    #   spatial_prior_feature: rbf_distances
+    #   hidden_channels: []
+    #   act: relu
+
     vq_params:
       vq_name: VectorQuantize
       # VQ related params
@@ -88,7 +128,6 @@ model:
 
       # EMA update related params
       use_cosine_sim: true
-      # use_cosine_sim: false
       ema_update: true # if true, learnable related stuff is ignored
       manual_ema_update: false
       threshold_ema_dead_code: 5
@@ -106,7 +145,7 @@ model:
 
       # codebook related params
       codebook_size: 2048
-      heads: 1
+      heads: 8
       separate_codebook_per_head: false
       decay: 0.8
       eps: 0.00001
@@ -125,11 +164,25 @@ model:
 
       # orthogonal loss related params
       orthogonal_reg_weight: 0.0
-      orthogonal_reg_max_codes: null
-      orthogonal_reg_active_codes_only: false
+      orthogonal_reg_max_codes: null # apply to a random subset of codes
+      orthogonal_reg_active_codes_only: false # apply only to actively used codes in the current batch
 
   attribute_decoder_params:
-    use_xy_coordinates: false
+    # apply_conditioning: null # pre-MLP | in-MLP | None
+    # apply_conditioning: pre-MLP # pre-MLP | in-MLP | None
+
+    apply_conditioning: in-MLP # pre-MLP | in-MLP | None
+    conditioning_params:
+      condition_list:
+        - rbf_distances
+        # - relative_xy
+        # - cell_batch_id
+        # - timepoint_id
+      use_bias: true
+      use_residual: false
+      residual_weight: 0.2
+      init_mode: identity
+
     mlp_params:
       hidden_channels: [750, 900]
       dropout: 0.1
@@ -137,9 +190,11 @@ model:
       norm: batch_norm
 
   adjacency_decoder_params:
+    out_channels: 1000
+
     mlp_params:
-      hidden_channels: []
-      dropout: 0.1
+      hidden_channels: [750]
+      dropout: 0.2
       act: relu
       norm: null
 
@@ -147,17 +202,26 @@ model:
     optimizer_name: adam
     lr: 0.0005
     weight_decay: 0.001
+    mask_lr_scale: 2.0
 
   loss_params:
     loss_names:
-      # - cross_entropy
-      # - mse_attribute_reconstruction
-      - nb_attribute_reconstruction
-      - mse_adjacency_reconstruction
-      # - mse_joint_code_commit_loss
+      # - cross_entropy_loss
+      # - mse_attribute_reconstruction_loss
+      - nb_attribute_reconstruction_loss
+      # - mse_adjacency_reconstruction_loss
+      - bce_adjacency_reconstruction_loss
+      # - ce_spatial_prior_loss
       - mse_commit_loss
       - mse_code_loss
+      - mask_token_regularization
     loss_kwargs:
+      # k_hop_nb_loss: 0
+      k_hop_nb_loss: 1
+      only_masked: false
+      # only_masked: true
+      edge_sampling_ratio: null
+      use_pos_weight: true
       estimate_adj_kwargs:
         nonlinearity: sigmoid
         k: 8
@@ -165,14 +229,17 @@ model:
       wt_attr_reconstr: 1.0
       wt_adj_reconstr: 1.0
       wt_joint_code_commit: 1.0
+      wt_spatial_prior: 1.0
       wt_commit: 1.0
       wt_code: 1.0
+      wt_mask_token_regularization: 1.0
 
 trainer:
+  monitor: val_pearson_1hop_nbr
   checkpoint_params:
     mode: max
     save_top_k: 1
     save_last: true
-  max_epochs: 10
+  max_epochs: 5
   enable_checkpointing: true
   ckpt_path: best
