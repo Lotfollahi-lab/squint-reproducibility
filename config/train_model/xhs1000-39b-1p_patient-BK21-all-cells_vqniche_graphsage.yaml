@@ -3,7 +3,7 @@ experiment:
   mode: standalone
 
 logging:
-  root_log_dir: /nfs/team361/am84/VQNiche/logs/
+  root_log_dir: /nfs/users/nfs_d/dn10/lustre-127-tic/data/VQNiche/logs
   # log_model: true
   # offline: false
   log_model: false
