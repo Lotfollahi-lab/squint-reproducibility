@@ -16,23 +16,25 @@ The pipeline consists of the following steps:
 The pipeline employs PyTorch Lightning to support distributed data parallel (DDP) training across multiple GPUs. With wandb, the script supports a standalone run via a base config file and a sweep run via a base config file and a list of sweep config files.
 
 Example Usage for a standalone run:
->>> python analysis/train_model.py --base_config_file config/train_model/xhs1000-39b-batch11_1p-random-split_vqniche_graphsage.yaml
+>>> python analysis/train_model.py --base_config_file config/train_model/xhs1000-39b_1p-batch11_random-split_vqniche_graphsage.yaml
 
 Example Usage for a sweep run:
->>> python analysis/train_model.py --base_config_file config/train_model/xhs1000-39b-batch11_1p-random-split_vqniche_graphsage.yaml --sweep_config_files config/sweep/vqgraph_encoder.yaml config/sweep/optimizer.yaml
-
-
+>>> python analysis/train_model.py --base_config_file config/train_model/xhs1000-39b_1p-batch11_random-split_vqniche_graphsage.yaml --sweep_config_files config/sweep/backbone_gnn.yaml
 """
+import re
 import os
 import wandb
 from typing import Dict
 from pathlib import Path
+from datetime import datetime
+import pandas as pd
 
 import torch
 import pytorch_lightning as pl
 
 from vqniche.utils.parse_train_configs import parse_train_arguments, collect_train_configs, update_config
 from vqniche.initializers.initialize import *
+from vqniche.utils.parse_test_configs import find_best_checkpoint
 
 
 def train(config: Dict):
@@ -149,22 +151,59 @@ def train(config: Dict):
         datamodule=datamodule_batch
     )
 
-    # # --------------------- Validate Model ---------------------
-    # if enable_checkpointing:
-    #     print("Validating Model using the best checkpoint...")
-    #     trainer.validate(
-    #         ckpt_path="best",
-    #         datamodule=datamodule_batch,
-    #         verbose=True,
-    #     )
-    # else:
-    #     print("Validating Model using the last checkpoint...")
-    #     trainer.validate(
-    #         model=model,
-    #         ckpt_path=None,
-    #         datamodule=datamodule_batch,
-    #         verbose=True,
-    #     )
+    # --------------------- Validate Model ---------------------
+    if 'validate' in config['experiment'] and config['experiment']['validate']:
+        if enable_checkpointing:
+            print("Validating Model using the best checkpoint...")
+            val_results = trainer.validate(
+                                ckpt_path="best",
+                                datamodule=datamodule_batch,
+                                verbose=True,
+                            )
+        else:
+            print("Validating Model using the last checkpoint...")
+            val_results = trainer.validate(
+                                model=model,
+                                ckpt_path=None,
+                                datamodule=datamodule_batch,
+                                verbose=True,
+                            )
+        print("Validation Results:")
+            
+    # --------------------- Test Model ---------------------
+    if 'test' in config['experiment'] and config['experiment']['test']:
+        if enable_checkpointing:
+            print("Testing Model using the best checkpoint...")
+            test_results = trainer.test(
+                                ckpt_path="best",
+                                datamodule=datamodule_batch,
+                                verbose=True,
+                            )
+        else:
+            print("Testing Model using the last checkpoint...")
+            test_results = trainer.test(
+                                model=model,
+                                ckpt_path=None,
+                                datamodule=datamodule_batch,
+                                verbose=True,
+                            )
+        best_ckpt_fname = find_best_checkpoint(
+                                wandb_run_dir=Path(logger.experiment.dir).parent,
+                                mode=config['trainer']['checkpoint_params']['mode'],
+                                metric_name=config['trainer']['monitor'],
+                            ).stem
+        best_epoch = int(re.search(r'epoch=(\d+)', str(best_ckpt_fname)).group(1))
+        test_results['epoch'] = best_epoch
+        
+        results_dir = Path(logger.experiment.dir) / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        test_metrics_fname = results_dir / 'test_metrics.csv'
+        test_metrics_df = pd.DataFrame(test_results)
+        test_metrics_df.to_csv(
+            path_or_buf=test_metrics_fname,
+            sep=',',
+            index=False
+        )
 
 
 if __name__ == '__main__':
@@ -195,10 +234,12 @@ if __name__ == '__main__':
             sweep_id = base_config['experiment']['sweep_id']
 
         # sets directory for sweep runs
+        today = datetime.now().strftime('%Y-%m-%d')
+        sweep_dir_name = f"{today}_{sweep_config['name']}"
         sweep_dir = set_wandb_experiment_dir(
                             config=base_config,
                             experiment_mode='sweep',
-                            sweep_id=sweep_id,
+                            sweep_dir_name=sweep_dir_name,
                         )
 
         # defines training function for an individual run of the sweep
