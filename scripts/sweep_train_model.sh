@@ -16,4 +16,5 @@ fi
 
 python analysis/train_model.py \
     --base_config_file ${BASE_CONFIG_FILE} \
-    --sweep_config_files ${SWEEP_CONFIG_FILE}
+    --sweep_config_files ${SWEEP_CONFIG_FILE} \
+    --test

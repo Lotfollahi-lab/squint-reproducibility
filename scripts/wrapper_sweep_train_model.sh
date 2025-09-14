@@ -6,13 +6,14 @@ SCRIPT="scripts/${EXPERIMENT_NAME}.sh"
 # Set the experiment parameters
 DATASET_NAME="${1:-sss2-1b_1p}"
 SPLIT_NAME="${2:-1-test-patch-split}"
-SWEEP_NAME="${3:-backbone_gnn}"
+MODEL_NAME="${3:-vqniche_graphsage}"
+SWEEP_NAME="${4:-backbone_gnn}"
 
-LOG_DIR="/nfs/team361/am84/VQNiche/logs/${DATASET_NAME}/sweep/job_log/${SWEEP_NAME}"
+LOG_DIR="/nfs/team361/am84/VQNiche/logs/${DATASET_NAME}/sweep/job_log/${MODEL_NAME}/${SWEEP_NAME}"
 
-BASE_CONFIG_FILE="config/train_model/${DATASET_NAME}_${SPLIT_NAME}_vqniche_graphsage.yaml"
+BASE_CONFIG_FILE="config/train_model/${DATASET_NAME}_${SPLIT_NAME}_${MODEL_NAME}.yaml"
 SWEEP_CONFIG_FILE="config/sweeps/${SWEEP_NAME}.yaml"
-JOB_NAME="${DATASET_NAME}_${SPLIT_NAME}_${SWEEP_NAME}"
+JOB_NAME="${DATASET_NAME}_${SPLIT_NAME}_${MODEL_NAME}_${SWEEP_NAME}"
 
 echo "Log directory: ${LOG_DIR}"
 
@@ -59,15 +60,15 @@ case $DATASET_NAME in
 esac
 
 # If not provided, use the default value
-CORES="${4:-$CORES}"
-QUEUE="${5:-$QUEUE}"
+CORES="${5:-$CORES}"
+QUEUE="${6:-$QUEUE}"
 
 # Set the output and error log files
 mkdir -p "${LOG_DIR}"
 OUTPUT_FILE="${LOG_DIR}/${CORES}_${QUEUE}_%J.out"
 ERROR_FILE="${LOG_DIR}/${CORES}_${QUEUE}_%J.err"
 
-echo "Training VQNiche on ${DATASET_NAME} with ${SPLIT_NAME} using ${CORES} cores..."
+echo "Training ${MODEL_NAME} on ${DATASET_NAME} with ${SPLIT_NAME} using ${CORES} cores..."
 
 bsub \
     -G "${GROUP}" \
