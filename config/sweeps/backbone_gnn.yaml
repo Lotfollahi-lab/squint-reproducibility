@@ -1,13 +1,13 @@
 name: backbone_gnn
 method: grid
-run_cap: 3
+run_cap: 9
 metric:
-    goal: minimize
-    name: val_pearson_cell_wise
+    goal: maximize
+    name: train_pearson_1hop_nbr
 parameters:
   experiment.seed:
-    values: [0]
+    values: [0, 1, 2]
   model.encoder_params.gnn_name:
     values: [SAGEConv, GATv2Conv, GINConv]
   trainer.max_epochs:
-    values: [5]
+    values: [20]

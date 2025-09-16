@@ -19,39 +19,29 @@ echo "Log directory: ${LOG_DIR}"
 
 case $DATASET_NAME in
     mmb0-4b_1p)
-        RAM="25G"
-        TIME="0:30"
+        RAM="80G"
         NUM_GPUS=1
-        CORES=4
-        QUEUE="gpu-lotfollahi"
+        CORES=6
         ;;
     sss2-1b_1p)
         RAM="20G"
-        TIME="0:30"
         NUM_GPUS=1
         CORES=1
-        QUEUE="gpu-lotfollahi"
         ;;
     xhs1000-39b_1p-oriented-3)
-        RAM="40G"
-        TIME="1:00"
-        NUM_GPUS=2
+        RAM="120G"
+        NUM_GPUS=1
         CORES=8
-        QUEUE="gpu-lotfollahi"
         ;;
     xhk1020-CV1-CV2-5b_1p)
         RAM="40G"
-        TIME="2:00"
         NUM_GPUS=1
         CORES=8
-        QUEUE="gpu-lotfollahi"
         ;;
     xhs1021-15b_1p)
         RAM="40G"
-        TIME="2:00"
         NUM_GPUS=1
         CORES=8
-        QUEUE="gpu-lotfollahi"
         ;;
     *)
         echo "Invalid dataset name"
@@ -61,7 +51,7 @@ esac
 
 # If not provided, use the default value
 CORES="${5:-$CORES}"
-QUEUE="${6:-$QUEUE}"
+QUEUE="${6:-gpu-lotfollahi}"
 
 # Set the output and error log files
 mkdir -p "${LOG_DIR}"
@@ -75,7 +65,6 @@ bsub \
     -n "${CORES}" \
     -q "${QUEUE}" \
     -M "${RAM}" -R "select[mem>${RAM}] rusage[mem=${RAM}]" \
-    -W "${TIME}" \
     -cwd "${CWD}" \
     -gpu "num=${NUM_GPUS}:mode=exclusive_process:block=yes" \
     -o "${OUTPUT_FILE}" \
