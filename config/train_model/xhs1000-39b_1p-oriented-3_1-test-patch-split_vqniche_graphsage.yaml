@@ -4,10 +4,10 @@ experiment:
 
 logging:
   root_log_dir: /nfs/team361/am84/VQNiche/logs/
-  # log_model: true
-  # offline: false
-  log_model: false
-  offline: true
+  log_model: true
+  offline: false
+  # log_model: false
+  # offline: true
   enabled: true
 
 dataset:
