@@ -79,7 +79,7 @@ dataset:
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 128
+    batch_size: 64
   sampler_name: NeighborSampler
   sampler_params:
     num_neighbors: [8, 8]
@@ -121,14 +121,14 @@ model:
     gnn_name: SAGEConv
 
     mlp_params:
-      hidden_channels: [600, 400]
+      hidden_channels: [600, 200]
       dropout: 0.1
       act: relu
       norm: null
 
     gnn_params:
-      hidden_channels: 400
-      num_layers: 3
+      hidden_channels: 200
+      num_layers: 1
       act_first: true
       activation: relu
       norm: null
@@ -175,7 +175,7 @@ model:
 
       # codebook related params
       codebook_size: 5000
-      heads: 10
+      heads: 1
       separate_codebook_per_head: false
       decay: 0.8
       eps: 0.00001
@@ -250,7 +250,7 @@ model:
       k_hop_nb_loss: 1
       only_masked: false
       # only_masked: true
-      edge_sampling_ratio: 2
+      edge_sampling_ratio: 1
       use_pos_weight: true
       estimate_adj_kwargs:
         nonlinearity: sigmoid
@@ -269,6 +269,6 @@ trainer:
     mode: max
     save_top_k: 1
     save_last: true
-  max_epochs: 5
+  max_epochs: 1
   enable_checkpointing: true
   ckpt_path: best

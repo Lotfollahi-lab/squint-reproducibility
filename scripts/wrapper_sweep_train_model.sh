@@ -60,7 +60,7 @@ case $DATASET_NAME in
         CORES=8
         ;;
     xhk1020-CV1-CV2-5b_1p)
-        RAM="40G"
+        RAM="120G"
         NUM_GPUS=1
         CORES=8
         ;;
@@ -76,8 +76,8 @@ case $DATASET_NAME in
 esac
 
 # If not provided, use the default value
-CORES="${5:-$CORES}"
-QUEUE="${6:-gpu-lotfollahi}"
+CORES="${6:-$CORES}"
+QUEUE="${7:-gpu-lotfollahi}"
 
 # Set the output and error log files
 mkdir -p "${LOG_DIR}"

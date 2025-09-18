@@ -4,10 +4,10 @@ experiment:
 
 logging:
   root_log_dir: /nfs/team361/am84/VQNiche/logs/
-  log_model: true
-  offline: false
-  # log_model: false
-  # offline: true
+  # log_model: true
+  # offline: false
+  log_model: false
+  offline: true
   enabled: true
 
 dataset:
@@ -41,7 +41,7 @@ dataset:
   gene_count_transform_names:
     - SubsetHVG
   gene_count_transform_params:
-    n_genes: 2000
+    n_genes: 1000
 
   graph_params:
     spatial_key: spatial
@@ -77,10 +77,10 @@ dataset:
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 256
+    batch_size: 128
   sampler_name: NeighborSampler
   sampler_params:
-    num_neighbors: [16, 16]
+    num_neighbors: [8, 8]
   inference_params:
     sample_neighbors_for_inference: false
 
@@ -94,9 +94,9 @@ model:
   imputation_params:
     # mask_strategy: original
     mask_strategy: learnable_parameter
-    base_mask_ratio: 0.3
-    final_mask_ratio: 0.3
-    warmup_epochs: 0
+    base_mask_ratio: 0.2
+    final_mask_ratio: 0.6
+    warmup_epochs: 5
     deterministic_masking: false
     compute_mask_input_diversity: false
     mask_token_eps: 0.0001
@@ -119,14 +119,14 @@ model:
     gnn_name: SAGEConv
 
     mlp_params:
-      hidden_channels: [600, 200]
+      hidden_channels: [600, 400]
       dropout: 0.1
       act: relu
       norm: null
 
     gnn_params:
-      hidden_channels: 200
-      num_layers: 3
+      hidden_channels: 400
+      num_layers: 1
       act_first: true
       activation: relu
       norm: null
@@ -173,7 +173,7 @@ model:
 
       # codebook related params
       codebook_size: 5000
-      heads: 1
+      heads: 10
       separate_codebook_per_head: false
       decay: 0.8
       eps: 0.00001
@@ -248,7 +248,7 @@ model:
       k_hop_nb_loss: 1
       only_masked: false
       # only_masked: true
-      edge_sampling_ratio: null
+      edge_sampling_ratio: 2
       use_pos_weight: true
       estimate_adj_kwargs:
         nonlinearity: sigmoid
