@@ -1,4 +1,4 @@
-name: codebook_size
+name: patch_size
 method: grid
 run_cap: 9
 metric:
@@ -29,4 +29,4 @@ parameters:
       },
     ]
   trainer.max_epochs:
-    values: [10]
+    values: [5]

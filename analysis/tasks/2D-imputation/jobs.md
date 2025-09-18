@@ -31,4 +31,7 @@
 ## Skin (Human) (1 Test Region) -- Increasing Imputation Patch Size
 
 - `./scripts/wrapper_sweep_train_model.sh xhs1000-39b_1p-oriented-3 1-test-patch-split vqniche_graphsage patch_size 1 6 gpu-lotfollahi-train`
-- 
+
+## Skin (Human) (3 Test Region) -- Increasing Gene Panel Size
+
+- `./scripts/wrapper_sweep_train_model.sh mmb0-4b_1p 3-test-patch-split vqniche_graphsage gene_panel 1 6 gpu-lotfollahi-train`
