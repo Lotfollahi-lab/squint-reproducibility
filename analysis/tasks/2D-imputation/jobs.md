@@ -14,3 +14,16 @@
 - `./scripts/wrapper_sweep_train_model.sh xhs1000-39b_1p-oriented-5 3-test-patch-split vqniche_graphsage seed 6 gpu-lotfollahi-train`
 - `./scripts/wrapper_sweep_train_model.sh xhs1000-39b_1p-oriented-6 3-test-patch-split vqniche_graphsage seed 6 gpu-lotfollahi-train`
 - `./scripts/wrapper_sweep_train_model.sh xhs1000-39b_1p-oriented-7 3-test-patch-split vqniche_graphsage seed 6 gpu-lotfollahi-train`
+
+## Skin (Human) (1 Test Region) -- Increasing Training Sections
+
+- `./scripts/wrapper_sweep_train_model.sh xhs1000-39b_1p-oriented-3 1-test-patch-split vqniche_graphsage seed 6 gpu-lotfollahi-train`
+- `./scripts/wrapper_sweep_train_model.sh xhs1000-39b_1p-oriented-4 1-test-patch-split vqniche_graphsage seed 6 gpu-lotfollahi-train`
+- `./scripts/wrapper_sweep_train_model.sh xhs1000-39b_1p-oriented-5 1-test-patch-split vqniche_graphsage seed 6 gpu-lotfollahi-train`
+- `./scripts/wrapper_sweep_train_model.sh xhs1000-39b_1p-oriented-6 1-test-patch-split vqniche_graphsage seed 6 gpu-lotfollahi-train`
+- `./scripts/wrapper_sweep_train_model.sh xhs1000-39b_1p-oriented-7 1-test-patch-split vqniche_graphsage seed 6 gpu-lotfollahi-train`
+
+## Skin (Human) (1 Test Region) -- Increasing Imputation Patch Size
+
+- `./scripts/wrapper_sweep_train_model.sh xhs1000-39b_1p-oriented-3 1-test-patch-split vqniche_graphsage patch_size 6 gpu-lotfollahi-train`
+- 
