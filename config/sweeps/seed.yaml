@@ -8,4 +8,4 @@ parameters:
   experiment.seed:
     values: [0, 1, 2]
   trainer.max_epochs:
-    values: [10]
+    values: [5]

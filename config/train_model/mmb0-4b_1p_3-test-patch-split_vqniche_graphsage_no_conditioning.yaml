@@ -11,19 +11,12 @@ logging:
   enabled: true
 
 dataset:
-  dataset_name: xhk1020-CV1-CV2-5b_1p
+  dataset_name: mmb0-4b_1p
   adata_batch_idx:
     - 0
     - 1
     - 2
     - 3
-    - 4
-  adata_fname:
-    - adata_batch0.h5ad
-    - adata_batch1.h5ad
-    - adata_batch2.h5ad
-    - adata_batch3.h5ad
-    - adata_batch4.h5ad
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
@@ -41,39 +34,38 @@ dataset:
   feature_names:
     - X
 
-  label_name: grade
+  label_name: cell_types
 
   train_transform_names:
     - SpatialBatchSplit
   train_transform_params:
     region: [
-      {
-        x_min: 3000,
-        x_max: 3500,
-        y_min: 3500,
-        y_max: 4000,
-      },
-      {
-        x_min: 1500,
-        x_max: 2000,
-        y_min: 3000,
-        y_max: 3500,
-      },
-      {
-        x_min: 2000,
-        x_max: 2500,
-        y_min: 2000,
-        y_max: 2500,
-      }
-    ]
+          {
+            x_min: 20750,
+            x_max: 21000,
+            y_min: -125,
+            y_max: 125,
+          },
+          {
+            x_min: 22000,
+            x_max: 22250,
+            y_min: 250,
+            y_max: 500,
+          },
+          {
+            x_min: 20000,
+            x_max: 20250,
+            y_min: -750,
+            y_max: -500,
+          }
+      ]  
     train_batches:
-      - 0
       - 1
+      - 2
       - 3
-      - 4
     val_batches: []
     test_batches:
-      - 2
+      - 4
     xy_key: xy_coordinates
 
 datamodule:
@@ -128,23 +120,24 @@ model:
 
     gnn_params:
       hidden_channels: 400
-      num_layers: 3
+      num_layers: 1
       act_first: true
       activation: relu
       norm: null
       dropout: 0.1
       init_method: kaiming_uniform
 
-    conditioning_params:
-      condition_list:
-        - rbf_distances
-        # - relative_xy
-        - cell_batch_id
-        # - timepoint_id
-      use_bias: true
-      use_residual: false
-      residual_weight: 0.2
-      init_mode: identity
+    # conditioning_params:
+    #   condition_list:
+    #     - rbf_distances
+    #     # - cell_types
+    #     # - relative_xy
+    #     - cell_batch_id
+    #     # - timepoint_id
+    #   use_bias: true
+    #   use_residual: false
+    #   residual_weight: 0.2
+    #   init_mode: identity
 
     # spatial_prior_params:
     #   spatial_prior_feature: rbf_distances
@@ -198,20 +191,21 @@ model:
       orthogonal_reg_active_codes_only: false # apply only to actively used codes in the current batch
 
   attribute_decoder_params:
-    # apply_conditioning: null # pre-MLP | in-MLP | None
+    apply_conditioning: null # pre-MLP | in-MLP | None
     # apply_conditioning: pre-MLP # pre-MLP | in-MLP | None
 
-    apply_conditioning: in-MLP # pre-MLP | in-MLP | None
-    conditioning_params:
-      condition_list:
-        - rbf_distances
-        # - relative_xy
-        - cell_batch_id
-        # - timepoint_id
-      use_bias: true
-      use_residual: false
-      residual_weight: 0.2
-      init_mode: identity
+    # apply_conditioning: in-MLP # pre-MLP | in-MLP | None
+    # conditioning_params:
+    #   condition_list:
+    #     - rbf_distances
+    #     # - cell_types
+    #     # - relative_xy
+    #     - cell_batch_id
+    #     # - timepoint_id
+    #   use_bias: true
+    #   use_residual: false
+    #   residual_weight: 0.2
+    #   init_mode: identity
 
     mlp_params:
       hidden_channels: [600]

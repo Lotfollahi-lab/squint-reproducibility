@@ -8,10 +8,16 @@ DATASET_NAME="${1:-sss2-1b_1p}"
 SPLIT_NAME="${2:-1-test-patch-split}"
 MODEL_NAME="${3:-vqniche_graphsage}"
 SWEEP_NAME="${4:-backbone_gnn}"
+CONDITIONING="${5:-1}"
 
 LOG_DIR="/nfs/team361/am84/VQNiche/logs/${DATASET_NAME}/sweep/job_log/${MODEL_NAME}/${SWEEP_NAME}"
 
-BASE_CONFIG_FILE="config/train_model/${DATASET_NAME}_${SPLIT_NAME}_${MODEL_NAME}.yaml"
+if [ "${CONDITIONING}" -eq 1 ]; then
+    BASE_CONFIG_FILE="config/train_model/${DATASET_NAME}_${SPLIT_NAME}_${MODEL_NAME}.yaml"
+else
+    BASE_CONFIG_FILE="config/train_model/${DATASET_NAME}_${SPLIT_NAME}_${MODEL_NAME}_no_conditioning.yaml"
+fi
+
 SWEEP_CONFIG_FILE="config/sweeps/${SWEEP_NAME}.yaml"
 JOB_NAME="${DATASET_NAME}_${SPLIT_NAME}_${MODEL_NAME}_${SWEEP_NAME}"
 

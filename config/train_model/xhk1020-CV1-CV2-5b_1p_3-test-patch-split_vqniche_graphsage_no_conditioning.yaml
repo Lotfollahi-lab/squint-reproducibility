@@ -135,16 +135,16 @@ model:
       dropout: 0.1
       init_method: kaiming_uniform
 
-    conditioning_params:
-      condition_list:
-        - rbf_distances
-        # - relative_xy
-        - cell_batch_id
-        # - timepoint_id
-      use_bias: true
-      use_residual: false
-      residual_weight: 0.2
-      init_mode: identity
+    # conditioning_params:
+    #   condition_list:
+    #     - rbf_distances
+    #     # - relative_xy
+    #     - cell_batch_id
+    #     # - timepoint_id
+    #   use_bias: true
+    #   use_residual: false
+    #   residual_weight: 0.2
+    #   init_mode: identity
 
     # spatial_prior_params:
     #   spatial_prior_feature: rbf_distances
@@ -198,20 +198,20 @@ model:
       orthogonal_reg_active_codes_only: false # apply only to actively used codes in the current batch
 
   attribute_decoder_params:
-    # apply_conditioning: null # pre-MLP | in-MLP | None
+    apply_conditioning: null # pre-MLP | in-MLP | None
     # apply_conditioning: pre-MLP # pre-MLP | in-MLP | None
 
-    apply_conditioning: in-MLP # pre-MLP | in-MLP | None
-    conditioning_params:
-      condition_list:
-        - rbf_distances
-        # - relative_xy
-        - cell_batch_id
-        # - timepoint_id
-      use_bias: true
-      use_residual: false
-      residual_weight: 0.2
-      init_mode: identity
+    # apply_conditioning: in-MLP # pre-MLP | in-MLP | None
+    # conditioning_params:
+    #   condition_list:
+    #     - rbf_distances
+    #     # - relative_xy
+    #     - cell_batch_id
+    #     # - timepoint_id
+    #   use_bias: true
+    #   use_residual: false
+    #   residual_weight: 0.2
+    #   init_mode: identity
 
     mlp_params:
       hidden_channels: [600]
