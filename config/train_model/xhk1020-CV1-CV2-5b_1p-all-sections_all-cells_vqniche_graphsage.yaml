@@ -4,10 +4,10 @@ experiment:
 
 logging:
   root_log_dir: /nfs/team361/am84/VQNiche/logs/
-  log_model: true
-  offline: false
-  # log_model: false
-  # offline: true
+  # log_model: true
+  # offline: false
+  log_model: false
+  offline: true
   enabled: true
 
 dataset:
@@ -90,7 +90,7 @@ model:
 
     gnn_params:
       hidden_channels: 200
-      num_layers: 3
+      num_layers: 1
       act_first: true
       activation: relu
       norm: null
@@ -101,6 +101,7 @@ model:
       condition_list:
         - rbf_distances
         # - relative_xy
+        - grade
         - cell_batch_id
         # - timepoint_id
       use_bias: true
@@ -168,6 +169,7 @@ model:
       condition_list:
         - rbf_distances
         # - relative_xy
+        - grade
         - cell_batch_id
         # - timepoint_id
       use_bias: true
@@ -231,6 +233,6 @@ trainer:
     mode: max
     save_top_k: 1
     save_last: true
-  max_epochs: 10
+  max_epochs: 1
   enable_checkpointing: true
   ckpt_path: best
