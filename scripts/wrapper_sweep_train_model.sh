@@ -33,6 +33,26 @@ case $DATASET_NAME in
         NUM_GPUS=1
         CORES=8
         ;;
+    xhs1000-39b_1p-oriented-4)
+        RAM="120G"
+        NUM_GPUS=1
+        CORES=8
+        ;;
+    xhs1000-39b_1p-oriented-5)
+        RAM="120G"
+        NUM_GPUS=1
+        CORES=8
+        ;;
+    xhs1000-39b_1p-oriented-6)
+        RAM="120G"
+        NUM_GPUS=1
+        CORES=8
+        ;;
+    xhs1000-39b_1p-oriented-7)
+        RAM="120G"
+        NUM_GPUS=1
+        CORES=8
+        ;;
     xhk1020-CV1-CV2-5b_1p)
         RAM="40G"
         NUM_GPUS=1
