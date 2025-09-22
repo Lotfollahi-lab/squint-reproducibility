@@ -26,7 +26,6 @@ import os
 import wandb
 from typing import Dict
 from pathlib import Path
-from datetime import datetime
 import pandas as pd
 
 import torch
@@ -192,8 +191,9 @@ def train(config: Dict):
                                 mode=config['trainer']['checkpoint_params']['mode'],
                                 metric_name=config['trainer']['monitor'],
                             ).stem
-        best_epoch = int(re.search(r'epoch=(\d+)', str(best_ckpt_fname)).group(1))
-        test_results['epoch'] = best_epoch
+        best_epoch = int(re.search(r'epoch=(\d+)', best_ckpt_fname).group(1))
+        for result in test_results:
+            result['epoch'] = best_epoch
         
         results_dir = Path(logger.experiment.dir) / 'results'
         results_dir.mkdir(parents=True, exist_ok=True)
@@ -234,12 +234,10 @@ if __name__ == '__main__':
             sweep_id = base_config['experiment']['sweep_id']
 
         # sets directory for sweep runs
-        today = datetime.now().strftime('%Y-%m-%d')
-        sweep_dir_name = f"{today}_{sweep_config['name']}"
         sweep_dir = set_wandb_experiment_dir(
                             config=base_config,
                             experiment_mode='sweep',
-                            sweep_dir_name=sweep_dir_name,
+                            sweep_name=sweep_config['name'],
                         )
 
         # defines training function for an individual run of the sweep

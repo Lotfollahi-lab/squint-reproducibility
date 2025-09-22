@@ -1,0 +1,32 @@
+name: patch_size
+method: grid
+run_cap: 9
+metric:
+    goal: maximize
+    name: train_pearson_1hop_nbr
+parameters:
+  experiment.seed:
+    values: [0, 1, 2]
+  dataset.train_transform_params.region:
+    values: [
+      {
+        x_min: 2500,
+        x_max: 4000,
+        y_min: 3000,
+        y_max: 4000,
+      },
+      {
+        x_min: 2000,
+        x_max: 4500,
+        y_min: 2500,
+        y_max: 4000,
+      },
+      {
+        x_min: 1500,
+        x_max: 5000,
+        y_min: 2000,
+        y_max: 4000,
+      },
+    ]
+  trainer.max_epochs:
+    values: [5]

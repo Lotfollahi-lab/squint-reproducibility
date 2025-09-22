@@ -1,0 +1,15 @@
+name: codebook_size
+method: grid
+run_cap: 12
+metric:
+    goal: maximize
+    name: train_pearson_1hop_nbr
+parameters:
+  experiment.seed:
+    values: [0, 1, 2]
+  dataset.gene_count_transform_params.n_genes:
+    values: [250, 500, 750, 1000]
+  model.encoder_params.vq_params.heads:
+    values: [1]
+  trainer.max_epochs:
+    values: [5]

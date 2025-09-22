@@ -4,25 +4,21 @@ experiment:
 
 logging:
   root_log_dir: /nfs/team361/am84/VQNiche/logs/
-  # log_model: true
-  # offline: false
-  log_model: false
-  offline: true
+  log_model: true
+  offline: false
+  # log_model: false
+  # offline: true
   enabled: true
 
 dataset:
-  dataset_name: sss2-1b_1p
-  adata_batch_idx: 
+  dataset_name: mmb0-4b_1p
+  adata_batch_idx:
     - 0
-  adata_fname:
-    - sim1_1105fts_10000locs.h5ad
+    - 1
+    - 2
+    - 3
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
-
-  # batch_timepoint:
-  #   max_timepoint: 4
-  #   batch_timepoint_map:
-  #     11: 0
 
   gene_count_transform_names:
     - SubsetHVG
@@ -41,15 +37,41 @@ dataset:
   label_name: cell_types
 
   train_transform_names:
-    - RandomNodeSplit
+    - SpatialBatchSplit
   train_transform_params:
-    val_ratio: 0.1
-    test_ratio: 0.1
+    region: [
+          {
+            x_min: 20750,
+            x_max: 21000,
+            y_min: -125,
+            y_max: 125,
+          },
+          {
+            x_min: 22000,
+            x_max: 22250,
+            y_min: 250,
+            y_max: 500,
+          },
+          {
+            x_min: 20000,
+            x_max: 20250,
+            y_min: -750,
+            y_max: -500,
+          }
+      ]  
+    train_batches:
+      - 1
+      - 2
+      - 3
+    val_batches: []
+    test_batches:
+      - 4
+    xy_key: xy_coordinates
 
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 512
+    batch_size: 128
   sampler_name: NeighborSampler
   sampler_params:
     num_neighbors: [8, 8]
@@ -66,9 +88,9 @@ model:
   imputation_params:
     # mask_strategy: original
     mask_strategy: learnable_parameter
-    base_mask_ratio: 0.1
-    final_mask_ratio: 0.1
-    warmup_epochs: 0
+    base_mask_ratio: 0.2
+    final_mask_ratio: 0.6
+    warmup_epochs: 5
     deterministic_masking: false
     compute_mask_input_diversity: false
     mask_token_eps: 0.0001
@@ -91,30 +113,31 @@ model:
     gnn_name: SAGEConv
 
     mlp_params:
-      hidden_channels: [900, 800]
+      hidden_channels: [600, 400]
       dropout: 0.1
       act: relu
       norm: null
 
     gnn_params:
-      hidden_channels: 750
+      hidden_channels: 400
       num_layers: 1
       act_first: true
       activation: relu
-      norm: BatchNorm
+      norm: null
       dropout: 0.1
       init_method: kaiming_uniform
 
-    conditioning_params:
-      condition_list:
-        - rbf_distances
-        # - relative_xy
-        # - cell_batch_id
-        # - timepoint_id
-      use_bias: true
-      use_residual: false
-      residual_weight: 0.2
-      init_mode: identity
+    # conditioning_params:
+    #   condition_list:
+    #     - rbf_distances
+    #     # - cell_types
+    #     # - relative_xy
+    #     - cell_batch_id
+    #     # - timepoint_id
+    #   use_bias: true
+    #   use_residual: false
+    #   residual_weight: 0.2
+    #   init_mode: identity
 
     # spatial_prior_params:
     #   spatial_prior_feature: rbf_distances
@@ -130,7 +153,7 @@ model:
       use_cosine_sim: true
       ema_update: true # if true, learnable related stuff is ignored
       manual_ema_update: false
-      threshold_ema_dead_code: 5
+      threshold_ema_dead_code: 100
       manual_in_place_optimizer_update: false # must be false if ema_update is true
       learnable_codebook: false # must be false if ema_update is true
 
@@ -144,8 +167,8 @@ model:
       # ema_update: false
 
       # codebook related params
-      codebook_size: 2048
-      heads: 8
+      codebook_size: 5000
+      heads: 10
       separate_codebook_per_head: false
       decay: 0.8
       eps: 0.00001
@@ -168,39 +191,40 @@ model:
       orthogonal_reg_active_codes_only: false # apply only to actively used codes in the current batch
 
   attribute_decoder_params:
-    # apply_conditioning: null # pre-MLP | in-MLP | None
+    apply_conditioning: null # pre-MLP | in-MLP | None
     # apply_conditioning: pre-MLP # pre-MLP | in-MLP | None
 
-    apply_conditioning: in-MLP # pre-MLP | in-MLP | None
-    conditioning_params:
-      condition_list:
-        - rbf_distances
-        # - relative_xy
-        # - cell_batch_id
-        # - timepoint_id
-      use_bias: true
-      use_residual: false
-      residual_weight: 0.2
-      init_mode: identity
+    # apply_conditioning: in-MLP # pre-MLP | in-MLP | None
+    # conditioning_params:
+    #   condition_list:
+    #     - rbf_distances
+    #     # - cell_types
+    #     # - relative_xy
+    #     - cell_batch_id
+    #     # - timepoint_id
+    #   use_bias: true
+    #   use_residual: false
+    #   residual_weight: 0.2
+    #   init_mode: identity
 
     mlp_params:
-      hidden_channels: [750, 900]
+      hidden_channels: [600]
       dropout: 0.1
-      act: relu
-      norm: batch_norm
+      act: gelu
+      norm: layer_norm
 
   adjacency_decoder_params:
-    out_channels: 1000
+    out_channels: 600
 
     mlp_params:
-      hidden_channels: [750]
+      hidden_channels: [400]
       dropout: 0.2
       act: relu
-      norm: null
+      norm: layer_norm
 
   optimizer_params:
     optimizer_name: adam
-    lr: 0.0005
+    lr: 0.001
     weight_decay: 0.001
     mask_lr_scale: 2.0
 
@@ -220,7 +244,7 @@ model:
       k_hop_nb_loss: 1
       only_masked: false
       # only_masked: true
-      edge_sampling_ratio: null
+      edge_sampling_ratio: 2
       use_pos_weight: true
       estimate_adj_kwargs:
         nonlinearity: sigmoid
@@ -229,13 +253,12 @@ model:
       wt_attr_reconstr: 1.0
       wt_adj_reconstr: 1.0
       wt_joint_code_commit: 1.0
-      wt_spatial_prior: 1.0
       wt_commit: 1.0
       wt_code: 1.0
       wt_mask_token_regularization: 1.0
 
 trainer:
-  monitor: val_pearson_1hop_nbr
+  monitor: train_pearson_1hop_nbr
   checkpoint_params:
     mode: max
     save_top_k: 1

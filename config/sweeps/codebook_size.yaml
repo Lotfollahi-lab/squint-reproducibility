@@ -1,13 +1,13 @@
-name: backbone_gnn
+name: codebook_size
 method: grid
-run_cap: 9
+run_cap: 15
 metric:
     goal: maximize
     name: train_pearson_1hop_nbr
 parameters:
   experiment.seed:
     values: [0, 1, 2]
-  model.encoder_params.gnn_name:
-    values: [SAGEConv, GATv2Conv, GINConv]
+  model.encoder_params.vq_params.codebook_size:
+    values: [2000, 3000, 4000, 5000, 6000]
   trainer.max_epochs:
-    values: [20]
+    values: [10]

@@ -67,16 +67,16 @@ model:
 
   train_metrics_list:
     - codebook_utilization
+    - pearson_1hop_nbr
+
+  test_metrics_list:
+    - codebook_utilization
     - pearson_cell_wise
     - pearson_1hop_nbr
+    - mmd_1hop_nbr
+    - mmd_pca_1hop_nbr
     - pearson_gene_wise
     - pearson_gene_wise_1hop_nbr
-    # - cas
-    # - mlami
-    # - gcs
-    # - mmd_degree
-    # - num_edges
-    # - max_degree
 
   encoder_params:
   
