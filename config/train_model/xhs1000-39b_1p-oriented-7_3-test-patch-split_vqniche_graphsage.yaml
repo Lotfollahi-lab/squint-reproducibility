@@ -128,6 +128,8 @@ model:
     - mmd_pca_1hop_nbr
     - pearson_gene_wise
     - pearson_gene_wise_1hop_nbr
+    - energy_1hop_nbr
+    - energy_pca_1hop_nbr
 
   encoder_params:
   

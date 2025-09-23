@@ -4,15 +4,37 @@ experiment:
 
 logging:
   root_log_dir: /nfs/team361/am84/VQNiche/logs/
-  log_model: true
-  offline: false
-  # log_model: false
-  # offline: true
+  # log_model: true
+  # offline: false
+  log_model: false
+  offline: true
   enabled: true
 
 dataset:
-  dataset_name: xhk1020-CV1-CV2-5b_1p
-  adata_batch_idx: -1
+  dataset_name: xhs1000-39b_1p
+  adata_batch_idx:
+    - 2
+    - 11
+    - 9
+    - 28
+    - 29
+    - 32
+    - 12
+  adata_fname:
+    - adata_batch2.h5ad
+    - adata_batch11.h5ad
+    - adata_batch9.h5ad
+    - adata_batch28.h5ad
+    - adata_batch29.h5ad
+    - adata_batch32.h5ad
+    - adata_batch12.h5ad
+
+  # batch_timepoint:
+  #   max_timepoint: 4
+  #   batch_timepoint_map:
+  #     2: 0
+  #     11: 0
+  #     12: 1
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
@@ -24,24 +46,53 @@ dataset:
   graph_params:
     spatial_key: spatial
     delaunay: false
-    n_neighs: 16
+    n_neighs: 8
     radius: null
 
   feature_names:
     - X
 
-  label_name: grade
+  label_name: cell_types
 
   train_transform_names:
-    - RandomNodeSplit
+    - SpatialBatchSplit
   train_transform_params:
-    val_ratio: 0.0
-    test_ratio: 0.1
+    region: [
+      {
+        x_min: 3000,
+        x_max: 3500,
+        y_min: 3500,
+        y_max: 4000,
+      },
+      {
+        x_min: 1500,
+        x_max: 2000,
+        y_min: 3000,
+        y_max: 3500,
+      },
+      {
+        x_min: 2000,
+        x_max: 2500,
+        y_min: 2000,
+        y_max: 2500,
+      }
+    ]
+    train_batches:
+      - 2
+      - 11
+      - 9
+      - 28
+      - 29
+      - 32
+    val_batches: []
+    test_batches:
+      - 12
+    xy_key: xy_coordinates
 
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 64
+    batch_size: 128
   sampler_name: NeighborSampler
   sampler_params:
     num_neighbors: [8, 8]
@@ -77,19 +128,21 @@ model:
     - mmd_pca_1hop_nbr
     - pearson_gene_wise
     - pearson_gene_wise_1hop_nbr
+    - energy_1hop_nbr
+    - energy_pca_1hop_nbr
 
   encoder_params:
   
     gnn_name: SAGEConv
 
     mlp_params:
-      hidden_channels: [600, 200]
+      hidden_channels: [600, 400]
       dropout: 0.1
       act: relu
       norm: null
 
     gnn_params:
-      hidden_channels: 200
+      hidden_channels: 400
       num_layers: 1
       act_first: true
       activation: relu
@@ -101,7 +154,6 @@ model:
     #   condition_list:
     #     - rbf_distances
     #     # - relative_xy
-    #     # - grade
     #     - cell_batch_id
     #     # - timepoint_id
     #   use_bias: true
@@ -123,7 +175,7 @@ model:
       use_cosine_sim: true
       ema_update: true # if true, learnable related stuff is ignored
       manual_ema_update: false
-      threshold_ema_dead_code: 5
+      threshold_ema_dead_code: 100
       manual_in_place_optimizer_update: false # must be false if ema_update is true
       learnable_codebook: false # must be false if ema_update is true
 
@@ -137,8 +189,8 @@ model:
       # ema_update: false
 
       # codebook related params
-      codebook_size: 50
-      heads: 1
+      codebook_size: 5000
+      heads: 10
       separate_codebook_per_head: false
       decay: 0.8
       eps: 0.00001
@@ -169,7 +221,6 @@ model:
     #   condition_list:
     #     - rbf_distances
     #     # - relative_xy
-    #     # - grade
     #     - cell_batch_id
     #     # - timepoint_id
     #   use_bias: true
@@ -214,7 +265,7 @@ model:
       k_hop_nb_loss: 1
       only_masked: false
       # only_masked: true
-      edge_sampling_ratio: 1
+      edge_sampling_ratio: 2
       use_pos_weight: true
       estimate_adj_kwargs:
         nonlinearity: sigmoid

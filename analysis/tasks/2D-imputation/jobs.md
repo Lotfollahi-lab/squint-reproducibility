@@ -11,6 +11,9 @@
 - `./scripts/wrapper_sweep_train_model.sh xhk1020-CV1-CV2-5b_1p 3-test-patch-split vqniche_graphsage seed 1 6 gpu-lotfollahi-train`
 - `./scripts/wrapper_sweep_train_model.sh xhk1020-CV1-CV2-5b_1p 3-test-patch-split vqniche_graphsage seed 0 6 gpu-lotfollahi-train`
 
+- `./scripts/wrapper_sweep_train_model.sh xhs1000-39b_1p-oriented-7 3-test-patch-split vqniche_graphsage seed 1 6 gpu-normal`
+- `./scripts/wrapper_sweep_train_model.sh xhs1000-39b_1p-oriented-7 3-test-patch-split vqniche_graphsage seed 0 6 gpu-normal`
+
 
 ## Skin (Human) (3 Test Regions) -- Increasing Training Sections
 
