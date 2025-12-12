@@ -1,16 +1,16 @@
 experiment:
-  name: in_memory_dataset_blob
-  description: Merfish Mouse Brain (first four batches)
+  name: on_disk_dataset_blob
+  description: Simulated 10K Dataset
 
 dataset:
-  name: mmb0-4b_1p
+  name: sss2-1b_1p
 
   feature_names: 
     - cell_gene_counts
 
   label_names: 
-    - cell_types=cell_type
-    - niche_types=brain_section_label
+    - cell_types=cell_types
+    - niche_types=niche_types
 
   graph_kwargs:
     coord_type: generic
@@ -36,6 +36,8 @@ dataset:
   pre_filter: null
 
   overwrite: true
+
+  num_graphs_to_load: 1
 
 software_paths:
   deepwalk: /software/cellgen/team361/am84/third-party-software/Snap-6.0/examples/node2vec/node2vec

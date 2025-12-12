@@ -35,7 +35,9 @@ dataset:
 
   pre_filter: null
 
-  overwrite: true
+  overwrite: 
+  
+  num_graphs_to_load: 1
 
 software_paths:
   deepwalk: /software/cellgen/team361/am84/third-party-software/Snap-6.0/examples/node2vec/node2vec

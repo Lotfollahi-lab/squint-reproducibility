@@ -16,20 +16,22 @@ dataset:
     coord_type: generic
     spatial_key: spatial
     n_neighs_list: 
-      - 4
-      - 8
-      - 12
-      - 16
-      - 20
+      # - 4
+      - 8 # just keep this
+      # - 12
+      # - 16
+      # - 20
     radius_list:
       # - 27.5
     include_self_loop: true
-    k: 
-      lm_eigvecs: 128
-      deepwalk: 128
-      gosh: 128
+    k: # can comment out entire thing for testing
+    #   # lm_eigvecs: 128
+        deepwalk: 128
+    #   # gosh: 128
 
-  data_directory_path: /lustre/scratch126/cellgen/lotfollahi/DATASETS
+    cells_per_example: 100 
+
+  data_directory_path: /lustre/scratch126/cellgen/lotfollahi/rj5/DATASETS
 
   pre_transform: null
 
