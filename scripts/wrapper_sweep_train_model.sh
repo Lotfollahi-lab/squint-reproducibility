@@ -25,7 +25,12 @@ echo "Log directory: ${LOG_DIR}"
 
 case $DATASET_NAME in
     mmb0-4b_1p)
-        RAM="80G"
+        RAM="20G"
+        NUM_GPUS=1
+        CORES=4
+        ;;
+    mmb0-239b_1p)
+        RAM="128G"
         NUM_GPUS=1
         CORES=6
         ;;
@@ -55,17 +60,17 @@ case $DATASET_NAME in
         CORES=8
         ;;
     xhs1000-39b_1p-oriented-7)
-        RAM="120G"
+        RAM="40G"
         NUM_GPUS=1
         CORES=8
         ;;
     xhk1020-CV1-CV2-5b_1p)
-        RAM="120G"
+        RAM="80G"
         NUM_GPUS=1
         CORES=8
         ;;
     xhs1021-15b_1p)
-        RAM="40G"
+        RAM="120G"
         NUM_GPUS=1
         CORES=8
         ;;
@@ -92,7 +97,7 @@ bsub \
     -q "${QUEUE}" \
     -M "${RAM}" -R "select[mem>${RAM}] rusage[mem=${RAM}]" \
     -cwd "${CWD}" \
-    -gpu "num=${NUM_GPUS}:mode=exclusive_process:block=yes" \
+    -gpu "num=${NUM_GPUS}:mode=shared:block=yes" \
     -o "${OUTPUT_FILE}" \
     -e "${ERROR_FILE}" \
     -J "${JOB_NAME}" \

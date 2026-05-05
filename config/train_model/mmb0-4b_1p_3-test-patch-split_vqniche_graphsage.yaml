@@ -4,10 +4,10 @@ experiment:
 
 logging:
   root_log_dir: /nfs/team361/am84/VQNiche/logs/
-  log_model: true
-  offline: false
-  # log_model: false
-  # offline: true
+  # log_model: true
+  # offline: false
+  log_model: false
+  offline: true
   enabled: true
 
 dataset:
@@ -86,8 +86,8 @@ model:
   predictor_name: Linear
 
   imputation_params:
-    # mask_strategy: original
-    mask_strategy: learnable_parameter
+    mask_strategy: zeros
+    # mask_strategy: learnable_parameter
     base_mask_ratio: 0.2
     final_mask_ratio: 0.6
     warmup_epochs: 5
@@ -104,7 +104,7 @@ model:
     - pearson_cell_wise
     - pearson_1hop_nbr
     - mmd_1hop_nbr
-    - mmd_pca_1hop_nbr
+    # - mmd_pca_1hop_nbr
     - pearson_gene_wise
     - pearson_gene_wise_1hop_nbr
 
@@ -117,6 +117,7 @@ model:
       dropout: 0.1
       act: relu
       norm: null
+    # mlp_params: null
 
     gnn_params:
       hidden_channels: 400
@@ -238,7 +239,7 @@ model:
       # - ce_spatial_prior_loss
       - mse_commit_loss
       - mse_code_loss
-      - mask_token_regularization
+      # - mask_token_regularization
     loss_kwargs:
       # k_hop_nb_loss: 0
       k_hop_nb_loss: 1

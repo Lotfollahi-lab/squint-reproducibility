@@ -74,11 +74,11 @@ dataset:
       - 1
       # - 2
       - 3
-      - 4
+      # - 4
       - 5
-      - 6
+      # - 6
       - 7
-      - 8
+      # - 8
       - 9
       - 10
       - 11
@@ -86,15 +86,18 @@ dataset:
     val_batches: []
     test_batches:
       - 2
+      - 4
+      - 6
+      - 8
     xy_key: xy_coordinates
 
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 256
+    batch_size: 64
   sampler_name: NeighborSampler
   sampler_params:
-    num_neighbors: [16, 16]
+    num_neighbors: [8, 8]
   inference_params:
     sample_neighbors_for_inference: false
 
@@ -108,9 +111,9 @@ model:
   imputation_params:
     # mask_strategy: original
     mask_strategy: learnable_parameter
-    base_mask_ratio: 0.3
-    final_mask_ratio: 0.3
-    warmup_epochs: 0
+    base_mask_ratio: 0.2
+    final_mask_ratio: 0.6
+    warmup_epochs: 5
     deterministic_masking: false
     compute_mask_input_diversity: false
     mask_token_eps: 0.0001
@@ -127,20 +130,22 @@ model:
     - mmd_pca_1hop_nbr
     - pearson_gene_wise
     - pearson_gene_wise_1hop_nbr
+    - energy_1hop_nbr
+    - energy_pca_1hop_nbr
 
   encoder_params:
   
     gnn_name: SAGEConv
 
     mlp_params:
-      hidden_channels: [600, 200]
+      hidden_channels: [400, 200]
       dropout: 0.1
       act: relu
       norm: null
 
     gnn_params:
       hidden_channels: 200
-      num_layers: 3
+      num_layers: 1
       act_first: true
       activation: relu
       norm: null
@@ -226,16 +231,16 @@ model:
       init_mode: identity
 
     mlp_params:
-      hidden_channels: [600]
+      hidden_channels: [400]
       dropout: 0.1
       act: gelu
       norm: layer_norm
 
   adjacency_decoder_params:
-    out_channels: 600
+    out_channels: 100
 
     mlp_params:
-      hidden_channels: [400]
+      hidden_channels: [100]
       dropout: 0.2
       act: relu
       norm: layer_norm
@@ -262,7 +267,7 @@ model:
       k_hop_nb_loss: 1
       only_masked: false
       # only_masked: true
-      edge_sampling_ratio: null
+      edge_sampling_ratio: 1
       use_pos_weight: true
       estimate_adj_kwargs:
         nonlinearity: sigmoid

@@ -151,8 +151,8 @@ def test(config: Dict):
 
     # --------------------- Results ---------------------
     # create a results directory for the model run with the name of the model checkpoint file
-    results_dir = Path(config['experiment']['wandb_run_dir']) / 'results' / config['model']['model_ckpt_fname'].stem
-    results_dir.mkdir(parents=True, exist_ok=True)
+    # results_dir = (Path(config['experiment']['wandb_run_dir']) / 'files' / 'results' / config['model']['model_ckpt_fname']).stem
+    # results_dir.mkdir(parents=True, exist_ok=True)
 
     # --------------------- Test ---------------------
     # model.test_metrics_list += ['energy_1hop_nbr']
@@ -164,13 +164,15 @@ def test(config: Dict):
         datamodule=datamodule_batch,
         verbose=True,
     )
-    for metric, value in test_results[0].items():
-        print(f"test_{metric}: {value}")
+    # for metric, value in test_results[0].items():
+    #     print(f"test_{metric}: {value}")
         
     results_dir = Path(config['experiment']['wandb_run_dir']) / 'files' / 'results'
     results_dir.mkdir(parents=True, exist_ok=True)
     test_metrics_fname = results_dir / 'test_metrics.csv'
+    print(f"Saving test metrics to {test_metrics_fname}...")
     test_metrics_df = pd.DataFrame(test_results)
+    print(test_metrics_df)
     test_metrics_df.to_csv(
         path_or_buf=test_metrics_fname,
         sep=',',

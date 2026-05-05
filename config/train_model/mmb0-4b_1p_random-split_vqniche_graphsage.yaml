@@ -39,8 +39,8 @@ dataset:
   train_transform_names:
     - RandomNodeSplit
   train_transform_params:
-    val_ratio: 0.1
-    test_ratio: 0.1
+    val_ratio: 0.0
+    test_ratio: 0.02
 
 datamodule:
   loader_name: NeighborLoader
@@ -216,7 +216,7 @@ model:
       k_hop_nb_loss: 1
       only_masked: false
       # only_masked: true
-      edge_sampling_ratio: null
+      edge_sampling_ratio: 2
       use_pos_weight: true
       estimate_adj_kwargs:
         nonlinearity: sigmoid
@@ -230,11 +230,11 @@ model:
       wt_mask_token_regularization: 1.0
 
 trainer:
-  monitor: val_pearson_1hop_nbr
+  monitor: train_pearson_1hop_nbr
   checkpoint_params:
     mode: max
     save_top_k: 1
     save_last: true
-  max_epochs: 1
+  max_epochs: 5
   enable_checkpointing: true
   ckpt_path: best

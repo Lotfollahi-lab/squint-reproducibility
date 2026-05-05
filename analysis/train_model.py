@@ -27,6 +27,8 @@ import wandb
 from typing import Dict
 from pathlib import Path
 import pandas as pd
+import time
+import tracemalloc
 
 import torch
 import pytorch_lightning as pl
@@ -222,6 +224,10 @@ if __name__ == '__main__':
     args = parse_train_arguments()
     base_config, sweep_config = collect_train_configs(args)
     
+    # --------------------- Start Memory Profiling ---------------------
+    tracemalloc.start()
+    start_time = time.time()
+    
     # -------------- Initiate WandB Sweep/Run ------------------
     if base_config['experiment']['mode'] == 'sweep':
         # registers sweep with specified hyperparameter grid
@@ -291,5 +297,13 @@ if __name__ == '__main__':
 
         # shuts down the run
         standalone_run.finish()
+        
     else:
         raise ValueError(f"Invalid experiment mode: {base_config['experiment']['mode']}")
+
+    # --------------------- Stop Memory Profiling ---------------------
+    end_time = time.time()
+    current, peak = tracemalloc.get_traced_memory()
+    print(f"Memory usage: {current / 1024 / 1024:.2f} MB (peak: {peak / 1024 / 1024:.2f} MB)")
+    print(f"Time taken: {end_time - start_time:.2f} seconds")
+    tracemalloc.stop()

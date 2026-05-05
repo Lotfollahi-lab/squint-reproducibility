@@ -19,6 +19,13 @@ case $DATASET_NAME in
         CORES=4
         QUEUE="gpu-lotfollahi"
         ;;
+    mmb0-239b_1p)
+        RAM="128G"
+        TIME="4:00"
+        NUM_GPUS=1
+        CORES=12
+        QUEUE="normal"
+        ;;
     sss2-1b_1p)
         RAM="10G"
         TIME="0:30"
@@ -71,7 +78,6 @@ bsub \
     -M "${RAM}" -R "select[mem>${RAM}] rusage[mem=${RAM}]" \
     -W "${TIME}" \
     -cwd "${CWD}" \
-    -gpu "num=${NUM_GPUS}:mode=exclusive_process:block=yes" \
     -o "${OUTPUT_FILE}" \
     -e "${ERROR_FILE}" \
     -J "${JOB_NAME}" \

@@ -38,3 +38,8 @@
 ## Skin (Human) (3 Test Region) -- Increasing Gene Panel Size
 
 - `./scripts/wrapper_sweep_train_model.sh mmb0-4b_1p 3-test-patch-split vqniche_graphsage gene_panel 1 6 gpu-lotfollahi-train`
+
+
+## 3D Skin (Human) (4 Test Region)
+
+- `./scripts/wrapper_sweep_train_model.sh xhs1021-15b_1p 3-test-patch-split vqniche_graphsage seed 1 6 gpu-lotfollahi-train`

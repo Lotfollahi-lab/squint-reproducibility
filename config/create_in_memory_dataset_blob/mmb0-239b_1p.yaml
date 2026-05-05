@@ -1,0 +1,37 @@
+experiment:
+  name: in_memory_dataset_blob
+  description: Merfish Mouse Brain (all 239 batches)
+
+dataset:
+  name: mmb0-239b_1p
+
+  feature_names: 
+    - cell_gene_counts
+
+  label_names: 
+    - cell_types=cell_type
+
+  graph_kwargs:
+    coord_type: generic
+    spatial_key: spatial
+    n_neighs_list: 
+      - 8
+    radius_list:
+      # - 27.5
+    include_self_loop: true
+    k: []
+      # lm_eigvecs: 128
+      # deepwalk: 128
+      # gosh: 128
+
+  data_directory_path: /lustre/scratch126/cellgen/lotfollahi/am84/VQNiche/DATASETS
+
+  pre_transform: null
+
+  pre_filter: null
+
+  overwrite: true
+
+software_paths:
+  deepwalk: /software/cellgen/team361/am84/third-party-software/Snap-6.0/examples/node2vec/node2vec
+  gosh: /software/cellgen/team361/am84/third-party-software/GOSH/execs/gosh.out

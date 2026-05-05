@@ -95,6 +95,7 @@ model:
 
   imputation_params:
     # mask_strategy: original
+    # mask_strategy: zeros
     mask_strategy: learnable_parameter
     base_mask_ratio: 0.2
     final_mask_ratio: 0.6
@@ -125,6 +126,7 @@ model:
       dropout: 0.1
       act: relu
       norm: null
+    # mlp_params: null
 
     gnn_params:
       hidden_channels: 200
