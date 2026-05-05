@@ -2,3 +2,6 @@ logs/
 *.ipynb_checkpoints/
 
 *.pyc
+
+*.pkl
+*.h5ad
