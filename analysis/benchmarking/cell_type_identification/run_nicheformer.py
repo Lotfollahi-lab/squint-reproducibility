@@ -24,8 +24,15 @@ Pre-requisites
      - the gene reference `model.h5ad` (20,310 canonical human
        Ensembl IDs)
      - the technology-specific mean (`.npy`, length 20,310)
-   Pass their paths via `--pretrained-model-path`,
-   `--model-h5ad-path`, `--technology-mean-path`.
+   By default the script reads them from
+   `/nfs/team361/sb75/squint-reproducibility/analysis/benchmarking/
+   nicheformer/` (override via `--model-dir`). The conventional
+   filenames it expects there are:
+     - `nicheformer.ckpt`
+     - `model.h5ad`
+     - `<technology>_mean.npy` (e.g. `merfish_mean.npy`)
+   Pass `--pretrained-model-path` / `--model-h5ad-path` /
+   `--technology-mean-path` to override any single file.
 3. For mouse data, two options to map mouse genes to the human
    Ensembl reference Nicheformer expects:
    (a) `--auto-map-symbols`: runtime mapping via the SHARED helper
@@ -44,22 +51,25 @@ Pre-requisites
    with human Ensembl IDs upstream.
 
 Usage:
-    # Recommended: runtime ortholog mapping (no Biomart export needed):
+    # Recommended: pick up the model dir + conventional filenames + runtime
+    # ortholog mapping. Just point at the silver dir.
     python analysis/benchmarking/cell_type_identification/run_nicheformer.py \\
-        --pretrained-model-path /path/to/nicheformer.ckpt \\
-        --model-h5ad-path /path/to/model.h5ad \\
-        --technology-mean-path /path/to/merfish_mean.npy \\
         --auto-map-symbols
 
-    # Or with a static Biomart export:
+    # Custom model directory:
     python analysis/benchmarking/cell_type_identification/run_nicheformer.py \\
-        --pretrained-model-path /path/to/nicheformer.ckpt \\
-        --model-h5ad-path /path/to/model.h5ad \\
-        --technology-mean-path /path/to/merfish_mean.npy \\
+        --model-dir /path/to/nicheformer_release \\
+        --auto-map-symbols
+
+    # With a static Biomart export (deterministic, reproducible):
+    python analysis/benchmarking/cell_type_identification/run_nicheformer.py \\
         --gene-mapper-path /path/to/mart_export.csv
 
-    # mmb-smb defaults (technology=merfish, species=mouse, modality=spatial):
-    # all three are settable via flags below for cross-platform datasets.
+    # Per-file overrides (e.g. when filenames don't match the convention):
+    python analysis/benchmarking/cell_type_identification/run_nicheformer.py \\
+        --pretrained-model-path /path/to/some_other_name.ckpt \\
+        --technology-mean-path /path/to/custom_mean.npy \\
+        --auto-map-symbols
 """
 
 import argparse
@@ -124,6 +134,80 @@ from _nicheformer_embedding import (  # noqa: E402
 DEFAULT_VARIANT_TAG = "baseline-nicheformer"
 DEFAULT_LATENT_KEY  = "X_nicheformer"
 
+# Default Nicheformer artefact directory on the cluster. Holds the
+# `.ckpt`, `model.h5ad`, and per-technology `<tech>_mean.npy` files.
+# Pass `--model-dir` to override; pass `--pretrained-model-path` /
+# `--model-h5ad-path` / `--technology-mean-path` to override individual
+# files when the filenames don't match the conventional layout below.
+DEFAULT_MODEL_DIR = Path(
+    "/nfs/team361/sb75/squint-reproducibility/analysis/benchmarking/nicheformer"
+)
+
+
+def _resolve_nicheformer_paths(
+        model_dir: Path,
+        technology: str,
+        pretrained_model_path: Optional[Path],
+        model_h5ad_path: Optional[Path],
+        technology_mean_path: Optional[Path],
+    ) -> tuple:
+    """Resolve the three Nicheformer artefact paths.
+
+    Priority per file: explicit `--<file>-path` arg if given, else
+    conventional name under `model_dir`:
+      - <model_dir>/nicheformer.ckpt
+      - <model_dir>/model.h5ad
+      - <model_dir>/<technology>_mean.npy  (or `means/<technology>_mean.npy`,
+        whichever exists)
+
+    Raises SystemExit with a clear message if a path can't be resolved.
+    """
+    def _resolve_one(
+            explicit: Optional[Path],
+            candidates: List[Path],
+            label: str,
+            override_flag: str,
+        ) -> Path:
+        if explicit is not None:
+            if not Path(explicit).is_file():
+                raise SystemExit(
+                    f"{override_flag}={explicit!r} does not exist."
+                )
+            return Path(explicit)
+        for c in candidates:
+            if c.is_file():
+                return c
+        searched = "\n  ".join(str(c) for c in candidates)
+        raise SystemExit(
+            f"Could not find {label} under --model-dir={model_dir}.\n"
+            f"Searched:\n  {searched}\n"
+            f"Pass {override_flag}=<path> to override."
+        )
+
+    ckpt = _resolve_one(
+        explicit=pretrained_model_path,
+        candidates=[model_dir / "nicheformer.ckpt"],
+        label="pretrained .ckpt",
+        override_flag="--pretrained-model-path",
+    )
+    h5ad = _resolve_one(
+        explicit=model_h5ad_path,
+        candidates=[model_dir / "model.h5ad"],
+        label="model.h5ad gene reference",
+        override_flag="--model-h5ad-path",
+    )
+    mean_candidates = [
+        model_dir / f"{technology}_mean.npy",
+        model_dir / "means" / f"{technology}_mean.npy",
+    ]
+    mean = _resolve_one(
+        explicit=technology_mean_path,
+        candidates=mean_candidates,
+        label=f"technology-mean .npy for technology={technology!r}",
+        override_flag="--technology-mean-path",
+    )
+    return ckpt, h5ad, mean
+
 
 def main() -> None:
     p = argparse.ArgumentParser(
@@ -135,14 +219,23 @@ def main() -> None:
     p.add_argument("--dataset-tag",  type=str, default=DEFAULT_DATASET_TAG)
     p.add_argument("--variant-tag",  type=str, default=DEFAULT_VARIANT_TAG)
     p.add_argument("--out-dir", type=Path, default=None)
-    # Nicheformer artefact paths (all required).
-    p.add_argument("--pretrained-model-path", type=Path, required=True,
-                   help="Nicheformer .ckpt from the GitHub release.")
-    p.add_argument("--model-h5ad-path", type=Path, required=True,
-                   help="model.h5ad gene reference (20,310 canonical "
-                        "human Ensembl IDs).")
-    p.add_argument("--technology-mean-path", type=Path, required=True,
-                   help="Technology-specific mean .npy (length 20,310).")
+    # Nicheformer artefact paths. The common case is to point at the
+    # cluster directory holding all three files via `--model-dir`; the
+    # per-file overrides exist for non-conventional filenames.
+    p.add_argument("--model-dir", type=Path, default=DEFAULT_MODEL_DIR,
+                   help="Directory containing nicheformer.ckpt, "
+                        "model.h5ad, and <technology>_mean.npy. Default: "
+                        f"{DEFAULT_MODEL_DIR}")
+    p.add_argument("--pretrained-model-path", type=Path, default=None,
+                   help="Override: explicit .ckpt path. Default: "
+                        "<model_dir>/nicheformer.ckpt.")
+    p.add_argument("--model-h5ad-path", type=Path, default=None,
+                   help="Override: explicit gene-reference .h5ad path. "
+                        "Default: <model_dir>/model.h5ad.")
+    p.add_argument("--technology-mean-path", type=Path, default=None,
+                   help="Override: explicit technology-mean .npy. "
+                        "Default: <model_dir>/<technology>_mean.npy "
+                        "(falls back to <model_dir>/means/<technology>_mean.npy).")
     # Gene-id alignment route (one of the two below should be set).
     p.add_argument("--gene-mapper-path", type=Path, default=None,
                    help="Biomart export CSV with mouse->human ortholog "
@@ -229,9 +322,25 @@ def main() -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     metrics_dir = args.out_dir / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve the three Nicheformer artefact paths from `--model-dir`
+    # (with per-file overrides). Aborts loudly if any are missing.
+    args.pretrained_model_path, args.model_h5ad_path, args.technology_mean_path = (
+        _resolve_nicheformer_paths(
+            model_dir=args.model_dir,
+            technology=args.technology,
+            pretrained_model_path=args.pretrained_model_path,
+            model_h5ad_path=args.model_h5ad_path,
+            technology_mean_path=args.technology_mean_path,
+        )
+    )
+
     print(f"Run dir : {args.out_dir}")
     print(f"Seeds   : {seeds}")
-    print(f"Model   : {args.pretrained_model_path}")
+    print(f"Model dir : {args.model_dir}")
+    print(f"  ckpt   : {args.pretrained_model_path}")
+    print(f"  h5ad   : {args.model_h5ad_path}")
+    print(f"  mean   : {args.technology_mean_path}")
     print(f"Tech    : {args.technology}  Species: {args.species}  "
           f"Modality: {args.modality}")
 
