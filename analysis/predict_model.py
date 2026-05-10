@@ -86,10 +86,46 @@ def collate_predict_outputs(
     collated_dict = {}
     for key in data_cache[0]:
         collated_dict[key] = torch.cat([d[key][0] for d in data_cache], dim=0)
-    collated_dict['codebook_size'] = model.encoder.vq.codebook_size
-    collated_dict['separate'] = model.encoder.vq.separate_codebook_per_head
-    collated_dict['num_heads'] = model.encoder.vq.heads
     collated_dict['edge_index'] = predict_dataloader.data.edge_index
+
+    # Codebook metadata. Two layouts to support:
+    #   1. Single-VQ models (VQNiche, etc.):     encoder.vq
+    #   2. Dual-VQ model (VQNiche_Dual):         encoder.vq_cell + encoder.vq_niche
+    encoder = model.encoder
+    if hasattr(encoder, 'vq'):
+        # Legacy single-codebook layout.
+        collated_dict['codebook_size'] = encoder.vq.codebook_size
+        collated_dict['separate']      = encoder.vq.separate_codebook_per_head
+        collated_dict['num_heads']     = encoder.vq.heads
+        if hasattr(encoder.vq, 'num_quantizers'):
+            collated_dict['num_quantizers'] = int(encoder.vq.num_quantizers)
+        if hasattr(encoder.vq, 'codebook_sizes'):
+            collated_dict['codebook_sizes'] = list(encoder.vq.codebook_sizes)
+    elif hasattr(encoder, 'vq_cell') and hasattr(encoder, 'vq_niche'):
+        # Dual-VQ layout (VQNiche_Dual). Per-branch metadata is exposed
+        # under {key}_cell / {key}_niche; back-compat single-codebook keys
+        # alias the niche branch (which is the primary spatial signal).
+        for branch_name, vq in [('cell',  encoder.vq_cell),
+                                ('niche', encoder.vq_niche)]:
+            collated_dict[f'codebook_size_{branch_name}']  = vq.codebook_size
+            collated_dict[f'num_quantizers_{branch_name}'] = int(getattr(vq, 'num_quantizers', 1))
+            cb_sizes = getattr(vq, 'codebook_sizes', None)
+            if cb_sizes is not None:
+                collated_dict[f'codebook_sizes_{branch_name}'] = list(cb_sizes)
+        # Back-compat aliases pointing at the niche branch.
+        collated_dict['codebook_size']  = encoder.vq_niche.codebook_size
+        collated_dict['separate']       = encoder.vq_niche.separate_codebook_per_head
+        collated_dict['num_heads']      = encoder.vq_niche.heads
+        collated_dict['num_quantizers'] = int(getattr(encoder.vq_niche, 'num_quantizers', 1))
+        cb_sizes_niche = getattr(encoder.vq_niche, 'codebook_sizes', None)
+        if cb_sizes_niche is not None:
+            collated_dict['codebook_sizes'] = list(cb_sizes_niche)
+    else:
+        raise AttributeError(
+            f"Encoder of type {type(encoder).__name__} has neither `.vq` "
+            f"(single codebook) nor (`.vq_cell` + `.vq_niche`) (dual). "
+            f"Cannot collate predict outputs."
+        )
     return collated_dict
 
 

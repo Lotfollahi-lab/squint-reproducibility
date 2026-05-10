@@ -9,3 +9,5 @@ logs/
 /analysis/benchmarking/scGPT
 /analysis/benchmarking/scGPT-spatial
 /analysis/benchmarking/uce_model
+
+artifacts
