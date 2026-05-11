@@ -61,10 +61,13 @@ DEFAULT_ARTIFACTS_ROOT = Path(
 )
 DEFAULT_DATASET_TAG = "mmb0-1b_smb1-1b_1p"
 
-# variant directory name -> display label
+# variant directory name -> display label.
+# PCA + Leiden and Harmony are intentionally OMITTED from this figure
+# — for cell-type identification on spatial data the comparison of
+# interest is generative / foundation models + SQUINT, not the two
+# linear baselines (which historically over-cluster at this granularity).
+# Add them back here if you want them in the plot again.
 DEFAULT_METHODS: Dict[str, str] = {
-    "baseline-pca-leiden":     "PCA + Leiden",
-    "baseline-harmony":        "Harmony",
     "baseline-scvi":           "scVI",
     "baseline-geneformer":     "Geneformer",
     "baseline-nicheformer":    "Nicheformer",
@@ -76,14 +79,11 @@ DEFAULT_METHODS: Dict[str, str] = {
 }
 
 # Distinct, colour-blind-friendly palette. SQUINT keeps its accent
-# magenta to be visually consistent with the niche-identification figure;
-# foundation models share a cool-toned purple/blue family; classical
-# baselines (PCA+Leiden, Harmony, scVI) get warmer / earthier hues so
-# the model-class boundary reads at a glance.
+# magenta; foundation models share a cool-toned purple/blue family;
+# scVI (the lone classical comparator) gets teal so the model-class
+# boundary still reads at a glance.
 METHOD_COLOURS: Dict[str, str] = {
-    "PCA + Leiden":   "#FFD166",   # warm yellow — classical baseline
-    "Harmony":        "#FB5607",   # warm orange — classical baseline
-    "scVI":           "#06D6A0",   # teal       — classical baseline (deep)
+    "scVI":           "#06D6A0",   # teal       — classical generative
     "Geneformer":     "#3A86FF",   # blue       — foundation model
     "Nicheformer":    "#118AB2",   # teal-blue  — foundation model
     "scGPT":          "#8338EC",   # purple     — foundation model
@@ -307,10 +307,15 @@ def _plot_panel(
         colour_for: Dict[str, str],
         metric_label: str,
         x_invert_better: bool,
+        show_y_ticklabels: bool = True,
     ) -> None:
     n = len(method_order)
-    BAR_HEIGHT = 0.4
-    DOT_JITTER = 0.10  # < BAR_HEIGHT/2 so dots stay within the bar band
+    # Thick bars: 0.65 → ~65% of the row band. Combined with the tight
+    # row spacing in `make_figure`, this leaves a thin inter-row gap and
+    # makes each method's bar read as a solid swatch rather than a thin
+    # line. DOT_JITTER stays < BAR_HEIGHT/2 so dots stay inside the bar.
+    BAR_HEIGHT = 0.65
+    DOT_JITTER = 0.18
 
     for j, method in enumerate(method_order):
         vals = per_method_values.get(method, np.array([]))
@@ -341,12 +346,22 @@ def _plot_panel(
                    s=12, color=colour, edgecolors="white",
                    linewidths=0.3, zorder=4, alpha=0.92)
 
+    # Only set y-tick labels on the leftmost panel. With `sharey=True`
+    # the y-axis is shared across all panels, so calling
+    # `set_yticklabels([])` here would CLEAR labels from the shared
+    # axis (including the leftmost one). Instead we set ticks on every
+    # panel (cheap, consistent) and only set labels on the leftmost —
+    # `sharey=True` auto-applies `labelleft=False` to the others.
     ax.set_yticks(range(n))
-    ax.set_yticklabels(method_order, fontweight="medium")
+    if show_y_ticklabels:
+        ax.set_yticklabels(method_order, fontweight="medium")
 
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.set_ylim(-0.5, n - 0.5)
+    # Tight ylim — each row gets 1.0 unit of axis space by default, but
+    # we shrink to -0.4/n-0.6 to remove the vertical whitespace above
+    # the topmost bar and below the bottommost.
+    ax.set_ylim(-0.4, n - 0.6)
     ax.invert_yaxis()  # top-of-list = top of axis
 
     ax.xaxis.grid(True, linewidth=0.2, alpha=0.4, color="0.65", linestyle="--")
@@ -373,10 +388,20 @@ def make_figure(
         index=["method", "seed"], columns="metric", values="value",
     )
 
-    # --- Method order: sort by mean Cell-type NMI descending. -------------
+    # --- Method order: sort by mean Cell-type NMI descending so the
+    # best-performing method ends up at the TOP of every panel.
+    # The plot loop assigns method_order[0] to y=0; `ax.invert_yaxis()`
+    # then flips y=0 to the top of the figure, so highest-NMI-on-top
+    # falls out for free across all 4 panels (they share the y-axis
+    # since `sharey=True`). Tie-broken by name to make the output
+    # deterministic across reruns.
     if "Cell-type NMI" in pivot.columns:
         nmi_means = pivot["Cell-type NMI"].groupby(level=0).mean()
-        method_order = nmi_means.sort_values(ascending=False).index.tolist()
+        method_order = (
+            nmi_means
+            .sort_values(ascending=False, kind="stable")
+            .index.tolist()
+        )
     else:
         method_order = sorted(pivot.index.get_level_values(0).unique())
 
@@ -394,14 +419,21 @@ def make_figure(
             per_metric[m_label][method] = v
 
     # --- Figure size --------------------------------------------------
-    panel_width_in = 1.7
-    fig_width_in = panel_width_in * len(METRICS) + 0.6
-    fig_height_in = max(2.0, 0.34 * len(method_order) + 0.6)
+    # Compact layout: only the leftmost panel shows method names on the
+    # y-axis, the other 3 share the same y-axis (no per-panel label
+    # space wasted). Panels are narrow (1.1 in each) so bars don't
+    # stretch too far horizontally; row spacing is tight (0.18 in/row)
+    # which, combined with BAR_HEIGHT=0.65, leaves only a thin gap
+    # between bars.
+    panel_width_in = 1.1
+    label_pad_in = 1.0                  # left margin for the y-tick labels
+    fig_width_in = panel_width_in * len(METRICS) + label_pad_in
+    fig_height_in = max(1.4, 0.18 * len(method_order) + 0.5)
 
     fig, axes = plt.subplots(
         1, len(METRICS),
         figsize=(fig_width_in, fig_height_in),
-        sharey=False,
+        sharey=True,
     )
     if len(METRICS) == 1:
         axes = [axes]
@@ -414,10 +446,14 @@ def make_figure(
             colour_for=method_colours,
             metric_label=m_label,
             x_invert_better=(arrow == "↓"),
+            show_y_ticklabels=(i == 0),
         )
 
     plt.tight_layout()
-    plt.subplots_adjust(wspace=0.55)
+    # Tighter inter-panel spacing now that only one panel carries
+    # y-tick labels — no labels for the right-side panels to bleed
+    # into the previous panel's bars.
+    plt.subplots_adjust(wspace=0.12)
 
     out_path_base.parent.mkdir(parents=True, exist_ok=True)
     for ext in ("svg", "png"):

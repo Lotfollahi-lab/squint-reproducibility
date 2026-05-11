@@ -41,13 +41,17 @@ Default headline metrics:
   - cell_latent,         MMD
 
 Usage:
-  # Default: scan every variant's most recent timestamp.
+  # Default: only `dualvq*` variants, each variant's most recent timestamp.
   python analysis/ablations/compare_variants.py
 
-  # Restrict to specific variants:
+  # Include baselines + smoke / region-holdout subdirs too:
+  python analysis/ablations/compare_variants.py --include-baselines
+
+  # Restrict to specific variants (explicit list ALWAYS bypasses the
+  # dualvq-only filter, no --include-baselines needed):
   python analysis/ablations/compare_variants.py \\
       --variants 'dualvq+rvq-both+decoder-cov+adv+mmb0-1b_smb1-1b_1p,\\
-                  dualvq+rvq-both+decoder-cov+adv+gatv2+mmb0-1b_smb1-1b_1p'
+                  baseline-nichecompass'
 
   # Different dataset:
   python analysis/ablations/compare_variants.py \\
@@ -193,6 +197,7 @@ def load_all_variants(
         dataset: str,
         variants: Optional[List[str]] = None,
         timestamp_strategy: str = "latest",
+        dualvq_only: bool = True,
     ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
     """
     For every variant under `<artifacts_root>/<dataset>/`, load all
@@ -203,7 +208,17 @@ def load_all_variants(
     Returns (niche_long, batchint_long, pearson_long, info_dict).
     `info_dict` carries diagnostic info: variants_found,
     variants_missing_files (list of paths), variants_no_run_dir
-    (variants with no timestamp subdir).
+    (variants with no timestamp subdir), and (when `dualvq_only=True`
+    and `variants is None`) variants_filtered_out — the non-dualvq
+    subdirs that auto-discovery skipped.
+
+    `dualvq_only` (default True): when auto-discovering (i.e.
+    `variants is None`), restrict to subdirs whose name starts with
+    "dualvq". This filters out baselines (banksy/cellcharter/scvi/etc.)
+    + smoke tests + region-holdout variants, leaving only SQUINT
+    ablation runs. Pass `dualvq_only=False` to include everything,
+    OR pass an explicit `variants` list (explicit selection always
+    wins — the filter only applies during auto-discovery).
     """
     dataset_root = artifacts_root / dataset
     if not dataset_root.is_dir():
@@ -212,10 +227,16 @@ def load_all_variants(
             f"--artifacts-root or --dataset."
         )
 
+    variants_filtered_out: List[str] = []
     if variants is None:
         # Auto-discover: every subdir under dataset_root that contains
         # at least one timestamp subdir.
-        variants = sorted(p.name for p in dataset_root.iterdir() if p.is_dir())
+        all_subdirs = sorted(p.name for p in dataset_root.iterdir() if p.is_dir())
+        if dualvq_only:
+            variants = [v for v in all_subdirs if v.startswith("dualvq")]
+            variants_filtered_out = [v for v in all_subdirs if not v.startswith("dualvq")]
+        else:
+            variants = all_subdirs
 
     niche_frames:    List[pd.DataFrame] = []
     batchint_frames: List[pd.DataFrame] = []
@@ -265,6 +286,13 @@ def load_all_variants(
         "variants_found":         variants_found,
         "variants_no_run_dir":    variants_no_run_dir,
         "variants_missing_files": variants_missing_files,
+        "variants_filtered_out":  variants_filtered_out,
+        # `variants_attempted` is every variant we TRIED to load (passes the
+        # dualvq filter / user's --variants list). Includes variants that
+        # ended up with no metrics — used by `render_all` to keep them as
+        # empty rows in the heatmaps so the reader can see at a glance
+        # which configured variants are missing data.
+        "variants_attempted":     list(variants),
     }
     return niche_long, batchint_long, pearson_long, info
 
@@ -371,12 +399,18 @@ def _plot_heatmap(
     ax.set_xticklabels(wide.columns, rotation=45, ha="right", fontsize=8)
     ax.set_yticks(np.arange(len(wide.index)))
     ax.set_yticklabels(wide.index, fontsize=8)
+    # Mean is used only for the text-vs-background contrast heuristic;
+    # an all-NaN matrix (when every reindexed variant is missing data)
+    # would otherwise trigger a RuntimeWarning and emit NaN colours.
+    finite_vals = wide.values[np.isfinite(wide.values)]
+    cell_text_thresh = float(finite_vals.mean()) if finite_vals.size else 0.0
     for i in range(wide.shape[0]):
         for j in range(wide.shape[1]):
             v = wide.values[i, j]
             if pd.notna(v):
                 ax.text(j, i, f"{v:.3f}", ha="center", va="center",
-                        fontsize=7, color="white" if v < (np.nanmean(wide.values)) else "black")
+                        fontsize=7,
+                        color="white" if v < cell_text_thresh else "black")
 
     # Frame priority columns and bold their tick labels. Use a generous
     # rectangle that hugs the column gridline; matplotlib data
@@ -414,11 +448,33 @@ def render_all(
         batchint_long: pd.DataFrame,
         pearson_long: pd.DataFrame,
         out_dir: Path,
+        all_variants: Optional[List[str]] = None,
     ) -> None:
-    """Top-level renderer: writes summary CSV + key-metric bars + heatmaps."""
+    """Top-level renderer: writes summary CSV + key-metric bars + heatmaps.
+
+    `all_variants`: when provided, every heatmap is REINDEXED to this
+    full list of variant names. Variants that have no metric rows in
+    the long tables show up as all-NaN rows (rendered as blank cells)
+    rather than being dropped — useful when some runs are still in
+    flight but you want to see at a glance which configured variants
+    haven't produced metrics yet. Pass `info["variants_attempted"]`
+    from `load_all_variants` for the default behaviour.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     key_dir = out_dir / "key_metrics"
     key_dir.mkdir(exist_ok=True)
+
+    def _reindex_to_all(wide: pd.DataFrame) -> pd.DataFrame:
+        """If `all_variants` was provided, expand `wide` to include any
+        missing variants as all-NaN rows. Preserves the user's intended
+        ordering (the `all_variants` list order); variants already in
+        `wide` but not in `all_variants` are appended at the end so we
+        never silently drop data."""
+        if not all_variants:
+            return wide
+        present = list(wide.index.astype(str))
+        full = list(all_variants) + [v for v in present if v not in all_variants]
+        return wide.reindex(full)
 
     # Long-format summary CSV (one row per metric/variant).
     summary_rows: List[pd.DataFrame] = []
@@ -477,6 +533,8 @@ def render_all(
         ari_wide = all_split.pivot_table(
             index="variant", columns="pair", values="ARI", aggfunc="mean",
         )
+        nmi_wide = _reindex_to_all(nmi_wide)
+        ari_wide = _reindex_to_all(ari_wide)
         if not nmi_wide.empty:
             _plot_heatmap(
                 nmi_wide,
@@ -497,6 +555,23 @@ def render_all(
                 highlight_columns=PRIORITY_NICHE_PAIRS,
             )
             print(f"  -> {out_dir / 'ari_heatmap.png'}")
+    elif all_variants:
+        # No niche_long rows at all but the user wanted heatmaps anyway —
+        # render blank-heatmap placeholders so the missing variants are
+        # visible in the figure rather than only in stdout.
+        blank = pd.DataFrame(
+            index=list(all_variants),
+            columns=[PRIORITY_NICHE_PAIRS[0]] if PRIORITY_NICHE_PAIRS else ["(no data)"],
+            dtype=float,
+        )
+        _plot_heatmap(
+            blank,
+            title="NMI  —  variants × (code → label)  (split=all)  [no data]",
+            out_path=out_dir / "nmi_heatmap",
+            cbar_label="NMI", cmap="viridis",
+            highlight_columns=PRIORITY_NICHE_PAIRS,
+        )
+        print(f"  -> {out_dir / 'nmi_heatmap.png'} (all blank)")
 
     # Batch-integration heatmap.
     if not batchint_long.empty:
@@ -505,6 +580,7 @@ def render_all(
         bi_wide = bi.pivot_table(
             index="variant", columns="pair", values="score", aggfunc="mean",
         )
+        bi_wide = _reindex_to_all(bi_wide)
         if not bi_wide.empty:
             _plot_heatmap(
                 bi_wide,
@@ -542,6 +618,7 @@ def render_all(
             ordered = [c for c in PRIORITY_PEARSON_COLS if c in pe_wide.columns]
             ordered += sorted(c for c in pe_wide.columns if c not in ordered)
             pe_wide = pe_wide[ordered]
+            pe_wide = _reindex_to_all(pe_wide)
             _plot_heatmap(
                 pe_wide,
                 title="Pearson reconstruction  —  variants × "
@@ -569,7 +646,17 @@ def main() -> None:
                    help=f"Dataset short tag. Default: {DEFAULT_DATASET}")
     p.add_argument("--variants", type=str, default=None,
                    help="Optional comma-separated list of variant names. "
-                        "Default: all subdirs of <artifacts-root>/<dataset>/.")
+                        "Default: every subdir of <artifacts-root>/<dataset>/ "
+                        "whose name starts with 'dualvq' (set "
+                        "--include-baselines to include baseline / smoke / "
+                        "region-holdout subdirs too). Explicit --variants "
+                        "always bypasses the prefix filter.")
+    p.add_argument("--include-baselines", action="store_true",
+                   help="When auto-discovering (i.e. --variants not passed), "
+                        "INCLUDE non-dualvq subdirs (baselines, smoke tests, "
+                        "region-holdout, etc.). Default: only 'dualvq*' "
+                        "variants are included. No effect when --variants is "
+                        "passed explicitly.")
     p.add_argument("--timestamp-strategy", type=str, default="latest",
                    help="'latest' to pick the most recent timestamp per "
                         "variant, or an exact YYYYMMDD_HHMMSS string. "
@@ -601,11 +688,19 @@ def main() -> None:
         dataset            = args.dataset,
         variants           = variants,
         timestamp_strategy = args.timestamp_strategy,
+        dualvq_only        = not args.include_baselines,
     )
 
     print(f"Variants with metrics      : {len(info['variants_found'])}")
     for v in info["variants_found"]:
         print(f"  {v}")
+
+    if info.get("variants_filtered_out"):
+        print(f"\nVariants filtered out      : "
+              f"{len(info['variants_filtered_out'])} non-'dualvq*' subdir(s) "
+              f"(pass --include-baselines to keep them)")
+        for v in info["variants_filtered_out"]:
+            print(f"  {v}")
 
     if info["variants_no_run_dir"]:
         print(f"\nVariants WITHOUT run dirs  : "
@@ -627,7 +722,13 @@ def main() -> None:
         )
 
     print()
-    render_all(niche_long, batchint_long, pearson_long, args.out_dir)
+    # Pass `variants_attempted` so the heatmaps reserve an empty row for
+    # every configured variant — including those that haven't finished
+    # producing metrics yet — instead of silently dropping them.
+    render_all(
+        niche_long, batchint_long, pearson_long, args.out_dir,
+        all_variants=info.get("variants_attempted"),
+    )
     print(f"\nDone. Output dir: {args.out_dir}")
 
 

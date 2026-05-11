@@ -57,16 +57,19 @@ DEFAULT_ARTIFACTS_ROOT = Path(
 )
 DEFAULT_DATASET_TAG = "mmb0-1b_smb1-1b_1p"
 
-# variant directory name -> display label
+# variant directory name -> display label.
 # Display order in the plot is determined later by mean Niche NMI; SQUINT is
 # always plotted with a distinct accent colour regardless of position.
+# `baseline-neigh-expr-pca` (Neighbour expr. PCA) is intentionally OMITTED —
+# it's the linear-baseline counterpart of cell-type-side PCA+Leiden, and the
+# comparison of interest on this figure is learned niche-identification
+# methods + SQUINT. Add it back here if you want the linear reference.
 DEFAULT_METHODS: Dict[str, str] = {
     "baseline-banksy":          "BANKSY",
     "baseline-cellcharter":     "CellCharter",
     "baseline-graphst":         "GraphST",
     "baseline-novae":           "Novae",
     "baseline-nichecompass":    "NicheCompass",
-    "baseline-neigh-expr-pca":  "Neighbour expr. PCA",
     "dualvq+wide+rvq-both+decoder-cov+adv-warmup10+mmb0-1b_smb1-1b_1p":
         "SQUINT",
 }
@@ -79,7 +82,6 @@ METHOD_COLOURS: Dict[str, str] = {
     "GraphST":             "#073B4C",
     "Novae":               "#8338EC",
     "NicheCompass":        "#118AB2",
-    "Neighbour expr. PCA": "#FFD166",
     "SQUINT":              "#FF006E",
 }
 
@@ -301,11 +303,13 @@ def _plot_panel(
         x_invert_better: bool,
     ) -> None:
     n = len(method_order)
-    # Bar height: thinner than the canonical 0.7 default so the dots and
-    # the underlying mean read as separate visual elements (the bar
-    # becomes a "swatch + lollipop" rather than a chunky block).
-    BAR_HEIGHT = 0.4
-    DOT_JITTER = 0.10  # < BAR_HEIGHT/2 so dots stay within the bar band
+    # Thick bars: 0.65 → ~65% of the row band. Combined with the tight
+    # row spacing (0.18 in/row) in `make_figure`, this leaves only a
+    # thin gap between bars — same convention as the cell-type
+    # benchmark figure. DOT_JITTER stays < BAR_HEIGHT/2 so the per-seed
+    # dots stay within the bar band.
+    BAR_HEIGHT = 0.65
+    DOT_JITTER = 0.18
 
     for j, method in enumerate(method_order):
         vals = per_method_values.get(method, np.array([]))
@@ -336,14 +340,22 @@ def _plot_panel(
                    s=12, color=colour, edgecolors="white",
                    linewidths=0.3, zorder=4, alpha=0.92)
 
+    # Only set y-tick labels on the leftmost panel. With `sharey=True`
+    # the y-axis is shared across all panels, so calling
+    # `set_yticklabels([])` here would CLEAR labels from the shared
+    # axis (including the leftmost one). Set ticks on every panel
+    # (cheap, consistent), but only set labels on the leftmost —
+    # `sharey=True` auto-applies `labelleft=False` to the others.
     ax.set_yticks(range(n))
-    # Always show the method names on every panel — easier to scan
-    # individual rows without relying on a shared first-panel column.
-    ax.set_yticklabels(method_order, fontweight="medium")
+    if show_y_ticklabels:
+        ax.set_yticklabels(method_order, fontweight="medium")
 
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.set_ylim(-0.5, n - 0.5)
+    # Tight ylim — shrinks the row band so each thick bar (BAR_HEIGHT
+    # = 0.65) is separated only by a thin gap, with no whitespace above
+    # the topmost or below the bottommost bar.
+    ax.set_ylim(-0.4, n - 0.6)
     ax.invert_yaxis()  # top-of-list = top of axis
 
     ax.xaxis.grid(True, linewidth=0.2, alpha=0.4, color="0.65", linestyle="--")
@@ -371,9 +383,13 @@ def make_figure(
     )
 
     # --- Method order: sort by mean Niche NMI descending. -----------------
+    # `kind="stable"` keeps the original DEFAULT_METHODS insertion order for
+    # ties, so re-runs with identical metrics produce identical figures.
     if "Niche NMI" in pivot.columns:
         nmi_means = pivot["Niche NMI"].groupby(level=0).mean()
-        method_order = nmi_means.sort_values(ascending=False).index.tolist()
+        method_order = nmi_means.sort_values(
+            ascending=False, kind="stable"
+        ).index.tolist()
     else:
         method_order = sorted(pivot.index.get_level_values(0).unique())
 
@@ -390,18 +406,22 @@ def make_figure(
                 v = np.array([])
             per_metric[m_label][method] = v
 
-    # --- Figure size: tuned to the Nature notebook's per-panel width. -----
-    # Each panel now carries its own y-tick labels (method names), so the
-    # per-panel allocated width has to include label space, and we bump
-    # wspace so labels of one panel don't bleed into the bars of the next.
-    panel_width_in = 1.7
-    fig_width_in = panel_width_in * len(METRICS) + 0.6
-    fig_height_in = max(2.0, 0.34 * len(method_order) + 0.6)
+    # --- Figure size: compact Nature layout. ------------------------------
+    # Only the leftmost panel carries y-tick labels (method names), so the
+    # remaining panels can be narrower and packed close together. Panels
+    # are narrow (1.1 in each) so bars don't stretch too far horizontally;
+    # row spacing is tight (0.18 in/row) which, combined with BAR_HEIGHT
+    # = 0.65, leaves only a thin gap between bars. `label_pad_in` is the
+    # extra width reserved on the left edge for the method names.
+    panel_width_in = 1.1
+    label_pad_in = 1.0
+    fig_width_in = panel_width_in * len(METRICS) + label_pad_in
+    fig_height_in = max(1.4, 0.18 * len(method_order) + 0.5)
 
     fig, axes = plt.subplots(
         1, len(METRICS),
         figsize=(fig_width_in, fig_height_in),
-        sharey=False,
+        sharey=True,
     )
     if len(METRICS) == 1:
         axes = [axes]
@@ -413,12 +433,12 @@ def make_figure(
             per_method_values=per_metric[m_label],
             colour_for=method_colours,
             metric_label=m_label,
-            show_y_ticklabels=True,
+            show_y_ticklabels=(i == 0),
             x_invert_better=(arrow == "↓"),
         )
 
     plt.tight_layout()
-    plt.subplots_adjust(wspace=0.55)
+    plt.subplots_adjust(wspace=0.12)
 
     out_path_base.parent.mkdir(parents=True, exist_ok=True)
     for ext in ("svg", "png"):
