@@ -146,12 +146,33 @@ def _load_concat(silver_dir: Path, batch_key: str) -> ad.AnnData:
     derived from `uns['batch']` (matches the convention SQUINT uses), and
     concatenate. The dataset blob's `process_anndata_batch` reindexes every
     section to a canonical gene panel; here we expect the silver files to
-    already share columns (run examples/harmonize_*.py first if not)."""
+    already share columns (run examples/harmonize_*.py first if not).
+
+    Held-out sections — held out of *both training and metrics* — are
+    skipped at load time via the `SQUINT_EXCLUDE_BATCHES` env var
+    (comma-separated list of tokens, e.g. `Lung13,Lung5_Rep3`). Each
+    token is matched as a case-sensitive substring against either the
+    file basename (e.g. `Lung13+SMI+Flat+data.tar.h5ad`) OR
+    `str(uns['batch'])`. Matching files are dropped from the concat
+    entirely, so every downstream method sees only the training set
+    and per-seed metrics are computed only over training-set cells.
+    Set to empty / unset to load everything.
+    """
+    # ---- Parse holdout tokens from env (CSV) -------------------------
+    import os as _os
+    raw_excl = _os.environ.get("SQUINT_EXCLUDE_BATCHES", "")
+    excluded = [t.strip() for t in raw_excl.split(",") if t.strip()]
+    if excluded:
+        print(f"  [_load_concat] SQUINT_EXCLUDE_BATCHES={excluded} — "
+              "files matching any of these tokens (against filename or "
+              "uns['batch']) will be SKIPPED from train + metrics.")
+
     files = sorted(Path(silver_dir).glob("*.h5ad"))
     if not files:
         raise SystemExit(f"No .h5ad files under {silver_dir}.")
     print(f"Loading {len(files)} silver file(s):")
     pieces = []
+    n_skipped_holdout = 0
     for f in files:
         a = ad.read_h5ad(f)
         # Per-cell batch label, broadcast from uns['batch'] (same convention
@@ -160,6 +181,24 @@ def _load_concat(silver_dir: Path, batch_key: str) -> ad.AnnData:
         if bid is None:
             print(f"  skip {f.name}: missing uns['batch']")
             continue
+
+        # Skip if this section matches the holdout list. We check both
+        # the filename (most user-friendly — matches what they see on
+        # disk) AND the uns['batch'] value (most robust — matches what
+        # the in-memory adata reports). Case-sensitive substring match.
+        if excluded:
+            haystacks = [f.name, str(bid)]
+            matched_token = next(
+                (tok for tok in excluded
+                 if any(tok in hay for hay in haystacks)),
+                None,
+            )
+            if matched_token is not None:
+                print(f"  skip {f.name:60s}  HELD OUT "
+                      f"(matched {matched_token!r}; batch={bid!r})")
+                n_skipped_holdout += 1
+                continue
+
         # Normalise to int when possible (some files store 'batchN' string).
         if isinstance(bid, str) and bid.startswith("batch"):
             try:    bid = int(bid[5:])
@@ -171,8 +210,16 @@ def _load_concat(silver_dir: Path, batch_key: str) -> ad.AnnData:
         a.obs[batch_key] = a.obs[batch_key].astype("category")
         print(f"  {f.name:60s}  n_obs={a.n_obs:>7d}  batch={bid!r}")
         pieces.append(a)
+
+    if excluded:
+        print(f"  [_load_concat] held out {n_skipped_holdout} section(s); "
+              f"using {len(pieces)} for train + metrics.")
+
     if not pieces:
-        raise SystemExit(f"No usable .h5ad files (all missing uns['batch']).")
+        raise SystemExit(
+            "No usable .h5ad files (all missing uns['batch'], or all "
+            "matched the holdout list)."
+        )
     if len(pieces) == 1:
         return pieces[0]
     return ad.concat(pieces, axis=0, join="outer", index_unique="-",
@@ -496,25 +543,68 @@ def _aggregate_batch_int(per_seed_dfs: List[pd.DataFrame]) -> pd.DataFrame:
 def _record_seed_runtime(
         tracker: List[Dict],
         seed: int,
-        seconds: float,
+        local_seconds: float,
         run_dir: Path,
         method: Optional[str] = None,
+        shared_setup_seconds: float = 0.0,
     ) -> None:
     """Append THIS seed's wall-clock runtime to the tracker, and also
     drop a `runtime.csv` into `<run_dir>/seeds/seed_<N>/` for per-seed
-    inspection. Caller times the seed loop with time.time().
+    inspection.
 
-    The single-row per-seed CSV has columns: seed, method, runtime_seconds.
+    Runtime methodology (apples-to-apples vs SQUINT and across baselines):
+      - `local_seconds`: per-seed clustering cost — typically Leiden
+        binary search (sc.pp.neighbors + iterated sc.tl.leiden). For
+        seed-dependent methods (scVI, NicheCompass, GraphST) this also
+        includes the per-seed model fit. Caller times this with
+        `time.time()` around the in-loop code.
+      - `shared_setup_seconds`: one-shot cost of producing the
+        embedding the per-seed clusterer reads — e.g. BANKSY+Harmony,
+        PCA, FM extraction (scGPT / Geneformer / etc.), neighbor-expr
+        PCA. Zero for methods where everything is per-seed (scVI).
+      - `runtime_seconds` (= local + shared) is what gets reported in
+        the per_seed_runtimes.csv. This is the "time to obtain
+        clusters from raw data for one seed" — directly comparable to
+        SQUINT's per-seed (train + predict) numbers.
+
+    EXCLUDED from both timers: UMAP (visualization only — it isn't a
+    preprocessing step for Leiden in any of our runners), NMI/ARI
+    computation, iLISI/MMD/ASW computation, per-seed plot writes.
+    Those are benchmark scaffolding, not method cost.
+
+    The single-row per-seed CSV has columns: seed, method,
+    runtime_seconds, local_seconds, shared_setup_seconds.
     """
+    runtime_seconds = float(local_seconds) + float(shared_setup_seconds)
     row = {
         "seed": int(seed),
         "method": method,
-        "runtime_seconds": float(seconds),
+        "runtime_seconds":      runtime_seconds,
+        "local_seconds":        float(local_seconds),
+        "shared_setup_seconds": float(shared_setup_seconds),
     }
     tracker.append(row)
     seed_dir = Path(run_dir) / "seeds" / f"seed_{seed}"
     seed_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame([row]).to_csv(seed_dir / "runtime.csv", index=False)
+
+
+# String written into `runtime_summary.csv`'s `runtime_includes` column
+# so the methodology travels with the CSV. Cross-method runtime
+# comparisons live or die on getting this right — making it explicit
+# avoids silently comparing a "metrics-included" baseline against a
+# "metrics-excluded" SQUINT number.
+_RUNTIME_INCLUDES_NOTE = (
+    "model fit (per-seed where seed-dependent) + clustering "
+    "(typically Leiden binary search). Excludes metric computation "
+    "(NMI/ARI/iLISI/MMD), UMAP (visualization), and plot writes. "
+    "runtime_seconds = local_seconds + shared_setup_seconds where "
+    "shared_setup_seconds amortises one-shot embedding compute "
+    "(e.g. BANKSY+Harmony, PCA, FM extraction) by adding it back to "
+    "each seed's local cost — so each row represents 'time to obtain "
+    "clusters from raw data for one seed', directly comparable to "
+    "SQUINT's per-seed (train + predict) numbers."
+)
 
 
 def _write_runtime_csvs(
@@ -524,6 +614,10 @@ def _write_runtime_csvs(
     """Write `metrics/per_seed_runtimes.csv` (long format with one row
     per seed) and `metrics/runtime_summary.csv` (mean / std / min / max
     / total across all seeds). No-op if `tracker` is empty.
+
+    Both CSVs reflect the new "model + clustering only" runtime
+    methodology — see `_record_seed_runtime` and the
+    `runtime_includes` column of `runtime_summary.csv`.
     """
     if not tracker:
         return
@@ -535,22 +629,32 @@ def _write_runtime_csvs(
     print(f"  -> {out}")
 
     secs = long_df["runtime_seconds"].astype(float)
+    # Shared setup is identical across seeds for a given method; pull
+    # it from any row (defaults to 0.0 if the column is missing for
+    # legacy callers).
+    shared_secs = (
+        float(long_df["shared_setup_seconds"].iloc[0])
+        if "shared_setup_seconds" in long_df.columns else 0.0
+    )
     summary = pd.DataFrame([{
-        "method":        long_df["method"].iloc[0]
-                         if "method" in long_df.columns and long_df["method"].notna().any()
-                         else None,
-        "n_seeds":       int(len(long_df)),
-        "mean_seconds":  float(secs.mean()),
-        "std_seconds":   float(secs.std(ddof=1)) if len(secs) > 1 else 0.0,
-        "min_seconds":   float(secs.min()),
-        "max_seconds":   float(secs.max()),
-        "total_seconds": float(secs.sum()),
+        "method":               long_df["method"].iloc[0]
+                                if "method" in long_df.columns
+                                and long_df["method"].notna().any()
+                                else None,
+        "n_seeds":              int(len(long_df)),
+        "mean_seconds":         float(secs.mean()),
+        "std_seconds":          float(secs.std(ddof=1)) if len(secs) > 1 else 0.0,
+        "min_seconds":          float(secs.min()),
+        "max_seconds":          float(secs.max()),
+        "total_seconds":        float(secs.sum()),
+        "shared_setup_seconds": shared_secs,
+        "runtime_includes":     _RUNTIME_INCLUDES_NOTE,
     }])
     out = metrics_dir / "runtime_summary.csv"
     summary.to_csv(out, index=False)
     print(f"  -> {out}  (mean={secs.mean():.1f}s ± "
           f"{secs.std(ddof=1) if len(secs) > 1 else 0.0:.1f}s, "
-          f"total={secs.sum():.1f}s)")
+          f"total={secs.sum():.1f}s; shared_setup={shared_secs:.1f}s)")
 
 
 # ---------------------------------------------------------------------------
@@ -572,30 +676,53 @@ def _sanitize_for_h5ad(adata: ad.AnnData) -> ad.AnnData:
         Error raised while writing key '_index' of <h5py.Group> to /obs
 
     This helper:
-      * casts `obs.index` and `var.index` to plain `str`/`object`
+      * forces `obs.index` and `var.index` to a plain NumPy object
+        array (going through `np.asarray(..., dtype=object)` —
+        `Index.astype(str)` alone is NOT enough on pandas 2.x with
+        PyArrow because it returns ANOTHER ArrowStringArray).
       * casts any column with `string` / `string[pyarrow]` dtype to
-        `object`
-      * leaves numeric, bool, categorical, datetime columns untouched
+        `object` via the same NumPy round-trip.
+      * leaves numeric, bool, categorical, datetime columns untouched.
 
-    Mutates `adata` in place AND returns it (chainable). Cheap — runs
-    in O(n_obs * n_string_cols).
+    Mutates `adata` in place AND returns it (chainable).
     """
+    import numpy as np
     import pandas as pd
 
-    def _is_arrow_string(s: pd.Series) -> bool:
+    def _is_arrow_string_dtype(dtype) -> bool:
         # pandas.StringDtype (numpy or pyarrow backed) reports as
-        # `string` / `string[python]` / `string[pyarrow]`. Cast all of
-        # them — `object` is the safe lowest-common-denominator dtype
-        # the H5AD writer always accepts.
-        return str(s.dtype).startswith("string")
+        # `string` / `string[python]` / `string[pyarrow]`. Also catch
+        # the bare `pandas.arrays.ArrowStringArray` case which
+        # historically reported just as `string`.
+        s = str(dtype)
+        return s.startswith("string") or "pyarrow" in s.lower()
+
+    def _force_object_index(idx) -> pd.Index:
+        # Going through np.asarray(..., dtype=object) is the only
+        # reliable way to escape PyArrow backing on newer pandas;
+        # `Index.astype(str)` and `Index.astype("object")` both keep
+        # the index as ArrowStringArray on some pandas/Arrow combos.
+        arr = np.asarray(list(map(str, idx)), dtype=object)
+        return pd.Index(arr, name=idx.name)
+
+    def _force_object_series(s: pd.Series) -> pd.Series:
+        arr = np.asarray(list(map(str, s.to_list())), dtype=object)
+        return pd.Series(arr, index=s.index, name=s.name)
 
     for df_name in ("obs", "var"):
         df = getattr(adata, df_name)
-        if hasattr(df.index, "dtype") and str(df.index.dtype).startswith("string"):
-            df.index = df.index.astype(str)
+        # Index — always rewrite if dtype looks like a string/Arrow type,
+        # OR if its underlying values array is from pandas.arrays.
+        idx = df.index
+        idx_dtype_str = str(getattr(idx, "dtype", "object"))
+        if (_is_arrow_string_dtype(idx_dtype_str)
+                or "Arrow" in type(getattr(idx, "values", idx)).__name__):
+            df.index = _force_object_index(idx)
+        # Columns — same logic per column.
         for col in df.columns:
-            if _is_arrow_string(df[col]):
-                df[col] = df[col].astype("object")
+            s = df[col]
+            if _is_arrow_string_dtype(s.dtype) or "Arrow" in type(s.array).__name__:
+                df[col] = _force_object_series(s)
     return adata
 
 
@@ -730,9 +857,16 @@ def main() -> None:
 
     # 1. Load + preprocess + PCA (one-time — PCA with arpack solver is
     #    deterministic on the same input, so we share it across seeds).
+    #    Timed separately as `shared_setup_seconds` so the per-seed
+    #    runtime can fold it back in for an apples-to-apples comparison
+    #    with seed-dependent methods (scVI, SQUINT) that re-pay this
+    #    cost on every seed.
+    _shared_t0 = time.time()
     adata = _load_concat(Path(args.silver_dir), batch_key=args.batch_key)
     print(f"\nConcatenated AnnData: n_obs={adata.n_obs}, n_vars={adata.n_vars}")
     adata = _preprocess(adata, n_pcs=args.n_pcs)
+    shared_setup_seconds = time.time() - _shared_t0
+    print(f"shared setup (load + preprocess + PCA): {shared_setup_seconds:.1f}s")
 
     # 2. Per-seed loop: rebuild kNN graph + Leiden + UMAP + metrics.
     #    Seed-controlled randomness:
@@ -760,14 +894,31 @@ def main() -> None:
         print("=" * 78)
         print(f"SEED {seed}  ({s_idx + 1}/{len(seeds)})")
         print("=" * 78)
+        # TIMED block — Leiden binary search (kNN graph + iterated
+        # leiden). For PCA-Leiden the embedding is shared (PCA is
+        # deterministic), so there's no per-seed model fit here.
+        # Everything below the `seed_seconds = ...` line runs UNTIMED
+        # (benchmark scaffolding: metrics, UMAP-for-viz, plot writes).
         seed_t0 = time.time()
-
         leiden_key, n_found, resolution = _leiden_n_clusters(
             adata, n_clusters=args.n_clusters,
             n_neighbors=args.n_neighbors, rng_seed=seed,
         )
+        seed_seconds = time.time() - seed_t0
         print(f"Leiden settled at {n_found} clusters (resolution={resolution:.4f}).")
+        # Record runtime BEFORE any of the untimed scaffolding so a
+        # later failure in metrics / plots doesn't strand the timing.
+        _record_seed_runtime(
+            runtime_tracker, seed=seed,
+            local_seconds=seed_seconds,
+            shared_setup_seconds=shared_setup_seconds,
+            run_dir=args.out_dir, method="PCA-Leiden",
+        )
+        print(f"  runtime (seed {seed}): local={seed_seconds:.1f}s, "
+              f"shared={shared_setup_seconds:.1f}s, "
+              f"total={seed_seconds + shared_setup_seconds:.1f}s")
 
+        # ---- UNTIMED below: metric computation + visualization ----------
         sc.tl.umap(adata, random_state=seed)
 
         print("\n  -- Niche identification --")
@@ -811,17 +962,6 @@ def main() -> None:
             batch_key=args.batch_key, dpi=args.dpi,
         )
         print(f"  -> wrote per-seed outputs to {seed_dir}")
-
-        # Per-seed wall-clock runtime (everything between seed_t0 and now,
-        # which is the full pipeline for this seed: kNN graph + Leiden
-        # bisect + UMAP + niche metrics + batch metrics + per-seed
-        # outputs).
-        seed_seconds = time.time() - seed_t0
-        _record_seed_runtime(
-            runtime_tracker, seed=seed, seconds=seed_seconds,
-            run_dir=args.out_dir, method="PCA-Leiden",
-        )
-        print(f"  runtime (seed {seed}): {seed_seconds:.1f}s")
 
         # Snapshot seed[0] for the top-level AnnData / UMAP outputs.
         if s_idx == 0:

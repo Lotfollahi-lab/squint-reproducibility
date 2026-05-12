@@ -2,9 +2,8 @@
 """
 Niche-identification benchmark figure (Nature style).
 
-Loads per-seed metrics for a configurable set of methods (niche-
-identification baselines + one or more SQUINT variants), and renders
-one figure with FOUR horizontal-bar panels:
+Loads per-seed metrics for niche-identification baselines + a SQUINT
+multi-seed sweep, and renders one figure with FOUR horizontal-bar panels:
 
   Niche NMI   (↑ better)
   Niche ARI   (↑ better)
@@ -17,22 +16,38 @@ reference notebook style).
 
 Inputs (per method):
   <artifacts_root>/<dataset_tag>/<variant>/<latest_TS>/metrics/
-      per_seed_niche_identification.csv      (5-seed baselines)
-      per_seed_batch_integration.csv         (5-seed baselines)
-   OR
-      niche_identification_metrics.csv       (SQUINT inference, 1-seed)
-      batch_integration_metrics.csv          (SQUINT inference, 1-seed)
+      per_seed_niche_identification.csv
+      per_seed_batch_integration.csv
 
-The script auto-detects which CSV layout is present and unifies them.
+`<variant>` for baselines is the `baseline-<name>` directory; for
+SQUINT it's the multi-seed sweep directory (suffix `__multiseed`).
+Both produce the SAME per_seed_*.csv layout — the legacy single-seed
+SQUINT path (`niche_identification_metrics.csv` etc.) is no longer
+supported and the loader refuses to fall back to it.
+
+`<latest_TS>` is auto-selected per variant: the most recent timestamp
+subdirectory whose `metrics/` contains at least one of the per-seed
+CSVs is used. Older / in-progress runs in the same variant dir are
+ignored.
 
 Outputs:
   <out_dir>/niche_identification_benchmark.{svg,png}
-  <out_dir>/niche_identification_benchmark_data.csv
+  <out_dir>/niche_identification_benchmark.csv
 
 Default <out_dir> is `<artifacts_root>/benchmarking/figures/`.
 
-Run from any directory:
+Usage:
+  # Default SQUINT variant (winner across the v8/v9 sweeps):
   python analysis/benchmarking/plots/plot_niche_identification_benchmark.py
+
+  # Compare a different SQUINT multi-seed sweep:
+  python analysis/benchmarking/plots/plot_niche_identification_benchmark.py \\
+      --squint-variant \\
+      dualvq+small-h64+rvq-both-3level-30-20-10+decoder-cov+adv+mmb0-1b_smb1-1b_1p__multiseed
+
+  # Different dataset:
+  python analysis/benchmarking/plots/plot_niche_identification_benchmark.py \\
+      --dataset-tag chl59-8b_1p
 """
 from __future__ import annotations
 
@@ -57,22 +72,30 @@ DEFAULT_ARTIFACTS_ROOT = Path(
 )
 DEFAULT_DATASET_TAG = "mmb0-1b_smb1-1b_1p"
 
-# variant directory name -> display label.
-# Display order in the plot is determined later by mean Niche NMI; SQUINT is
-# always plotted with a distinct accent colour regardless of position.
+# Baseline variant directories -> display labels.
+# Display order in the plot is determined later by mean Niche NMI; SQUINT
+# is always plotted with a distinct accent colour regardless of position.
 # `baseline-neigh-expr-pca` (Neighbour expr. PCA) is intentionally OMITTED —
-# it's the linear-baseline counterpart of cell-type-side PCA+Leiden, and the
-# comparison of interest on this figure is learned niche-identification
+# it's the linear-baseline counterpart of cell-type-side PCA+Leiden, and
+# the comparison of interest on this figure is learned niche-identification
 # methods + SQUINT. Add it back here if you want the linear reference.
-DEFAULT_METHODS: Dict[str, str] = {
+DEFAULT_BASELINES: Dict[str, str] = {
     "baseline-banksy":          "BANKSY",
     "baseline-cellcharter":     "CellCharter",
     "baseline-graphst":         "GraphST",
     "baseline-novae":           "Novae",
     "baseline-nichecompass":    "NicheCompass",
-    "dualvq+wide+rvq-both+decoder-cov+adv-warmup10+mmb0-1b_smb1-1b_1p":
-        "SQUINT",
 }
+
+# Default SQUINT variant. Always a `__multiseed` sweep directory
+# (produced by `examples/submit_multi_seed.sh`) — its
+# `metrics/per_seed_*.csv` files have the same schema as the baseline
+# per_seed_*.csv files, so the loader treats them uniformly.
+# Override on the CLI via `--squint-variant`.
+DEFAULT_SQUINT_VARIANT = (
+    "dualvq+rvq-both+decoder-cov+adv+enc-deeper+dec-w32+mmb0-1b_smb1-1b_1p__multiseed"
+)
+SQUINT_LABEL = "SQUINT"
 
 # Distinct, colour-blind-friendly palette. SQUINT is the accent (magenta)
 # matching the reference Nature-style notebook.
@@ -125,8 +148,23 @@ def _apply_nature_style() -> None:
 # ---------------------------------------------------------------------------
 
 def _find_latest_metrics_dir(variant_dir: Path) -> Optional[Path]:
-    """Return the most recent `<TS>/metrics` dir under `variant_dir`,
-    or None if `variant_dir` doesn't exist or has no completed runs."""
+    """Return the most recent `<TS>/metrics` dir under `variant_dir`
+    that contains at least one of the per-seed metric CSVs.
+
+    Timestamps are sorted lexicographically — works because every
+    upstream writer uses `YYYYMMDD_HHMMSS` which sorts identically to
+    calendar order. An in-progress run with an empty `metrics/` dir is
+    skipped (the per_seed_*.csv files aren't written until the runner /
+    aggregator's final step).
+
+    Returns None if `variant_dir` is missing or no timestamp under it
+    has a populated metrics dir.
+
+    Only `per_seed_*.csv` files count as "completed". The legacy
+    single-seed SQUINT layout (mean-only `niche_identification_metrics.csv`)
+    is no longer supported: SQUINT now runs through the multi-seed
+    pipeline and writes per_seed_*.csv just like the baselines.
+    """
     if not variant_dir.is_dir():
         return None
     ts_dirs = sorted(
@@ -136,18 +174,13 @@ def _find_latest_metrics_dir(variant_dir: Path) -> Optional[Path]:
     )
     for ts in ts_dirs:
         m = ts / "metrics"
-        if m.is_dir():
-            # Require at least one of the metric CSVs to call this a "completed run".
-            # (Avoids picking up an in-progress run dir whose `metrics/` exists but is empty.)
-            if any(
-                (m / fn).is_file() for fn in (
-                    "per_seed_niche_identification.csv",
-                    "niche_identification_metrics.csv",
-                    "per_seed_batch_integration.csv",
-                    "batch_integration_metrics.csv",
-                )
-            ):
-                return m
+        if m.is_dir() and any(
+            (m / fn).is_file() for fn in (
+                "per_seed_niche_identification.csv",
+                "per_seed_batch_integration.csv",
+            )
+        ):
+            return m
     return None
 
 
@@ -187,33 +220,53 @@ def _pick_batch_emb_key(emb_keys: List[str]) -> Optional[str]:
 
     Baselines write a single per-method emb_key (e.g. "novae_latent_corrected").
     SQUINT writes multiple (cell_emb, neighborhood_emb, cell_latent,
-    neighborhood_latent, X_squint, X_squint_quantized, ...). For the
-    NICHE benchmark we pick the niche-side embedding, preferring the
-    adversarially-corrected variant when available.
+    neighborhood_latent, plus optional `_corrected` adversarial variants).
+    For the NICHE benchmark we pick the niche-side encoder output —
+    `neighborhood_emb` (pre-quantization) is preferred over the
+    post-quantization `neighborhood_latent` because iLISI/MMD measure
+    continuous batch structure, which the codebook discretization step
+    erases. Within the `_emb` / `_latent` families we prefer the raw
+    encoder output: the SQUINT runs in this benchmark write
+    `_corrected` only for the post-quantization latent, so falling back
+    to `_corrected` would silently re-introduce the same latent-vs-emb
+    mismatch we're trying to avoid.
     """
     if not emb_keys:
         return None
-    # 1. Niche corrected (post-adversarial)
-    for ek in emb_keys:
-        if "neighborhood" in ek and "corrected" in ek:
-            return ek
-    # 2. Niche raw
+    # Explicit preference order — first match wins.
+    for target in (
+        "neighborhood_emb",
+        "neighborhood_emb_corrected",
+        "neighborhood_latent",
+        "neighborhood_latent_corrected",
+    ):
+        if target in emb_keys:
+            return target
+    # Single emb_key (baselines): just take it.
+    if len(emb_keys) == 1:
+        return emb_keys[0]
+    # Fall back: any niche-side key.
     for ek in emb_keys:
         if "neighborhood" in ek:
             return ek
-    # 3. Single emb_key (baselines): just take it
-    if len(emb_keys) == 1:
-        return emb_keys[0]
-    # 4. Fall back to first
+    # Last resort: first.
     return emb_keys[0]
 
 
 def load_method_metrics(variant_dir: Path, method_label: str) -> pd.DataFrame:
     """Return tidy DataFrame: columns = (method, seed, metric, value).
 
-    For methods with `per_seed_*.csv` (baselines), one row per seed per metric.
-    For methods with only `*_metrics.csv` (SQUINT 1-seed inference), one
-    row per metric with seed=0 (synthetic — represents the single inference).
+    Reads ONLY the per-seed CSVs:
+      <variant_dir>/<latest_TS>/metrics/per_seed_niche_identification.csv
+      <variant_dir>/<latest_TS>/metrics/per_seed_batch_integration.csv
+
+    Both files have one row per (seed, code_key / emb_key, label_key,
+    ...). This unified schema applies to baselines AND to SQUINT
+    multi-seed sweeps. Legacy single-seed SQUINT outputs
+    (`niche_identification_metrics.csv` etc.) are intentionally NOT
+    loaded — SQUINT is now expected to run through the multi-seed
+    pipeline.
+
     Returns an empty DataFrame if no metrics are found.
     """
     m = _find_latest_metrics_dir(variant_dir)
@@ -224,18 +277,8 @@ def load_method_metrics(variant_dir: Path, method_label: str) -> pd.DataFrame:
 
     # ---- Niche identification (NMI / ARI) -------------------------------
     per_seed_niche = m / "per_seed_niche_identification.csv"
-    mean_niche = m / "niche_identification_metrics.csv"
-
-    df_n: Optional[pd.DataFrame] = None
     if per_seed_niche.is_file():
         df_n = pd.read_csv(per_seed_niche)
-    elif mean_niche.is_file():
-        df_n = pd.read_csv(mean_niche)
-        if "seed" not in df_n.columns:
-            df_n = df_n.copy()
-            df_n["seed"] = 0
-
-    if df_n is not None and not df_n.empty:
         if "split" in df_n.columns:
             df_n = df_n[df_n["split"] == "all"]
         df_n = df_n[df_n["label_key"] == "niche"]
@@ -259,18 +302,8 @@ def load_method_metrics(variant_dir: Path, method_label: str) -> pd.DataFrame:
 
     # ---- Batch integration (iLISI / MMD) --------------------------------
     per_seed_batch = m / "per_seed_batch_integration.csv"
-    mean_batch = m / "batch_integration_metrics.csv"
-
-    df_b: Optional[pd.DataFrame] = None
     if per_seed_batch.is_file():
         df_b = pd.read_csv(per_seed_batch)
-    elif mean_batch.is_file():
-        df_b = pd.read_csv(mean_batch)
-        if "seed" not in df_b.columns:
-            df_b = df_b.copy()
-            df_b["seed"] = 0
-
-    if df_b is not None and not df_b.empty:
         if "emb_key" in df_b.columns:
             ek = _pick_batch_emb_key(sorted(df_b["emb_key"].unique().tolist()))
             if ek is not None:
@@ -383,7 +416,7 @@ def make_figure(
     )
 
     # --- Method order: sort by mean Niche NMI descending. -----------------
-    # `kind="stable"` keeps the original DEFAULT_METHODS insertion order for
+    # `kind="stable"` keeps the original methods-dict insertion order for
     # ties, so re-runs with identical metrics produce identical figures.
     if "Niche NMI" in pivot.columns:
         nmi_means = pivot["Niche NMI"].groupby(level=0).mean()
@@ -464,6 +497,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
     p.add_argument("--artifacts-root", type=Path, default=DEFAULT_ARTIFACTS_ROOT)
     p.add_argument("--dataset-tag", type=str, default=DEFAULT_DATASET_TAG)
+    p.add_argument("--squint-variant", type=str, default=DEFAULT_SQUINT_VARIANT,
+                   help="SQUINT multi-seed variant directory name (under "
+                        "<artifacts_root>/<dataset_tag>/). Must be a "
+                        "`__multiseed` sweep so the loader finds "
+                        "per_seed_*.csv. Default: "
+                        f"'{DEFAULT_SQUINT_VARIANT}'.")
     p.add_argument("--out-dir", type=Path, default=None,
                    help="Output directory (default: "
                         "<artifacts_root>/benchmarking/figures/).")
@@ -478,14 +517,23 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     _apply_nature_style()
 
+    # Build the final variant->label mapping: baselines (fixed) + the
+    # SQUINT multi-seed sweep chosen on the CLI. Insertion order is
+    # preserved by dict in Py3.7+, so iteration order is deterministic
+    # (baselines first, then SQUINT) — final plot order is then
+    # determined by mean Niche NMI in `make_figure`.
+    methods: Dict[str, str] = dict(DEFAULT_BASELINES)
+    methods[args.squint_variant] = SQUINT_LABEL
+
     print(f"Artifacts root: {args.artifacts_root}")
     print(f"Dataset tag:    {args.dataset_tag}")
+    print(f"SQUINT variant: {args.squint_variant}")
     print(f"Output dir:     {args.out_dir}")
     print()
     print("Loading metrics:")
 
     frames: List[pd.DataFrame] = []
-    for variant, label in DEFAULT_METHODS.items():
+    for variant, label in methods.items():
         variant_dir = args.artifacts_root / args.dataset_tag / variant
         df = load_method_metrics(variant_dir, label)
         n_seeds = df["seed"].nunique() if not df.empty else 0

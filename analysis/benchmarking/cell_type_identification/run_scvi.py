@@ -231,7 +231,12 @@ def main() -> None:
     print(f"Run dir : {args.out_dir}")
     print(f"Seeds   : {seeds}")
 
-    # 1. Load + HVG (one-time).
+    # 1. Load + HVG (one-time). Timed as `shared_setup_seconds` so it
+    #    gets added back to each per-seed runtime — apples-to-apples
+    #    with seed-dependent methods that re-pay this cost per seed.
+    #    For scVI the per-seed model fit dominates anyway; the shared
+    #    setup is just data load + HVG selection.
+    _shared_t0 = time.time()
     adata = _load_concat(Path(args.silver_dir), batch_key=args.batch_key)
     print(f"\nConcatenated AnnData: n_obs={adata.n_obs}, n_vars={adata.n_vars}")
     if args.batch_key not in adata.obs.columns:
@@ -242,6 +247,8 @@ def main() -> None:
     adata = _hvg_subset(adata, n_top=args.n_hvg, batch_key=args.batch_key)
     print(f"After HVG: n_obs={adata.n_obs}, n_vars={adata.n_vars}")
     adata.obs[args.batch_key] = adata.obs[args.batch_key].astype("category")
+    shared_setup_seconds = time.time() - _shared_t0
+    print(f"shared setup (load + HVG): {shared_setup_seconds:.1f}s")
 
     # 2. Per-seed loop.
     compute_nmi_ari, compute_ilisi, compute_mmd_comparable = (
@@ -259,20 +266,32 @@ def main() -> None:
         print("=" * 78)
         print(f"SEED {seed}  ({s_idx + 1}/{len(seeds)})")
         print("=" * 78)
+        # TIMED block: per-seed scVI fit + Leiden binary search. Below
+        # the `seed_seconds = ...` line runs UNTIMED.
         seed_t0 = time.time()
-
         latent = _train_scvi_and_get_latent(
             adata=adata, batch_key=args.batch_key,
             scvi_max_epochs=args.scvi_max_epochs,
             seed=seed, accelerator=args.accelerator,
         )
         adata.obsm[LATENT_KEY] = latent
-
         leiden_key, n_found, resolution = _leiden_binary_search_on_latent(
             adata, n_clusters=args.n_clusters,
             n_neighbors=args.n_neighbors,
             latent_key=LATENT_KEY, seed=seed,
         )
+        seed_seconds = time.time() - seed_t0
+        _record_seed_runtime(
+            runtime_tracker, seed=seed,
+            local_seconds=seed_seconds,
+            shared_setup_seconds=shared_setup_seconds,
+            run_dir=args.out_dir, method="scVI",
+        )
+        print(f"  runtime (seed {seed}): local={seed_seconds:.1f}s, "
+              f"shared={shared_setup_seconds:.1f}s, "
+              f"total={seed_seconds + shared_setup_seconds:.1f}s")
+
+        # ---- UNTIMED below: metrics + visualization ---------------------
         sc.tl.umap(adata, random_state=seed)
 
         print("\n  -- Niche identification --")
@@ -318,13 +337,6 @@ def main() -> None:
             batch_key=args.batch_key, dpi=args.dpi,
         )
         print(f"  -> wrote per-seed outputs to {seed_dir}")
-
-        seed_seconds = time.time() - seed_t0
-        _record_seed_runtime(
-            runtime_tracker, seed=seed, seconds=seed_seconds,
-            run_dir=args.out_dir, method="scVI",
-        )
-        print(f"  runtime (seed {seed}): {seed_seconds:.1f}s")
 
         if s_idx == 0:
             seed0_state = {"leiden_key": leiden_key,

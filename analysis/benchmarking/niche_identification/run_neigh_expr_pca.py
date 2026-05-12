@@ -231,7 +231,10 @@ def main() -> None:
     print(f"Run dir : {args.out_dir}")
     print(f"Seeds   : {seeds}")
 
-    # 1. Load + spatial graph + neighborhood PCA (one-time).
+    # 1. Load + spatial graph + neighborhood PCA (one-time shared setup).
+    #    Timed as `shared_setup_seconds` for apples-to-apples runtime
+    #    comparison (see `_record_seed_runtime` docstring).
+    _shared_t0 = time.time()
     adata = _load_concat(Path(args.silver_dir), batch_key=args.batch_key)
     print(f"\nConcatenated AnnData: n_obs={adata.n_obs}, n_vars={adata.n_vars}")
     adata = _spatial_knn_per_batch(
@@ -240,6 +243,9 @@ def main() -> None:
     )
     adata = _neigh_expr_pca(adata, n_pcs=args.n_pcs)
     print(f"X_neigh PCA: shape={adata.obsm['X_pca'].shape}")
+    shared_setup_seconds = time.time() - _shared_t0
+    print(f"shared setup (load + spatial graph + neigh-PCA): "
+          f"{shared_setup_seconds:.1f}s")
 
     # 2. Per-seed Leiden + metrics.
     compute_nmi_ari, compute_ilisi, compute_mmd_comparable = (
@@ -256,14 +262,27 @@ def main() -> None:
         print("=" * 78)
         print(f"SEED {seed}  ({s_idx + 1}/{len(seeds)})")
         print("=" * 78)
+        # TIMED block: Leiden binary search on the shared neigh-PCA
+        # latent. Below `seed_seconds = ...` runs UNTIMED.
         seed_t0 = time.time()
-
         leiden_key, n_found, resolution = _leiden_n_clusters(
             adata, n_clusters=args.n_clusters,
             n_neighbors=args.n_neighbors, rng_seed=seed,
         )
+        seed_seconds = time.time() - seed_t0
         print(f"Leiden settled at {n_found} clusters "
               f"(resolution={resolution:.4f}).")
+        _record_seed_runtime(
+            runtime_tracker, seed=seed,
+            local_seconds=seed_seconds,
+            shared_setup_seconds=shared_setup_seconds,
+            run_dir=args.out_dir, method="NeighExprPCA-Leiden",
+        )
+        print(f"  runtime (seed {seed}): local={seed_seconds:.1f}s, "
+              f"shared={shared_setup_seconds:.1f}s, "
+              f"total={seed_seconds + shared_setup_seconds:.1f}s")
+
+        # ---- UNTIMED below: metrics + visualization ---------------------
         sc.tl.umap(adata, random_state=seed)
 
         print("\n  -- Niche identification --")
@@ -303,13 +322,6 @@ def main() -> None:
             batch_key=args.batch_key, dpi=args.dpi,
         )
         print(f"  -> wrote per-seed outputs to {seed_dir}")
-
-        seed_seconds = time.time() - seed_t0
-        _record_seed_runtime(
-            runtime_tracker, seed=seed, seconds=seed_seconds,
-            run_dir=args.out_dir, method="NeighExprPCA-Leiden",
-        )
-        print(f"  runtime (seed {seed}): {seed_seconds:.1f}s")
 
         if s_idx == 0:
             seed0_state = {"leiden_key": leiden_key,

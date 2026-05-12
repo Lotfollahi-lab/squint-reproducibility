@@ -456,6 +456,11 @@ def _embed_with_geneformer(
         # The tokenizer reads ALL h5ads in `data_directory`; we put
         # exactly one there.
         h5ad_path = h5ad_dir / "input.h5ad"
+        # Sanitize before write: pandas may hand us ArrowStringArray
+        # columns (default for newer pandas + pyarrow), which the H5AD
+        # writer can't serialize. Same shared helper used at the
+        # `predicted_adata.h5ad` site.
+        _sanitize_for_h5ad(adata)
         adata.write_h5ad(h5ad_path)
         print(f"  wrote temp h5ad: {h5ad_path}")
 
@@ -702,7 +707,11 @@ def main() -> None:
     print(f"Seeds   : {seeds}")
     print(f"Model   : {args.model_dir}")
 
-    # 1. Load + concat (raw counts).
+    # 1. Load + concat + Geneformer embedding extraction (one-time
+    #    shared setup). Deterministic inference, so we share the latent
+    #    across seeds. Timed as `shared_setup_seconds` for apples-to-
+    #    apples runtime comparison (see `_record_seed_runtime` docstring).
+    _shared_t0 = time.time()
     adata = _load_concat(Path(args.silver_dir), batch_key=args.batch_key)
     print(f"\nConcatenated AnnData: n_obs={adata.n_obs}, n_vars={adata.n_vars}")
     if args.batch_key not in adata.obs.columns:
@@ -771,6 +780,9 @@ def main() -> None:
     )
 
     adata.obsm[DEFAULT_LATENT_KEY] = latent
+    shared_setup_seconds = time.time() - _shared_t0
+    print(f"shared setup (load + Geneformer extraction): "
+          f"{shared_setup_seconds:.1f}s")
 
     # 4. Per-seed downstream loop.
     compute_nmi_ari, compute_ilisi, compute_mmd_comparable = (
@@ -787,13 +799,26 @@ def main() -> None:
         print("=" * 78)
         print(f"SEED {seed}  ({s_idx + 1}/{len(seeds)})")
         print("=" * 78)
+        # TIMED block: Leiden binary search on the shared Geneformer
+        # latent. Below `seed_seconds = ...` runs UNTIMED.
         seed_t0 = time.time()
-
         leiden_key, n_found, resolution = _leiden_binary_search_on_latent(
             adata, n_clusters=args.n_clusters,
             n_neighbors=args.n_neighbors,
             latent_key=DEFAULT_LATENT_KEY, seed=seed,
         )
+        seed_seconds = time.time() - seed_t0
+        _record_seed_runtime(
+            runtime_tracker, seed=seed,
+            local_seconds=seed_seconds,
+            shared_setup_seconds=shared_setup_seconds,
+            run_dir=args.out_dir, method="Geneformer",
+        )
+        print(f"  runtime (seed {seed}): local={seed_seconds:.1f}s, "
+              f"shared={shared_setup_seconds:.1f}s, "
+              f"total={seed_seconds + shared_setup_seconds:.1f}s")
+
+        # ---- UNTIMED below: metrics + visualization ---------------------
         sc.tl.umap(adata, random_state=seed)
 
         print("\n  -- Niche identification --")
@@ -838,13 +863,6 @@ def main() -> None:
             batch_key=args.batch_key, dpi=args.dpi,
         )
         print(f"  -> wrote per-seed outputs to {seed_dir}")
-
-        seed_seconds = time.time() - seed_t0
-        _record_seed_runtime(
-            runtime_tracker, seed=seed, seconds=seed_seconds,
-            run_dir=args.out_dir, method="Geneformer",
-        )
-        print(f"  runtime (seed {seed}): {seed_seconds:.1f}s")
 
         if s_idx == 0:
             seed0_state = {"leiden_key": leiden_key,

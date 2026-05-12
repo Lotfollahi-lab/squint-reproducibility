@@ -154,11 +154,29 @@ def _resolve_nicheformer_paths(
     """Resolve the three Nicheformer artefact paths.
 
     Priority per file: explicit `--<file>-path` arg if given, else
-    conventional name under `model_dir`:
-      - <model_dir>/nicheformer.ckpt
-      - <model_dir>/model.h5ad
-      - <model_dir>/<technology>_mean.npy  (or `means/<technology>_mean.npy`,
-        whichever exists)
+    the first existing candidate under `model_dir`.
+
+    Search layout (each file is tried in order; first hit wins):
+      .ckpt:
+        - <model_dir>/nicheformer.ckpt
+        - <model_dir>/data/nicheformer.ckpt
+      model.h5ad:
+        - <model_dir>/model.h5ad
+        - <model_dir>/model_means/model.h5ad        (release layout)
+        - <model_dir>/data/model_means/model.h5ad
+      <tech>_mean*.npy:
+        - <model_dir>/<technology>_mean.npy
+        - <model_dir>/means/<technology>_mean.npy
+        - <model_dir>/model_means/<technology>_mean.npy        (release)
+        - <model_dir>/model_means/<technology>_mean_script.npy (release)
+        - <model_dir>/data/model_means/<technology>_mean.npy
+        - <model_dir>/data/model_means/<technology>_mean_script.npy
+
+    The `model_means/` + `_mean_script.npy` candidates match the
+    on-disk layout of the official Nicheformer HuggingFace release
+    (which stores `model.h5ad` and `<tech>_mean_script.npy` together
+    under `<release>/data/model_means/`). The bare and `means/`
+    candidates are kept for back-compat with hand-staged layouts.
 
     Raises SystemExit with a clear message if a path can't be resolved.
     """
@@ -186,19 +204,30 @@ def _resolve_nicheformer_paths(
 
     ckpt = _resolve_one(
         explicit=pretrained_model_path,
-        candidates=[model_dir / "nicheformer.ckpt"],
+        candidates=[
+            model_dir / "nicheformer.ckpt",
+            model_dir / "data" / "nicheformer.ckpt",
+        ],
         label="pretrained .ckpt",
         override_flag="--pretrained-model-path",
     )
     h5ad = _resolve_one(
         explicit=model_h5ad_path,
-        candidates=[model_dir / "model.h5ad"],
+        candidates=[
+            model_dir / "model.h5ad",
+            model_dir / "model_means" / "model.h5ad",
+            model_dir / "data" / "model_means" / "model.h5ad",
+        ],
         label="model.h5ad gene reference",
         override_flag="--model-h5ad-path",
     )
     mean_candidates = [
         model_dir / f"{technology}_mean.npy",
         model_dir / "means" / f"{technology}_mean.npy",
+        model_dir / "model_means" / f"{technology}_mean.npy",
+        model_dir / "model_means" / f"{technology}_mean_script.npy",
+        model_dir / "data" / "model_means" / f"{technology}_mean.npy",
+        model_dir / "data" / "model_means" / f"{technology}_mean_script.npy",
     ]
     mean = _resolve_one(
         explicit=technology_mean_path,
@@ -344,8 +373,11 @@ def main() -> None:
     print(f"Tech    : {args.technology}  Species: {args.species}  "
           f"Modality: {args.modality}")
 
-    # 1. Load + concat. Nicheformer expects raw counts and handles
-    #    its own normalisation / tokenisation internally.
+    # 1. Load + concat + Nicheformer embedding extraction (one-time
+    #    shared setup). Deterministic inference, so we share the latent
+    #    across seeds. Timed as `shared_setup_seconds` for apples-to-
+    #    apples runtime comparison (see `_record_seed_runtime` docstring).
+    _shared_t0 = time.time()
     adata = _load_concat(Path(args.silver_dir), batch_key=args.batch_key)
     print(f"\nConcatenated AnnData: n_obs={adata.n_obs}, n_vars={adata.n_vars}")
     if args.batch_key not in adata.obs.columns:
@@ -384,6 +416,9 @@ def main() -> None:
     )
     print(f"  -> adata.obsm[{DEFAULT_LATENT_KEY!r}] shape: "
           f"{adata.obsm[DEFAULT_LATENT_KEY].shape}")
+    shared_setup_seconds = time.time() - _shared_t0
+    print(f"shared setup (load + Nicheformer extraction): "
+          f"{shared_setup_seconds:.1f}s")
 
     # 4. Per-seed downstream loop.
     compute_nmi_ari, compute_ilisi, compute_mmd_comparable = (
@@ -400,13 +435,26 @@ def main() -> None:
         print("=" * 78)
         print(f"SEED {seed}  ({s_idx + 1}/{len(seeds)})")
         print("=" * 78)
+        # TIMED block: Leiden binary search on the shared Nicheformer
+        # latent. Below `seed_seconds = ...` runs UNTIMED.
         seed_t0 = time.time()
-
         leiden_key, n_found, resolution = _leiden_binary_search_on_latent(
             adata, n_clusters=args.n_clusters,
             n_neighbors=args.n_neighbors,
             latent_key=DEFAULT_LATENT_KEY, seed=seed,
         )
+        seed_seconds = time.time() - seed_t0
+        _record_seed_runtime(
+            runtime_tracker, seed=seed,
+            local_seconds=seed_seconds,
+            shared_setup_seconds=shared_setup_seconds,
+            run_dir=args.out_dir, method="Nicheformer",
+        )
+        print(f"  runtime (seed {seed}): local={seed_seconds:.1f}s, "
+              f"shared={shared_setup_seconds:.1f}s, "
+              f"total={seed_seconds + shared_setup_seconds:.1f}s")
+
+        # ---- UNTIMED below: metrics + visualization ---------------------
         sc.tl.umap(adata, random_state=seed)
 
         print("\n  -- Niche identification --")
@@ -452,13 +500,6 @@ def main() -> None:
             batch_key=args.batch_key, dpi=args.dpi,
         )
         print(f"  -> wrote per-seed outputs to {seed_dir}")
-
-        seed_seconds = time.time() - seed_t0
-        _record_seed_runtime(
-            runtime_tracker, seed=seed, seconds=seed_seconds,
-            run_dir=args.out_dir, method="Nicheformer",
-        )
-        print(f"  runtime (seed {seed}): {seed_seconds:.1f}s")
 
         if s_idx == 0:
             seed0_state = {"leiden_key": leiden_key,

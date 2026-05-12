@@ -365,11 +365,16 @@ def main() -> None:
     print(f"cwd     : {os.getcwd()}  (pinned to local /tmp to "
           "avoid stale-cwd FileNotFoundError under numba)")
 
-    # 1. Load + Novae spatial graph + per-batch squidpy kNN (one-time).
+    # 1. Load + Novae spatial graph + per-batch squidpy kNN +
+    #    pretrained model load (one-time shared setup). Timed as
+    #    `shared_setup_seconds` for apples-to-apples runtime comparison
+    #    (see `_record_seed_runtime` docstring). Per-seed Novae
+    #    forward/assign is timed inside the loop below.
     import novae
 
     _apply_novae_monkey_patches()
 
+    _shared_t0 = time.time()
     adata = _load_concat(Path(args.silver_dir), batch_key=args.batch_key)
     print(f"\nConcatenated AnnData: n_obs={adata.n_obs}, n_vars={adata.n_vars}")
     if args.batch_key not in adata.obs.columns:
@@ -391,6 +396,9 @@ def main() -> None:
 
     print(f"\n=== Loading Novae model: {args.novae_checkpoint} ===")
     model = novae.Novae.from_pretrained(args.novae_checkpoint)
+    shared_setup_seconds = time.time() - _shared_t0
+    print(f"shared setup (load + spatial graph + Novae model): "
+          f"{shared_setup_seconds:.1f}s")
 
     # 2. Per-seed loop.
     compute_nmi_ari, compute_ilisi, compute_mmd_comparable = (
@@ -419,17 +427,31 @@ def main() -> None:
             os.makedirs(_cwd_anchor, exist_ok=True)
             os.chdir(_cwd_anchor)
 
+        # TIMED block: per-seed Novae forward + assign_domains. The
+        # domains ARE the clusters (Novae does its own clustering, no
+        # Leiden needed). Below `seed_seconds = ...` runs UNTIMED.
         latent_key, domain_key = _novae_embed_assign_correct(
             model=model, adata=adata,
             domain_level=int(args.domain_level),
             batch_key=args.batch_key, seed=seed,
         )
+        seed_seconds = time.time() - seed_t0
         n_found = int(adata.obs[domain_key].astype(str).nunique())
         print(f"Novae assign_domains: {n_found} domains "
               f"(level={args.domain_level}).")
+        _record_seed_runtime(
+            runtime_tracker, seed=seed,
+            local_seconds=seed_seconds,
+            shared_setup_seconds=shared_setup_seconds,
+            run_dir=args.out_dir, method="Novae",
+        )
+        print(f"  runtime (seed {seed}): local={seed_seconds:.1f}s, "
+              f"shared={shared_setup_seconds:.1f}s, "
+              f"total={seed_seconds + shared_setup_seconds:.1f}s")
 
-        # UMAP on the batch-corrected latent (matches the notebook's
-        # post-correction visualisation).
+        # ---- UNTIMED below: visualization (neighbors+UMAP are for the
+        # notebook's post-correction UMAP only, not for clustering) +
+        # metrics + plot writes ------------------------------------------
         sc.pp.neighbors(adata, n_neighbors=args.n_neighbors,
                         use_rep=latent_key, random_state=seed)
         sc.tl.umap(adata, random_state=seed)
@@ -476,13 +498,6 @@ def main() -> None:
             batch_key=args.batch_key, dpi=args.dpi,
         )
         print(f"  -> wrote per-seed outputs to {seed_dir}")
-
-        seed_seconds = time.time() - seed_t0
-        _record_seed_runtime(
-            runtime_tracker, seed=seed, seconds=seed_seconds,
-            run_dir=args.out_dir, method="Novae",
-        )
-        print(f"  runtime (seed {seed}): {seed_seconds:.1f}s")
 
         if s_idx == 0:
             seed0_state = {"leiden_key": domain_key,

@@ -214,16 +214,95 @@ def add_human_ortholog_ensembl_ids(
         ``model.var_names`` subsetting step downstream).
     """
     if species.lower() not in ("mouse", "mus musculus"):
-        if verbose:
-            logger.info(
-                "add_human_ortholog_ensembl_ids: species=%r is not mouse, "
-                "skipping (the input IDs are used unchanged).", species)
+        # For non-mouse species (typically `human`), there's no ortholog
+        # mapping to do — but we may still need to convert SYMBOLS to
+        # Ensembl IDs so downstream code that expects ENSG in var
+        # (Nicheformer, Geneformer) gets the right format. Decision tree:
+        #
+        #   - If the input column already holds Ensembl IDs (≥50% start
+        #     with `ENSG`), just copy verbatim — nothing to do.
+        #   - Otherwise treat the input as HGNC symbols and run a
+        #     species-specific mygene lookup (e.g. CD3D -> ENSG00000167286
+        #     when species=human).
+        #
+        # This makes the helper "smart" for human input too: every
+        # downstream method that consumes `human_ensembl_id` gets a
+        # proper Ensembl column regardless of whether the silver var_names
+        # were symbols or already ENSG.
         if not inplace:
             adata = adata.copy()
         if gene_col_in is None:
-            adata.var[gene_col_out] = adata.var_names.astype(str).to_numpy()
+            raw_ids = adata.var_names.astype(str).to_numpy()
         else:
-            adata.var[gene_col_out] = adata.var[gene_col_in].astype(str).to_numpy()
+            if gene_col_in not in adata.var.columns:
+                raise KeyError(
+                    f"gene_col_in={gene_col_in!r} not in adata.var.")
+            raw_ids = adata.var[gene_col_in].astype(str).to_numpy()
+
+        is_ensembl = np.array(
+            [v.startswith("ENSG") for v in raw_ids], dtype=bool,
+        )
+        if is_ensembl.mean() > 0.5:
+            if verbose:
+                logger.info(
+                    "add_human_ortholog_ensembl_ids: species=%r and "
+                    "input looks like Ensembl IDs (%d/%d start with "
+                    "ENSG); using verbatim.",
+                    species, int(is_ensembl.sum()), len(raw_ids))
+            adata.var[gene_col_out] = raw_ids
+            return adata
+
+        # Symbols → ENSG via mygene's species-specific DB.
+        try:
+            import mygene
+        except Exception as e:
+            raise ImportError(
+                "add_human_ortholog_ensembl_ids requires the 'mygene' "
+                "package for human-symbol → ENSG mapping. Install via "
+                f"`pip install mygene`. Original error: {e!s}")
+        if verbose:
+            print(
+                f"[add_human_ortholog_ensembl_ids] species={species!r}: "
+                f"mapping {len(raw_ids)} symbols → Ensembl via mygene "
+                f"({species}-DB lookup, no cross-species step).")
+        mg = mygene.MyGeneInfo()
+        # Strip species name for mygene (it accepts "human", "mouse", etc.).
+        mg_species = species.lower().split()[0]
+        df = mg.querymany(
+            list(raw_ids),
+            scopes=["symbol", "alias", "ensembl.gene"],
+            species=mg_species,
+            fields="ensembl.gene",
+            returnall=False, as_dataframe=True,
+        )
+        df = df[~df.index.duplicated(keep="first")]
+
+        def _first_ens(x):
+            if isinstance(x, list) and x and isinstance(x[0], dict):
+                return x[0].get("gene")
+            if isinstance(x, dict):
+                return x.get("gene")
+            return x if isinstance(x, str) else None
+
+        col = "ensembl.gene" if "ensembl.gene" in df.columns else "ensembl"
+        sym_to_ens = df[col].apply(_first_ens) if col in df.columns else pd.Series(dtype=str)
+        sym_to_ens = sym_to_ens[~sym_to_ens.index.duplicated(keep="first")]
+        if fallback_to_input:
+            mapped = np.array(
+                [str(sym_to_ens.get(s, s)) for s in raw_ids], dtype=object,
+            )
+        else:
+            mapped = np.array(
+                [str(sym_to_ens.get(s, "")) for s in raw_ids], dtype=object,
+            )
+        adata.var[gene_col_out] = mapped
+        n_mapped = int(np.sum(
+            [str(v).startswith("ENSG") for v in mapped]
+        ))
+        if verbose:
+            print(
+                f"[add_human_ortholog_ensembl_ids] {n_mapped}/{len(raw_ids)} "
+                f"symbols mapped to ENSG (species={species!r}).")
         return adata
 
     try:

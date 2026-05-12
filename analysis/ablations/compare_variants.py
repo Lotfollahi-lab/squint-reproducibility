@@ -25,7 +25,7 @@ Output:
         are framed in red and rendered with a bold tick label.
     batch_integration.{png,svg}
         Variants × (emb_key, metric) heatmap for iLISI / ASW / MMD.
-        Priority columns (iLISI / MMD on cell_latent and
+        Priority columns (iLISI on cell_latent and
         neighborhood_latent) are framed in red.
     pearson_reconstruction.{png,svg}
         Variants × (branch, axis, transform, gene_subset) heatmap of
@@ -44,11 +44,15 @@ Usage:
   # Default: only `dualvq*` variants, each variant's most recent timestamp.
   python analysis/ablations/compare_variants.py
 
+  # Only sweep-aliased variants (the `s<sweep>_v<variant>_<base>`
+  # convention introduced in sweep 17 — `s17_*`, `s18_*`, ...):
+  python analysis/ablations/compare_variants.py --prefix s
+
   # Include baselines + smoke / region-holdout subdirs too:
   python analysis/ablations/compare_variants.py --include-baselines
 
   # Restrict to specific variants (explicit list ALWAYS bypasses the
-  # dualvq-only filter, no --include-baselines needed):
+  # prefix filter, no --include-baselines needed):
   python analysis/ablations/compare_variants.py \\
       --variants 'dualvq+rvq-both+decoder-cov+adv+mmb0-1b_smb1-1b_1p,\\
                   baseline-nichecompass'
@@ -118,9 +122,7 @@ PRIORITY_NICHE_PAIRS: List[str] = [
 ]
 PRIORITY_BATCHINT_PAIRS: List[str] = [
     "neighborhood_latent  —  iLISI",
-    "neighborhood_latent  —  MMD",
     "cell_latent  —  iLISI",
-    "cell_latent  —  MMD",
 ]
 # Pearson columns most relevant for ranking variants: gene-wise log1p on
 # both the full gene set and the top-N HVGs, for cell + niche branches.
@@ -197,7 +199,7 @@ def load_all_variants(
         dataset: str,
         variants: Optional[List[str]] = None,
         timestamp_strategy: str = "latest",
-        dualvq_only: bool = True,
+        prefix_filter: Optional[str] = "dualvq",
     ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
     """
     For every variant under `<artifacts_root>/<dataset>/`, load all
@@ -208,17 +210,28 @@ def load_all_variants(
     Returns (niche_long, batchint_long, pearson_long, info_dict).
     `info_dict` carries diagnostic info: variants_found,
     variants_missing_files (list of paths), variants_no_run_dir
-    (variants with no timestamp subdir), and (when `dualvq_only=True`
-    and `variants is None`) variants_filtered_out — the non-dualvq
-    subdirs that auto-discovery skipped.
+    (variants with no timestamp subdir), variants_filtered_out (the
+    subdirs that auto-discovery skipped because they didn't match
+    `prefix_filter`), and `prefix_filter` (the prefix actually used
+    — echoed back so callers can render accurate diagnostic
+    messages).
 
-    `dualvq_only` (default True): when auto-discovering (i.e.
+    `prefix_filter` (default `"dualvq"`): when auto-discovering (i.e.
     `variants is None`), restrict to subdirs whose name starts with
-    "dualvq". This filters out baselines (banksy/cellcharter/scvi/etc.)
-    + smoke tests + region-holdout variants, leaving only SQUINT
-    ablation runs. Pass `dualvq_only=False` to include everything,
-    OR pass an explicit `variants` list (explicit selection always
-    wins — the filter only applies during auto-discovery).
+    this string.
+
+      - "dualvq" (default): only historic SQUINT ablation runs
+        (pre-sweep-17 naming convention).
+      - "s":               only sweep-aliased variants
+                           (s17_*, s18_*, ... — the
+                           `s<sweep>_v<variant>_<base>` convention
+                           introduced in sweep 17).
+      - "baseline-":       only baseline runs (banksy / scvi / ...).
+      - "":                disable the filter, include every subdir.
+      - None:              also disables the filter.
+
+    Pass an explicit `variants` list to bypass the filter entirely —
+    the filter only applies during auto-discovery.
     """
     dataset_root = artifacts_root / dataset
     if not dataset_root.is_dir():
@@ -227,14 +240,20 @@ def load_all_variants(
             f"--artifacts-root or --dataset."
         )
 
+    # Normalise: empty string == None == "no filter".
+    if not prefix_filter:
+        prefix_filter = None
+
     variants_filtered_out: List[str] = []
     if variants is None:
         # Auto-discover: every subdir under dataset_root that contains
         # at least one timestamp subdir.
         all_subdirs = sorted(p.name for p in dataset_root.iterdir() if p.is_dir())
-        if dualvq_only:
-            variants = [v for v in all_subdirs if v.startswith("dualvq")]
-            variants_filtered_out = [v for v in all_subdirs if not v.startswith("dualvq")]
+        if prefix_filter is not None:
+            variants = [v for v in all_subdirs if v.startswith(prefix_filter)]
+            variants_filtered_out = [
+                v for v in all_subdirs if not v.startswith(prefix_filter)
+            ]
         else:
             variants = all_subdirs
 
@@ -287,8 +306,12 @@ def load_all_variants(
         "variants_no_run_dir":    variants_no_run_dir,
         "variants_missing_files": variants_missing_files,
         "variants_filtered_out":  variants_filtered_out,
+        # Echo back the prefix actually used so the CLI's diagnostic
+        # message can show e.g. "non-'s*' subdir(s)" instead of
+        # always saying "dualvq".
+        "prefix_filter":          prefix_filter,
         # `variants_attempted` is every variant we TRIED to load (passes the
-        # dualvq filter / user's --variants list). Includes variants that
+        # prefix filter / user's --variants list). Includes variants that
         # ended up with no metrics — used by `render_all` to keep them as
         # empty rows in the heatmaps so the reader can see at a glance
         # which configured variants are missing data.
@@ -647,16 +670,25 @@ def main() -> None:
     p.add_argument("--variants", type=str, default=None,
                    help="Optional comma-separated list of variant names. "
                         "Default: every subdir of <artifacts-root>/<dataset>/ "
-                        "whose name starts with 'dualvq' (set "
-                        "--include-baselines to include baseline / smoke / "
-                        "region-holdout subdirs too). Explicit --variants "
-                        "always bypasses the prefix filter.")
+                        "whose name starts with the --prefix string. "
+                        "Explicit --variants always bypasses the prefix "
+                        "filter.")
+    p.add_argument("--prefix", type=str, default="dualvq",
+                   help="When auto-discovering (i.e. --variants not "
+                        "passed), only include subdirs whose name starts "
+                        "with this prefix. Common values: 'dualvq' "
+                        "(default — historic SQUINT ablation runs), 's' "
+                        "(sweep-aliased variants under the s<sweep>_v<N>_ "
+                        "convention introduced in sweep 17), 'baseline-' "
+                        "(baselines only). Pass --include-baselines or "
+                        "--prefix '' to disable the filter entirely. No "
+                        "effect when --variants is passed explicitly.")
     p.add_argument("--include-baselines", action="store_true",
-                   help="When auto-discovering (i.e. --variants not passed), "
-                        "INCLUDE non-dualvq subdirs (baselines, smoke tests, "
-                        "region-holdout, etc.). Default: only 'dualvq*' "
-                        "variants are included. No effect when --variants is "
-                        "passed explicitly.")
+                   help="When auto-discovering (i.e. --variants not "
+                        "passed), DISABLE the --prefix filter entirely — "
+                        "include every subdir (baselines, smoke tests, "
+                        "region-holdout, sweep aliases, all). Equivalent "
+                        "to --prefix ''. Overrides --prefix.")
     p.add_argument("--timestamp-strategy", type=str, default="latest",
                    help="'latest' to pick the most recent timestamp per "
                         "variant, or an exact YYYYMMDD_HHMMSS string. "
@@ -683,12 +715,20 @@ def main() -> None:
     print(f"Out dir        : {args.out_dir}")
     print()
 
+    # Resolve the effective prefix filter:
+    #   --include-baselines wins over --prefix (sets filter to None).
+    #   --prefix "" also disables the filter (treated as None inside
+    #   load_all_variants).
+    effective_prefix: Optional[str] = (
+        None if args.include_baselines else (args.prefix or None)
+    )
+
     niche_long, batchint_long, pearson_long, info = load_all_variants(
         artifacts_root     = args.artifacts_root,
         dataset            = args.dataset,
         variants           = variants,
         timestamp_strategy = args.timestamp_strategy,
-        dualvq_only        = not args.include_baselines,
+        prefix_filter      = effective_prefix,
     )
 
     print(f"Variants with metrics      : {len(info['variants_found'])}")
@@ -696,9 +736,12 @@ def main() -> None:
         print(f"  {v}")
 
     if info.get("variants_filtered_out"):
+        used_prefix = info.get("prefix_filter") or ""
         print(f"\nVariants filtered out      : "
-              f"{len(info['variants_filtered_out'])} non-'dualvq*' subdir(s) "
-              f"(pass --include-baselines to keep them)")
+              f"{len(info['variants_filtered_out'])} non-'{used_prefix}*' "
+              f"subdir(s) (pass --include-baselines or --prefix '' "
+              f"to keep them, or --prefix <other> to use a different "
+              f"filter)")
         for v in info["variants_filtered_out"]:
             print(f"  {v}")
 

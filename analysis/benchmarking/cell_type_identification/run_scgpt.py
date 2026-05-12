@@ -520,8 +520,13 @@ def main() -> None:
     print(f"Seeds   : {seeds}")
     print(f"Model   : {args.model_dir}")
 
-    # 1. Load + concat. NO normalisation / scaling / HVG: scGPT expects
-    #    raw counts and handles its own preprocessing internally.
+    # 1. Load + concat + scGPT embedding extraction (one-time shared
+    #    setup). scGPT inference is deterministic on the same inputs,
+    #    so we share the latent across seeds. Timed as
+    #    `shared_setup_seconds` so the per-seed runtime can fold it
+    #    back in for an apples-to-apples comparison (see
+    #    `_record_seed_runtime` docstring).
+    _shared_t0 = time.time()
     adata = _load_concat(Path(args.silver_dir), batch_key=args.batch_key)
     print(f"\nConcatenated AnnData: n_obs={adata.n_obs}, n_vars={adata.n_vars}")
     if args.batch_key not in adata.obs.columns:
@@ -612,6 +617,8 @@ def main() -> None:
     # Attach to the ORIGINAL (mouse-symbol) adata so downstream Leiden /
     # UMAP / metrics see the unmodified obs/X.
     adata.obsm[DEFAULT_LATENT_KEY] = latent
+    shared_setup_seconds = time.time() - _shared_t0
+    print(f"shared setup (load + scGPT extraction): {shared_setup_seconds:.1f}s")
 
     # 3. Per-seed loop on the (shared) scGPT latent. Variance comes
     #    from kNN graph + Leiden + UMAP + iLISI/MMD subsampling.
@@ -629,13 +636,26 @@ def main() -> None:
         print("=" * 78)
         print(f"SEED {seed}  ({s_idx + 1}/{len(seeds)})")
         print("=" * 78)
+        # TIMED block: Leiden binary search on the shared scGPT latent.
+        # Below `seed_seconds = ...` runs UNTIMED.
         seed_t0 = time.time()
-
         leiden_key, n_found, resolution = _leiden_binary_search_on_latent(
             adata, n_clusters=args.n_clusters,
             n_neighbors=args.n_neighbors,
             latent_key=DEFAULT_LATENT_KEY, seed=seed,
         )
+        seed_seconds = time.time() - seed_t0
+        _record_seed_runtime(
+            runtime_tracker, seed=seed,
+            local_seconds=seed_seconds,
+            shared_setup_seconds=shared_setup_seconds,
+            run_dir=args.out_dir, method="scGPT",
+        )
+        print(f"  runtime (seed {seed}): local={seed_seconds:.1f}s, "
+              f"shared={shared_setup_seconds:.1f}s, "
+              f"total={seed_seconds + shared_setup_seconds:.1f}s")
+
+        # ---- UNTIMED below: metrics + visualization ---------------------
         sc.tl.umap(adata, random_state=seed)
 
         print("\n  -- Niche identification --")
@@ -681,13 +701,6 @@ def main() -> None:
             batch_key=args.batch_key, dpi=args.dpi,
         )
         print(f"  -> wrote per-seed outputs to {seed_dir}")
-
-        seed_seconds = time.time() - seed_t0
-        _record_seed_runtime(
-            runtime_tracker, seed=seed, seconds=seed_seconds,
-            run_dir=args.out_dir, method="scGPT",
-        )
-        print(f"  runtime (seed {seed}): {seed_seconds:.1f}s")
 
         if s_idx == 0:
             seed0_state = {"leiden_key": leiden_key,
