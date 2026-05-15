@@ -73,7 +73,7 @@ import sys
 import warnings
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -199,7 +199,7 @@ def load_all_variants(
         dataset: str,
         variants: Optional[List[str]] = None,
         timestamp_strategy: str = "latest",
-        prefix_filter: Optional[str] = "dualvq",
+        prefix_filter: Optional[Union[str, Sequence[str]]] = "dualvq",
     ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
     """
     For every variant under `<artifacts_root>/<dataset>/`, load all
@@ -218,7 +218,9 @@ def load_all_variants(
 
     `prefix_filter` (default `"dualvq"`): when auto-discovering (i.e.
     `variants is None`), restrict to subdirs whose name starts with
-    this string.
+    this string. Can be a single string OR a sequence of strings —
+    in the sequence case a subdir is kept iff its name starts with
+    ANY of the prefixes.
 
       - "dualvq" (default): only historic SQUINT ablation runs
         (pre-sweep-17 naming convention).
@@ -227,6 +229,11 @@ def load_all_variants(
                            `s<sweep>_v<variant>_<base>` convention
                            introduced in sweep 17).
       - "baseline-":       only baseline runs (banksy / scvi / ...).
+      - ("s51", "s52"):    OR-union — keep subdirs starting with
+                           either prefix. Useful when one sweep's
+                           ablations spill across multiple sweep ids
+                           (e.g. cell-codebook ablation in s51,
+                           niche-codebook ablation in s52).
       - "":                disable the filter, include every subdir.
       - None:              also disables the filter.
 
@@ -240,19 +247,33 @@ def load_all_variants(
             f"--artifacts-root or --dataset."
         )
 
-    # Normalise: empty string == None == "no filter".
+    # Normalise: empty string / empty sequence / None all -> "no filter".
+    # A single string and a sequence-of-strings are unified into a tuple
+    # so the rest of the function can do `any(name.startswith(p) for ...)`
+    # uniformly.
+    prefixes: Optional[Tuple[str, ...]]
     if not prefix_filter:
-        prefix_filter = None
+        prefixes = None
+    elif isinstance(prefix_filter, str):
+        prefixes = (prefix_filter,)
+    else:
+        prefixes = tuple(p for p in prefix_filter if p)
+        if not prefixes:
+            prefixes = None
 
     variants_filtered_out: List[str] = []
     if variants is None:
         # Auto-discover: every subdir under dataset_root that contains
         # at least one timestamp subdir.
         all_subdirs = sorted(p.name for p in dataset_root.iterdir() if p.is_dir())
-        if prefix_filter is not None:
-            variants = [v for v in all_subdirs if v.startswith(prefix_filter)]
+        if prefixes is not None:
+            variants = [
+                v for v in all_subdirs
+                if any(v.startswith(p) for p in prefixes)
+            ]
             variants_filtered_out = [
-                v for v in all_subdirs if not v.startswith(prefix_filter)
+                v for v in all_subdirs
+                if not any(v.startswith(p) for p in prefixes)
             ]
         else:
             variants = all_subdirs
@@ -306,10 +327,12 @@ def load_all_variants(
         "variants_no_run_dir":    variants_no_run_dir,
         "variants_missing_files": variants_missing_files,
         "variants_filtered_out":  variants_filtered_out,
-        # Echo back the prefix actually used so the CLI's diagnostic
+        # Echo back the prefix(es) actually used so the CLI's diagnostic
         # message can show e.g. "non-'s*' subdir(s)" instead of
-        # always saying "dualvq".
-        "prefix_filter":          prefix_filter,
+        # always saying "dualvq". Always returned as a normalised tuple
+        # (or None) so callers don't need to handle the str/sequence
+        # ambiguity.
+        "prefix_filter":          prefixes,
         # `variants_attempted` is every variant we TRIED to load (passes the
         # prefix filter / user's --variants list). Includes variants that
         # ended up with no metrics — used by `render_all` to keep them as
@@ -327,6 +350,33 @@ def _save_dual(fig, out_path: Path, **kw) -> None:
     out_path = Path(out_path)
     for ext in (".png", ".svg"):
         fig.savefig(out_path.with_suffix(ext), **kw)
+
+
+# Y-axis label sizing -------------------------------------------------------
+# Variant names in this codebase can be >150 characters (e.g. the s36/s37
+# sweeps stack a dozen `+knob` chunks onto a 30-char `dualvq+...` stem).
+# At the historical `fontsize=8`, anything past ~70 chars overflows the
+# left axis margin and gets truncated by `bbox_inches="tight"` cropping
+# the rendered image — the user sees ".../knn16+sampler16+mmb0-1b_smb..."
+# instead of the full name.
+#
+# We expand the figure width to make room for the longest label, and
+# drop the y-tick font size slightly. `bbox_inches="tight"` then crops
+# any leftover whitespace, so the resulting PNG/SVG stays tight without
+# truncating the names.
+_VARIANT_TICK_FONTSIZE = 6     # was 8; ~12% denser, still legible on screen
+_INCH_PER_CHAR_AT_TICK_FS = 0.045   # ~0.045 in/char at fontsize 6, DPI 150
+
+
+def _variant_label_left_margin_inches(labels) -> float:
+    """
+    Width budget (in inches) for the left-side y-axis labels of any
+    variants × ... plot. Scales with the longest label so the plot
+    canvas always has room; floors at 2.0in so short-label sweeps
+    don't get a cramped left margin.
+    """
+    max_chars = max((len(str(s)) for s in labels), default=0)
+    return max(2.0, _INCH_PER_CHAR_AT_TICK_FS * max_chars + 0.4)
 
 
 def _select_key_metric(
@@ -376,7 +426,11 @@ def _plot_key_metric(
         return
     df = df.sort_values("value", ascending=higher_is_better).reset_index(drop=True)
     n = len(df)
-    fig, ax = plt.subplots(figsize=(10, max(2.5, 0.32 * n + 1.0)))
+    # Width scales with the longest variant name so long s37-style names
+    # (up to ~150 chars) don't overflow the left margin.
+    left_margin = _variant_label_left_margin_inches(df["variant"].astype(str))
+    width = max(10.0, left_margin + 6.0)
+    fig, ax = plt.subplots(figsize=(width, max(2.5, 0.32 * n + 1.0)))
     colours = plt.get_cmap("viridis")(np.linspace(0.15, 0.85, n))
     bars = ax.barh(df["variant"].astype(str), df["value"].astype(float), color=colours)
     for bar, val in zip(bars, df["value"].astype(float)):
@@ -388,7 +442,7 @@ def _plot_key_metric(
         )
     ax.set_title(title, fontsize=11)
     ax.set_xlabel("value")
-    ax.tick_params(axis="y", labelsize=8)
+    ax.tick_params(axis="y", labelsize=_VARIANT_TICK_FONTSIZE)
     ax.grid(axis="x", linestyle=":", alpha=0.4)
     fig.tight_layout()
     _save_dual(fig, out_path, dpi=150, bbox_inches="tight")
@@ -413,15 +467,20 @@ def _plot_heatmap(
     """
     if wide.empty:
         return
+    # Width scales with: (a) number of metric columns (existing), AND
+    # (b) the longest variant name on the y-axis so long s37-style
+    # names (up to ~150 chars) don't overflow the left margin and get
+    # cropped by `bbox_inches="tight"` on save.
+    left_margin = _variant_label_left_margin_inches(wide.index.astype(str))
     fig, ax = plt.subplots(
-        figsize=(max(6, 0.6 * len(wide.columns) + 4),
+        figsize=(max(6, 0.6 * len(wide.columns) + left_margin + 2.0),
                  max(3, 0.32 * len(wide.index) + 1.5)),
     )
     im = ax.imshow(wide.values, aspect="auto", cmap=cmap)
     ax.set_xticks(np.arange(len(wide.columns)))
     ax.set_xticklabels(wide.columns, rotation=45, ha="right", fontsize=8)
     ax.set_yticks(np.arange(len(wide.index)))
-    ax.set_yticklabels(wide.index, fontsize=8)
+    ax.set_yticklabels(wide.index, fontsize=_VARIANT_TICK_FONTSIZE)
     # Mean is used only for the text-vs-background contrast heuristic;
     # an all-NaN matrix (when every reindexed variant is missing data)
     # would otherwise trigger a RuntimeWarning and emit NaN colours.
@@ -680,9 +739,12 @@ def main() -> None:
                         "(default — historic SQUINT ablation runs), 's' "
                         "(sweep-aliased variants under the s<sweep>_v<N>_ "
                         "convention introduced in sweep 17), 'baseline-' "
-                        "(baselines only). Pass --include-baselines or "
-                        "--prefix '' to disable the filter entirely. No "
-                        "effect when --variants is passed explicitly.")
+                        "(baselines only). Multiple comma-separated "
+                        "prefixes are OR'd (e.g. '--prefix s51,s52' "
+                        "keeps subdirs starting with EITHER s51 OR s52). "
+                        "Pass --include-baselines or --prefix '' to "
+                        "disable the filter entirely. No effect when "
+                        "--variants is passed explicitly.")
     p.add_argument("--include-baselines", action="store_true",
                    help="When auto-discovering (i.e. --variants not "
                         "passed), DISABLE the --prefix filter entirely — "
@@ -719,9 +781,21 @@ def main() -> None:
     #   --include-baselines wins over --prefix (sets filter to None).
     #   --prefix "" also disables the filter (treated as None inside
     #   load_all_variants).
-    effective_prefix: Optional[str] = (
-        None if args.include_baselines else (args.prefix or None)
-    )
+    #   --prefix "s51,s52" splits into a tuple — load_all_variants
+    #   keeps subdirs starting with ANY of the listed prefixes.
+    effective_prefix: Optional[Union[str, Tuple[str, ...]]]
+    if args.include_baselines:
+        effective_prefix = None
+    elif not args.prefix:
+        effective_prefix = None
+    else:
+        parts = tuple(p.strip() for p in args.prefix.split(",") if p.strip())
+        if len(parts) == 0:
+            effective_prefix = None
+        elif len(parts) == 1:
+            effective_prefix = parts[0]
+        else:
+            effective_prefix = parts
 
     niche_long, batchint_long, pearson_long, info = load_all_variants(
         artifacts_root     = args.artifacts_root,
@@ -736,12 +810,13 @@ def main() -> None:
         print(f"  {v}")
 
     if info.get("variants_filtered_out"):
-        used_prefix = info.get("prefix_filter") or ""
+        used_prefixes = info.get("prefix_filter") or ()
+        used_str = " | ".join(f"{p}*" for p in used_prefixes) if used_prefixes else ""
         print(f"\nVariants filtered out      : "
-              f"{len(info['variants_filtered_out'])} non-'{used_prefix}*' "
-              f"subdir(s) (pass --include-baselines or --prefix '' "
-              f"to keep them, or --prefix <other> to use a different "
-              f"filter)")
+              f"{len(info['variants_filtered_out'])} subdir(s) not matching "
+              f"'{used_str}' "
+              f"(pass --include-baselines or --prefix '' to keep them, or "
+              f"--prefix <other[,other2,...]> to use a different filter)")
         for v in info["variants_filtered_out"]:
             print(f"  {v}")
 

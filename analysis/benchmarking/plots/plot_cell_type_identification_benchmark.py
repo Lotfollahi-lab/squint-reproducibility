@@ -103,22 +103,30 @@ DEFAULT_BASELINES: Dict[str, str] = {
 # per_seed_*.csv files, so the loader treats them uniformly.
 # Override on the CLI via `--squint-variant`.
 DEFAULT_SQUINT_VARIANT = (
-    "dualvq+rvq-both+decoder-cov+adv+enc-deeper+dec-w32+mmb0-1b_smb1-1b_1p__multiseed"
+    # s49_v23: decoupled-enc + diversity wt=10 + within-batch contrastive wt=10
+    # on the s48_v2 spine (cell-w=1, no-batch-int, enc-deeper, within-sec).
+    # Replaces the previous default (s42 winner, cell-w=5.0) as of the
+    # s49 sweep results — see project_squint.md.
+    "s49_v23_dualvq+rvq-both+decoder-cov+no-batch-int+enc-deeper+dec-w32+knn16+sampler16+cell-w1+bs512+lr7e-4+within-sec+decoupled-enc+diversity-w10+contrastWB-w10-k5+mmb0-1b_smb1-1b_1p__multiseed"
 )
 SQUINT_LABEL = "SQUINT"
 
-# Distinct, colour-blind-friendly palette. SQUINT keeps its accent
-# magenta; foundation models share a cool-toned purple/blue family;
-# scVI (the lone classical comparator) gets teal so the model-class
-# boundary still reads at a glance.
+# Colour family: SHADES OF BLUE for all cell-type-ID baselines,
+# SQUINT keeps its accent red. The niche-ID plot uses SHADES OF
+# BROWN for its baselines (see plot_niche_identification_benchmark.py),
+# so the two metric plots are immediately distinguishable as
+# "cell-type-ID = blue family" vs "niche-ID = brown family", with
+# SQUINT as the consistent red accent across both. Shades are
+# arranged light -> dark and chosen for clear pair-wise contrast
+# within the family.
 METHOD_COLOURS: Dict[str, str] = {
-    "scVI":           "#06D6A0",   # teal       — classical generative
-    "Geneformer":     "#3A86FF",   # blue       — foundation model
-    "Nicheformer":    "#118AB2",   # teal-blue  — foundation model
-    "scGPT":          "#8338EC",   # purple     — foundation model
-    "scGPT-spatial":  "#5A189A",   # deep purple — foundation model (spatial-trained)
-    "UCE":            "#073B4C",   # dark teal  — foundation model
-    "SQUINT":         "#FF006E",   # accent magenta — our method
+    "scVI":           "#A8DADC",   # very light blue-gray  — classical generative
+    "Geneformer":     "#48CAE4",   # light cyan-blue        — foundation model
+    "Nicheformer":    "#0096C7",   # mid cyan               — foundation model
+    "scGPT":          "#0077B6",   # mid blue               — foundation model
+    "scGPT-spatial":  "#023E8A",   # dark blue              — foundation model (spatial-trained)
+    "UCE":            "#03045E",   # very dark navy         — foundation model
+    "SQUINT":         "#FF006E",   # accent red/magenta     — our method (unchanged)
 }
 
 # Metric panels (in the requested order) and direction-of-merit annotation.
@@ -204,21 +212,39 @@ def _pick_cell_code_key(code_keys: List[str]) -> Optional[str]:
     Baselines write a single `code_key="leiden"`. SQUINT writes
     `code_key` values like `cell_code_index`, `cell_code_indices[level_0]`,
     `cell_code_indices[composite]`, plus their niche-side counterparts.
-    For cell-type identification we want the cell-side codes; preference:
-    composite (full-resolution leaf cluster) > single-level > level_0 >
-    leiden (baseline).
+
+    Preference order (cell-side):
+      1. `cell_code_indices[level_0]` — the K1=30 macro RVQ partition,
+         which is the HEADLINE cell-type-NMI metric across the rest of
+         the tooling (compare_variants.py reports this column as
+         `niche|all|cell_code_indices[level_0]|cell_type|NMI`). Using
+         it here keeps this figure consistent with the per-variant
+         comparison heatmaps.
+      2. `cell_code_index` — non-residual VQ single-level fallback.
+      3. `cell_code_indices[composite]` — K1*K2 leaf clusters
+         (factorised RVQ levels). Last cell-side fallback.
+      4. `leiden` — baseline default.
+
+    Notes
+    -----
+    Previously this picker preferred `[composite]` over `[level_0]`,
+    which silently reported a DIFFERENT cell-NMI than the rest of the
+    analysis tooling (composite has up to 2700 leaves on a 2-level
+    RVQ vs level_0's 30 macro codes — generally produces a higher
+    NMI). Switched on user request so the figure matches the
+    `compare_variants.py` headline.
     """
-    # 1. Cell composite (multi-level RVQ leaf cluster)
+    # 1. Cell level_0 (RVQ macro cluster) — HEADLINE metric across tooling.
     for ck in code_keys:
-        if ck.startswith("cell_code_indices") and "composite" in ck:
+        if ck.startswith("cell_code_indices") and "level_0" in ck:
             return ck
-    # 2. Cell single-level
+    # 2. Cell single-level (non-residual VQ fallback)
     for ck in code_keys:
         if ck == "cell_code_index":
             return ck
-    # 3. Cell level_0 (RVQ macro cluster) — last resort cell-side
+    # 3. Cell composite (multi-level RVQ leaf cluster) — last resort cell-side
     for ck in code_keys:
-        if ck.startswith("cell_code_indices") and "level_0" in ck:
+        if ck.startswith("cell_code_indices") and "composite" in ck:
             return ck
     # 4. Baseline default
     if "leiden" in code_keys:
@@ -233,14 +259,29 @@ def _pick_batch_emb_key_cell(emb_keys: List[str]) -> Optional[str]:
     Baselines write a single per-method emb_key (X_pca_leiden, X_harmony,
     X_scvi, X_geneformer, X_nicheformer, X_scgpt, X_scgpt_spatial,
     X_uce). SQUINT writes multiple emb keys; for the CELL benchmark we
-    pick the cell-side encoder output — `cell_emb` (pre-quantization) is
-    preferred over the post-quantization `cell_latent` because iLISI/MMD
-    measure continuous batch structure, which the codebook
-    discretization step erases. Within the `_emb` / `_latent` families
-    we prefer the raw encoder output: the SQUINT runs in this benchmark
-    write `_corrected` only for the post-quantization latent, so
-    falling back to `_corrected` would silently re-introduce the same
-    latent-vs-emb mismatch we're trying to avoid.
+    pick `cell_emb` (the POST-VQ quantized cell embedding, written from
+    `H_quantized_cell` in run_squint.py:29316).
+
+    Naming caveat
+    -------------
+    Despite the name, `cell_emb` is the QUANTIZED embedding (= the
+    discrete code lookup, ~K1*K2 unique vectors per cell). The
+    CONTINUOUS pre-VQ latent lives under `cell_latent` (= H_latent_cell).
+    iLISI / MMD on the quantized embedding is by design here — the
+    figure reports SQUINT's CODEBOOK-level batch integration, which is
+    the property the paper claims (codes are batch-invariant
+    representations of biology). If you want to A/B against the
+    continuous pre-VQ representation, override on the CLI with
+    `--squint-cell-emb-key cell_latent` (not currently exposed; add
+    if needed).
+
+    Preference order:
+      1. `cell_emb`            — quantized, the headline reporting key
+      2. `cell_emb_corrected`  — optional adversarial-corrected variant
+      3. `cell_latent`         — continuous pre-VQ (fallback)
+      4. `cell_latent_corrected`
+    Then per-row fallbacks: any cell-prefixed key, then any non-niche key,
+    then arbitrary.
     """
     if not emb_keys:
         return None

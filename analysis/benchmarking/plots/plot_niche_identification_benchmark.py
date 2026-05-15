@@ -93,19 +93,29 @@ DEFAULT_BASELINES: Dict[str, str] = {
 # per_seed_*.csv files, so the loader treats them uniformly.
 # Override on the CLI via `--squint-variant`.
 DEFAULT_SQUINT_VARIANT = (
-    "dualvq+rvq-both+decoder-cov+adv+enc-deeper+dec-w32+mmb0-1b_smb1-1b_1p__multiseed"
+    # s49_v23: decoupled-enc + diversity wt=10 + within-batch contrastive wt=10
+    # on the s48_v2 spine (cell-w=1, no-batch-int, enc-deeper, within-sec).
+    # Replaces the previous default (s42 winner, cell-w=5.0) as of the
+    # s49 sweep results — see project_squint.md.
+    "s49_v23_dualvq+rvq-both+decoder-cov+no-batch-int+enc-deeper+dec-w32+knn16+sampler16+cell-w1+bs512+lr7e-4+within-sec+decoupled-enc+diversity-w10+contrastWB-w10-k5+mmb0-1b_smb1-1b_1p__multiseed"
 )
 SQUINT_LABEL = "SQUINT"
 
-# Distinct, colour-blind-friendly palette. SQUINT is the accent (magenta)
-# matching the reference Nature-style notebook.
+# Colour family: SHADES OF BROWN for all niche-ID baselines, SQUINT
+# keeps its accent red. The cell-type-ID plot uses SHADES OF BLUE
+# for its baselines (see plot_cell_type_identification_benchmark.py),
+# so the two metric plots are immediately distinguishable as
+# "niche-ID = brown family" vs "cell-type-ID = blue family", with
+# SQUINT as the consistent red accent across both. Shades are
+# arranged light -> dark and chosen for clear pair-wise contrast
+# within the family.
 METHOD_COLOURS: Dict[str, str] = {
-    "BANKSY":              "#3A86FF",
-    "CellCharter":         "#06D6A0",
-    "GraphST":             "#073B4C",
-    "Novae":               "#8338EC",
-    "NicheCompass":        "#118AB2",
-    "SQUINT":              "#FF006E",
+    "BANKSY":              "#E8C19D",   # light tan          — baseline
+    "CellCharter":         "#C8A27C",   # medium tan         — baseline
+    "GraphST":             "#A0522D",   # sienna             — baseline
+    "Novae":               "#7C3F00",   # dark sienna        — baseline
+    "NicheCompass":        "#3D2817",   # very dark brown    — baseline
+    "SQUINT":              "#FF006E",   # accent red/magenta — our method (unchanged)
 }
 
 # Metric panels (in the requested order) and direction-of-merit annotation.
@@ -191,21 +201,36 @@ def _pick_niche_code_key(code_keys: List[str]) -> Optional[str]:
     Baselines write a single `code_key="leiden"`. SQUINT writes
     `code_key` values like `cell_code_index`, `neighborhood_code_index`,
     `cell_code_indices[level_0]`, `neighborhood_code_indices[composite]`,
-    etc. We prefer the niche-side composite (full-resolution) over
-    level_0; fall back to the single-level niche key; and finally to
-    `leiden` for baselines.
+    etc.
+
+    Preference order (niche-side):
+      1. `neighborhood_code_indices[level_0]` — K1=30 macro RVQ
+         partition. HEADLINE niche-NMI metric across the rest of the
+         tooling (compare_variants.py reports
+         `niche|all|neighborhood_code_indices[level_0]|<niche_label>|NMI`).
+      2. `neighborhood_code_index` — single-level VQ fallback.
+      3. `neighborhood_code_indices[composite]` — K1*K2 leaf clusters
+         (factorised RVQ levels). Last resort niche-side.
+      4. `leiden` — baseline default.
+
+    Notes
+    -----
+    Previously preferred `[composite]` over `[level_0]`, which silently
+    reported a DIFFERENT niche-NMI than the rest of the analysis
+    tooling. Switched on user request so this figure matches the
+    `compare_variants.py` headline.
     """
-    # 1. Niche composite (RVQ-style multi-level, full-resolution leaf)
+    # 1. Niche level_0 (RVQ macro cluster) — HEADLINE metric across tooling.
     for ck in code_keys:
-        if ck.startswith("neighborhood_code_indices") and "composite" in ck:
+        if ck.startswith("neighborhood_code_indices") and "level_0" in ck:
             return ck
-    # 2. Niche single-level
+    # 2. Niche single-level (non-residual VQ fallback)
     for ck in code_keys:
         if ck == "neighborhood_code_index":
             return ck
-    # 3. Niche level_0 (RVQ macro cluster) - last resort niche-side
+    # 3. Niche composite (RVQ-style multi-level, full-resolution leaf) — last resort niche-side
     for ck in code_keys:
-        if ck.startswith("neighborhood_code_indices") and "level_0" in ck:
+        if ck.startswith("neighborhood_code_indices") and "composite" in ck:
             return ck
     # 4. Baseline default
     if "leiden" in code_keys:
@@ -221,15 +246,25 @@ def _pick_batch_emb_key(emb_keys: List[str]) -> Optional[str]:
     Baselines write a single per-method emb_key (e.g. "novae_latent_corrected").
     SQUINT writes multiple (cell_emb, neighborhood_emb, cell_latent,
     neighborhood_latent, plus optional `_corrected` adversarial variants).
-    For the NICHE benchmark we pick the niche-side encoder output —
-    `neighborhood_emb` (pre-quantization) is preferred over the
-    post-quantization `neighborhood_latent` because iLISI/MMD measure
-    continuous batch structure, which the codebook discretization step
-    erases. Within the `_emb` / `_latent` families we prefer the raw
-    encoder output: the SQUINT runs in this benchmark write
-    `_corrected` only for the post-quantization latent, so falling back
-    to `_corrected` would silently re-introduce the same latent-vs-emb
-    mismatch we're trying to avoid.
+    For the NICHE benchmark we pick `neighborhood_emb` (the POST-VQ
+    quantized niche embedding, written from `H_quantized_niche` in
+    run_squint.py:29318).
+
+    Naming caveat
+    -------------
+    Despite the name, `neighborhood_emb` is the QUANTIZED embedding
+    (= the discrete code lookup, ~K1*K2 unique vectors per cell). The
+    CONTINUOUS post-GNN latent lives under `neighborhood_latent` (=
+    H_latent_niche). iLISI / MMD on the quantized embedding is by
+    design here — the figure reports SQUINT's CODEBOOK-level batch
+    integration, which is the property the paper claims (codes are
+    batch-invariant representations of niche identity).
+
+    Preference order:
+      1. `neighborhood_emb`            — quantized, the headline reporting key
+      2. `neighborhood_emb_corrected`  — optional adversarial-corrected variant
+      3. `neighborhood_latent`         — continuous post-GNN (fallback)
+      4. `neighborhood_latent_corrected`
     """
     if not emb_keys:
         return None

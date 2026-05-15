@@ -119,7 +119,11 @@ DEFAULT_BASELINES_NICHE_ID: Dict[str, str] = {
 # `__multiseed` sweep so its `metrics/per_seed_runtimes.csv` is
 # populated the same way as the baselines'.
 DEFAULT_SQUINT_VARIANT = (
-    "dualvq+rvq-both+decoder-cov+adv+enc-deeper+dec-w32+mmb0-1b_smb1-1b_1p__multiseed"
+    # s49_v23: decoupled-enc + diversity wt=10 + within-batch contrastive wt=10
+    # on the s48_v2 spine (cell-w=1, no-batch-int, enc-deeper, within-sec).
+    # Replaces the previous default (s42 winner, cell-w=5.0) as of the
+    # s49 sweep results — see project_squint.md.
+    "s49_v23_dualvq+rvq-both+decoder-cov+no-batch-int+enc-deeper+dec-w32+knn16+sampler16+cell-w1+bs512+lr7e-4+within-sec+decoupled-enc+diversity-w10+contrastWB-w10-k5+mmb0-1b_smb1-1b_1p__multiseed"
 )
 SQUINT_LABEL = "SQUINT"
 
@@ -133,15 +137,45 @@ CATEGORY_CELL_TYPE = "Cell Type ID"
 CATEGORY_NICHE_ID  = "Niche ID"
 CATEGORY_SQUINT    = "SQUINT"
 
-# Per-category colour. We deliberately don't reuse the per-method
-# accent colours from the metric figures here — there are too many
-# methods (15) for a unique colour each to read cleanly. Grouping by
-# category makes "which family is this method" the headline
-# information; the y-tick label disambiguates within the family.
+# Per-METHOD colour. Each method keeps the same colour it has on its
+# native metric plot, so a reader can identify methods across the
+# three figures by their colour alone:
+#   - Cell-type-ID methods use SHADES OF BLUE (light scVI → dark UCE),
+#     matching `METHOD_COLOURS` in `plot_cell_type_identification_benchmark.py`.
+#   - Niche-ID methods use SHADES OF BROWN (light BANKSY → dark
+#     NicheCompass), matching `METHOD_COLOURS` in
+#     `plot_niche_identification_benchmark.py`.
+#   - SQUINT keeps its accent red across all three plots.
+# The bars / dots in the runtime plot use this per-method dict;
+# the LEGEND uses the category-mean colours below.
+METHOD_COLOURS: Dict[str, str] = {
+    # Cell-type-ID — blue family (light → dark, matching the cell-type-ID plot)
+    "scVI":           "#A8DADC",
+    "Geneformer":     "#48CAE4",
+    "Nicheformer":    "#0096C7",
+    "scGPT":          "#0077B6",
+    "scGPT-spatial":  "#023E8A",
+    "UCE":            "#03045E",
+    # Niche-ID — brown family (light → dark, matching the niche-ID plot)
+    "BANKSY":         "#E8C19D",
+    "CellCharter":    "#C8A27C",
+    "GraphST":        "#A0522D",
+    "Novae":          "#7C3F00",
+    "NicheCompass":   "#3D2817",
+    # Our method
+    "SQUINT":         "#FF006E",
+}
+
+# Per-CATEGORY colour. Used ONLY for the legend swatches — one entry
+# per method category, picking a representative "mid" shade from
+# each family. The bars themselves are per-method (see
+# `METHOD_COLOURS` above); the legend just summarises the family
+# membership so a reader scanning the figure knows "blue ≈ cell-type
+# baseline, brown ≈ niche-id baseline, red = SQUINT".
 CATEGORY_COLOURS: Dict[str, str] = {
-    CATEGORY_CELL_TYPE: "#3A86FF",   # blue       — cell-type baselines
-    CATEGORY_NICHE_ID:  "#06D6A0",   # teal-green — niche-id baselines
-    CATEGORY_SQUINT:    "#FF006E",   # accent magenta — our method
+    CATEGORY_CELL_TYPE: "#0077B6",   # mid blue   — cell-type baselines (legend swatch)
+    CATEGORY_NICHE_ID:  "#A0522D",   # sienna     — niche-id baselines (legend swatch)
+    CATEGORY_SQUINT:    "#FF006E",   # accent red — our method (unchanged)
 }
 
 
@@ -250,6 +284,7 @@ def make_figure(
         df: pd.DataFrame,
         out_path_base: Path,
         category_colours: Dict[str, str] = CATEGORY_COLOURS,
+        method_colours: Dict[str, str] = METHOD_COLOURS,
     ) -> None:
     """Build the 1-panel runtime figure and save .svg / .png /.csv next
     to `out_path_base`.
@@ -326,7 +361,18 @@ def make_figure(
         category = method_stats.loc[
             method_stats["method"] == method, "category"
         ].iloc[0]
-        colour = category_colours.get(category, "#888888")
+        # Per-method colour (a specific shade of the family — blue
+        # for cell-type-ID, brown for niche-ID, red for SQUINT). The
+        # legend below uses the category-mean colour instead, so the
+        # legend tells you "this family is blue/brown" while each
+        # individual bar's shade tells you "this method specifically".
+        # Fall back to the category-mean colour if the method isn't
+        # in `method_colours` (defensive — e.g. when `--methods` adds
+        # a baseline that wasn't in the runtime plot's METHOD_COLOURS).
+        colour = method_colours.get(
+            method,
+            category_colours.get(category, "#888888"),
+        )
         sub = df[df["method"] == method]["runtime_seconds"].astype(float).values
         sub = sub[np.isfinite(sub) & (sub > 0)]
         if sub.size == 0:
@@ -443,36 +489,23 @@ def make_figure(
 
     plt.tight_layout()
 
-    # Strip the figure facecolor patch BEFORE saving. matplotlib
-    # emits an invisible white rectangle covering the full figure
-    # dimensions even when `tight_layout` + `bbox_inches="tight"`
-    # crop the canvas; Adobe Illustrator (and Inkscape, to a lesser
-    # extent) then treats that rectangle as a real object, so the
-    # imported SVG's selection bbox is much larger than the inked
-    # content. Setting the patch invisible — combined with
-    # `transparent=True` on savefig — produces an SVG whose group
-    # bbox matches the visible drawing, so dragging it in Illustrator
-    # behaves naturally.
-    fig.patch.set_visible(False)
-    fig.patch.set_alpha(0.0)
-    # Also disable per-axes background patches for the same reason.
-    ax.set_facecolor("none")
-    ax.patch.set_alpha(0.0)
+    # White figure + axes background. Earlier the runtime plot was saved
+    # with `transparent=True` so its SVG bbox was tight when imported into
+    # Illustrator — but the PNGs came out with a transparent BG which made
+    # them hard to read in slides / preview. Restoring an explicit white
+    # background here. If you need the Illustrator-tight-bbox behaviour
+    # back, swap to `transparent=True` on the savefig calls below.
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
 
     out_path_base.parent.mkdir(parents=True, exist_ok=True)
     for ext in ("svg", "png"):
         out = out_path_base.with_suffix(f".{ext}")
-        # `transparent=True` drops the figure facecolor rect; `pad_inches=0`
-        # removes the small white margin around the tight bbox so
-        # downstream layout in Illustrator / InDesign starts from the
-        # actual ink rather than a phantom border. PNGs come out with
-        # a transparent background — convert to a white BG in a
-        # downstream tool if you need it for slides.
         fig.savefig(
             out,
             bbox_inches="tight",
-            pad_inches=0.0,
-            transparent=True,
+            pad_inches=0.05,
+            facecolor=fig.get_facecolor(),
         )
         print(f"  -> {out}")
     plt.close(fig)
