@@ -53,9 +53,27 @@
 #                                     gpu_high_memory (fits the heaviest
 #                                     baseline, the foundation models).
 #                                     Valid: cpu_small | gpu_standard |
-#                                     gpu_high_memory.
+#                                     gpu_high_memory | gpu_xtreme_memory
+#                                     (768 GB; for foundation models on
+#                                     the biggest spatial datasets where
+#                                     384 GB OOMs).
 #                                     Overridable via UNIFORM_RESOURCE
 #                                     env var.
+#   --wall           / -w HH:MM       LSF wall-clock limit (default:
+#                                     inherits 96:00 from submit_all_benchmarks.sh).
+#                                     Overridable via LSF_WALL env var.
+#   --rapids-leiden                   Use rapids-singlecell (GPU-
+#                                     accelerated) for the per-seed
+#                                     Leiden binary search. Calls
+#                                     rsc.pp.neighbors + rsc.tl.leiden
+#                                     INLINE on the parent adata (same
+#                                     API as scanpy). Sets
+#                                     SQUINT_LEIDEN_BACKEND=rapids;
+#                                     rapids-singlecell must be
+#                                     importable in the venv running
+#                                     the baseline (either install it
+#                                     there, or run the baseline from
+#                                     the rapids-singlecell conda env).
 #   --help           / -h             Print this usage block and exit.
 #
 # Precedence for queue/group/resource: CLI flag > env var > script default.
@@ -117,8 +135,18 @@ ALL_METHODS=(
 QUEUE="${LSF_QUEUE:-$DEFAULT_QUEUE}"
 GROUP="${LSF_GROUP:-$DEFAULT_GROUP}"
 RESOURCE_ARG="${UNIFORM_RESOURCE:-$DEFAULT_RESOURCE}"
+WALL_ARG="${LSF_WALL:-}"          # empty -> let submit_all_benchmarks.sh default kick in
 METHODS_CSV=""
 PASSTHROUGH_ARGS=()
+
+# `--rapids-leiden` enables GPU Leiden via rapids-singlecell. Two
+# modes coexist (see submit_niche_id_baselines.sh for the full
+# rationale): subprocess (rapids in a separate conda env) and inline
+# (rapids importable in the baseline's own venv). The wrapper arms
+# BOTH so the helper picks subprocess when its env-setup cmd is
+# present — that's the cluster default.
+RAPIDS_LEIDEN_ENV_SETUP_DEFAULT="source /etc/profile.d/modules.sh && module load cellgen/conda && conda activate /nfs/team361/sb75/ENVS/rapids-singlecell"
+USE_RAPIDS_LEIDEN=0
 
 # --- Parse CLI flags --------------------------------------------------------
 while [[ $# -gt 0 ]]; do
@@ -175,6 +203,23 @@ while [[ $# -gt 0 ]]; do
             RESOURCE_ARG="${1#--resource-class=}"
             shift
             ;;
+        --wall|-w)
+            shift
+            if [[ $# -eq 0 ]]; then
+                echo "ERROR: --wall / -w requires a value (e.g. 96:00 or 168:00)." >&2
+                exit 2
+            fi
+            WALL_ARG="$1"
+            shift
+            ;;
+        --wall=*)
+            WALL_ARG="${1#--wall=}"
+            shift
+            ;;
+        --rapids-leiden)
+            USE_RAPIDS_LEIDEN=1
+            shift
+            ;;
         --help|-h)
             awk '/^[^#]/ {exit} {print}' "$0"
             exit 0
@@ -220,15 +265,30 @@ fi
 echo "[cell-type baselines] LSF_QUEUE        = $QUEUE"
 echo "[cell-type baselines] LSF_GROUP        = $GROUP"
 echo "[cell-type baselines] UNIFORM_RESOURCE = $RESOURCE_ARG"
+echo "[cell-type baselines] LSF_WALL         = ${WALL_ARG:-<inherit submit_all_benchmarks.sh default>}"
+echo "[cell-type baselines] RAPIDS_LEIDEN    = $USE_RAPIDS_LEIDEN"
 echo "[cell-type baselines] ONLY             = $ONLY_VALUE"
 
 # Export so submit_all_benchmarks.sh's `${LSF_QUEUE:-...}` /
-# `${LSF_GROUP:-...}` / `${ONLY:-...}` / `${UNIFORM_RESOURCE:-...}`
-# fallbacks pick them up.
+# `${LSF_GROUP:-...}` / `${ONLY:-...}` / `${UNIFORM_RESOURCE:-...}` /
+# `${LSF_WALL:-...}` fallbacks pick them up.
 export LSF_QUEUE="$QUEUE"
 export LSF_GROUP="$GROUP"
 export ONLY="$ONLY_VALUE"
 export UNIFORM_RESOURCE="$RESOURCE_ARG"
+if [[ -n "$WALL_ARG" ]]; then
+    export LSF_WALL="$WALL_ARG"
+fi
+# When --rapids-leiden was passed, export the bash command that
+# `_run_one_benchmark.sh` will set as SQUINT_LEIDEN_RAPIDS_ENV_SETUP
+# inside each per-method job. The shared Leiden helpers read that
+# env var and route the binary search through rapids-singlecell.
+if [[ "$USE_RAPIDS_LEIDEN" == "1" ]]; then
+    export SQUINT_LEIDEN_BACKEND="rapids"
+    export SQUINT_LEIDEN_RAPIDS_ENV_SETUP="${SQUINT_LEIDEN_RAPIDS_ENV_SETUP:-$RAPIDS_LEIDEN_ENV_SETUP_DEFAULT}"
+    echo "[cell-type baselines] SQUINT_LEIDEN_BACKEND          = $SQUINT_LEIDEN_BACKEND"
+    echo "[cell-type baselines] SQUINT_LEIDEN_RAPIDS_ENV_SETUP = $SQUINT_LEIDEN_RAPIDS_ENV_SETUP"
+fi
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 exec bash "$SCRIPT_DIR/submit_all_benchmarks.sh" \

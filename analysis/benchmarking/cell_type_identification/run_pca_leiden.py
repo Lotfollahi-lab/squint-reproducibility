@@ -59,7 +59,12 @@ Usage:
 """
 
 import argparse
+import json
+import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 import warnings
 from datetime import datetime
@@ -107,8 +112,16 @@ DEFAULT_VARIANT_TAG    = "baseline-pca-leiden"
 
 # Same defaults as compute_inference_metrics.py so the comparison is
 # apples-to-apples.
-DEFAULT_CELL_LABEL_KEYS  = ["cell_type", "cell_types"]
-DEFAULT_NICHE_LABEL_KEYS = ["niche", "Sub_molecular_tissue_region", "ccf_region_name"]
+# Niche / cell-type label keys searched in obs by NMI / ARI helpers.
+# These are PREFERENCE LISTS — `compute_nmi_ari` skips any key that's
+# absent from `adata.obs`, so adding spatch's `annotation` /
+# `spatial_cluster` here is harmless for mmb / chl59 (whose silver
+# files don't carry those columns) and rescues the spatch tissue
+# subsets, whose silver files use this naming convention instead of
+# `cell_type` / `niche`.
+DEFAULT_CELL_LABEL_KEYS  = ["cell_type", "cell_types", "annotation"]
+DEFAULT_NICHE_LABEL_KEYS = ["niche", "Sub_molecular_tissue_region",
+                            "ccf_region_name", "spatial_cluster"]
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +259,501 @@ def _preprocess(adata: ad.AnnData, n_pcs: int) -> ad.AnnData:
 # Leiden with resolution tuned for n_clusters
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Leiden timing singleton + optional rapids-singlecell GPU dispatch
+# ---------------------------------------------------------------------------
+#
+# The two shared Leiden helpers (`_leiden_n_clusters` here and
+# `_leiden_binary_search_on_latent` in run_scvi.py) both update this
+# singleton on every call. `_record_seed_runtime` reads it to emit a
+# `leiden_seconds` column in the per-seed runtime CSV — so the cost of
+# Leiden binary-search is broken out from the broader "model fit +
+# clustering" `local_seconds` envelope. Callers don't need to thread
+# anything through; the most-recent Leiden timing is grabbed
+# automatically when they call `_record_seed_runtime`.
+#
+# Caveat: this is a single mutable cell. If two runners both call
+# Leiden between consecutive `_record_seed_runtime` calls, only the
+# last one's timing is captured. In practice every runner is
+# "Leiden -> record" in lockstep, so this is safe.
+_LAST_LEIDEN_SECONDS: List[float] = [0.0]
+# Parallel singleton for the UMAP phase. The rapids pipeline bundles
+# `pp.neighbors + tl.leiden + tl.umap` in one GPU pass; UMAP is for
+# visualisation only and must NOT be counted in the per-seed runtime.
+# Rapids helpers (subprocess / inline) set this when they run
+# `rsc.tl.umap`; the CPU scanpy path leaves it 0 because UMAP is
+# called by the runner OUTSIDE the leiden helper there.
+# `_record_seed_runtime` subtracts this from `local_seconds` so the
+# recorded clustering-only runtime is consistent across backends.
+_LAST_UMAP_SECONDS:   List[float] = [0.0]
+
+
+def _record_last_leiden_seconds(elapsed: float) -> None:
+    """Update the shared Leiden-timing singleton. Called by both
+    Leiden helpers."""
+    _LAST_LEIDEN_SECONDS[0] = float(elapsed)
+
+
+def _get_last_leiden_seconds() -> float:
+    """Return the elapsed seconds of the most recent Leiden binary
+    search. Used by `_record_seed_runtime` to emit the
+    `leiden_seconds` column."""
+    return _LAST_LEIDEN_SECONDS[0]
+
+
+def _record_last_umap_seconds(elapsed: float) -> None:
+    """Update the shared UMAP-timing singleton. Rapids helpers set
+    this when they run `rsc.tl.umap` as part of the GPU pipeline."""
+    _LAST_UMAP_SECONDS[0] = float(elapsed)
+
+
+def _get_last_umap_seconds() -> float:
+    """Return the elapsed seconds of the most recent UMAP phase
+    inside the leiden helper. Zero when CPU scanpy is used (UMAP
+    isn't part of the helper there)."""
+    return _LAST_UMAP_SECONDS[0]
+
+
+def _reset_last_phase_timings() -> None:
+    """Zero ALL phase timers at the top of a leiden-helper call.
+    Defensive: prevents a previous seed's timings from leaking into
+    the current call when an inner helper exits early."""
+    _LAST_LEIDEN_SECONDS[0]           = 0.0
+    _LAST_UMAP_SECONDS[0]             = 0.0
+    _LAST_NEIGHBORS_SECONDS[0]        = 0.0
+    _LAST_LEIDEN_ONE_ITER_SECONDS[0]  = 0.0
+
+
+# Fine-grained phase timers added to support multiple runtime
+# reporting flavours (cluster-total / model-only / model+neighbors+
+# one-leiden). All four are populated by every leiden helper —
+# whether CPU scanpy, inline rapids, or subprocess rapids — so
+# `_record_seed_runtime` can compute three different runtime metrics
+# without per-runner changes.
+_LAST_NEIGHBORS_SECONDS:       List[float] = [0.0]
+_LAST_LEIDEN_ONE_ITER_SECONDS: List[float] = [0.0]
+
+
+def _record_last_neighbors_seconds(elapsed: float) -> None:
+    """Update the neighbors-phase timing (pp.neighbors only)."""
+    _LAST_NEIGHBORS_SECONDS[0] = float(elapsed)
+
+
+def _get_last_neighbors_seconds() -> float:
+    return _LAST_NEIGHBORS_SECONDS[0]
+
+
+def _record_last_leiden_one_iter_seconds(elapsed: float) -> None:
+    """Mean cost of ONE Leiden iteration during the binary search.
+    Used to compute the 'model + neighbors + ONE leiden' runtime
+    flavour (excludes the binary-search overhead, which is a
+    benchmarking artifact for landing on a target cluster count)."""
+    _LAST_LEIDEN_ONE_ITER_SECONDS[0] = float(elapsed)
+
+
+def _get_last_leiden_one_iter_seconds() -> float:
+    return _LAST_LEIDEN_ONE_ITER_SECONDS[0]
+
+
+# Env var: when set to "rapids" (or "gpu"), Leiden binary-search uses
+# rapids-singlecell (`rsc.pp.neighbors` + `rsc.tl.leiden`) directly on
+# the parent's adata — the API is identical to scanpy so no extra
+# plumbing is needed. The default ("scanpy" / unset) uses CPU scanpy.
+#
+# REQUIRES rapids-singlecell to be importable in whatever venv is
+# running the baseline (we don't shell out to a separate env). Easiest
+# way to satisfy that:
+#   * Run the baselines from the rapids-singlecell conda env directly
+#     (`conda activate /nfs/team361/sb75/ENVS/rapids-singlecell`), OR
+#   * `pip install rapids-singlecell` into each baseline's venv
+#     (check cupy / cuML wheel compatibility with the venv's torch).
+#
+# The wrapper scripts set this env var when `--rapids-leiden` is passed.
+_LEIDEN_BACKEND_ENV_VAR = "SQUINT_LEIDEN_BACKEND"
+
+
+def _leiden_backend() -> str:
+    """Return the configured Leiden backend: 'scanpy' (default) or
+    'rapids'. Reads `SQUINT_LEIDEN_BACKEND`. Anything unrecognised
+    raises so a typo doesn't silently fall back to scanpy."""
+    raw = os.environ.get(_LEIDEN_BACKEND_ENV_VAR, "").strip().lower()
+    if raw in ("", "scanpy", "cpu"):
+        return "scanpy"
+    if raw in ("rapids", "rapids-singlecell", "gpu"):
+        return "rapids"
+    raise SystemExit(
+        f"{_LEIDEN_BACKEND_ENV_VAR}={raw!r} is not recognised. "
+        f"Valid: 'scanpy' (default) | 'rapids'."
+    )
+
+
+# Subprocess mode: when this env var is set to a bash command (typically
+# `source /etc/profile.d/modules.sh && module load cellgen/conda &&
+# conda activate /nfs/.../rapids-singlecell`), Leiden runs in a
+# subprocess inside that env via `_leiden_rapids_worker.py`. Use this
+# when rapids-singlecell isn't installed in the baseline's own venv
+# but exists as a separate conda env on the cluster.
+#
+# The two rapids env vars compose:
+#   SQUINT_LEIDEN_RAPIDS_ENV_SETUP=<cmd>  ALONE       -> subprocess
+#   SQUINT_LEIDEN_BACKEND=rapids          ALONE       -> inline
+#   BOTH                                              -> subprocess (env-setup wins)
+#   NEITHER                                           -> CPU scanpy
+_LEIDEN_RAPIDS_ENV_SETUP_VAR = "SQUINT_LEIDEN_RAPIDS_ENV_SETUP"
+
+
+def _rapids_leiden_setup_cmd() -> Optional[str]:
+    """Return the bash command that activates the rapids-singlecell
+    env for the Leiden subprocess, or None when the env-var is unset
+    / empty."""
+    cmd = os.environ.get(_LEIDEN_RAPIDS_ENV_SETUP_VAR, "")
+    return cmd.strip() if cmd and cmd.strip() else None
+
+
+def _run_leiden_binary_search_rapids_subprocess(
+        adata: ad.AnnData,
+        n_clusters: int,
+        n_neighbors: int,
+        max_iters: int,
+        rng_seed: int,
+        use_rep: str,
+        env_setup_cmd: str,
+    ) -> Tuple[str, int, float]:
+    """Leiden binary-search in a subprocess inside a separate
+    rapids-singlecell env. Use this when rapids isn't installed in
+    the baseline's own venv but exists as a sibling conda env.
+
+    Writes the embedding to a tempdir, spawns
+    `bash -lc "<env_setup_cmd> && python _leiden_rapids_worker.py ..."`,
+    reads back the chosen cluster assignments + (n_found, resolution).
+
+    Post-condition (mirrors the CPU + inline-rapids paths):
+      * `adata.obs["leiden"]` populated with the best cluster assignment.
+      * `adata.uns["neighbors"]` + `adata.obsp["connectivities"]` +
+        `adata.obsp["distances"]` populated with the GPU-built kNN
+        graph (rapids-singlecell's pp.neighbors output, serialised
+        through the tempdir and loaded back here). This avoids the
+        CPU `sc.pp.neighbors` recomputation that an earlier version
+        of this helper did — for large datasets where neighbors is
+        the new bottleneck after rapids eliminates the Leiden-
+        iterations cost, this saves another O(N log N) build.
+        If the worker's graph artifacts aren't on disk (older
+        workers, partial failure), the parent falls back to CPU
+        `sc.pp.neighbors` so the downstream UMAP step still works.
+    """
+    if use_rep not in adata.obsm:
+        raise RuntimeError(
+            f"_run_leiden_binary_search_rapids_subprocess: "
+            f"adata.obsm[{use_rep!r}] missing. "
+            f"Available obsm keys: {list(adata.obsm.keys())}"
+        )
+    # Stage the embedding on the parent under the canonical name
+    # `X_emb` BEFORE serialising. The worker uses `obsm['X_emb']`
+    # internally, so this guarantees parent and worker share the
+    # same name — any downstream code that reads
+    # `uns['neighbors']['params']['use_rep']` (e.g. sc.tl.umap)
+    # finds the embedding on the parent's adata under the same key
+    # the worker recorded. No-op when use_rep is already 'X_emb'
+    # (e.g. when a previous Leiden call left the alias in place).
+    if use_rep != "X_emb":
+        adata.obsm["X_emb"] = adata.obsm[use_rep]
+    canonical_rep = "X_emb"
+    worker_py = Path(__file__).resolve().parent / "_leiden_rapids_worker.py"
+    if not worker_py.is_file():
+        raise RuntimeError(
+            f"_leiden_rapids_worker.py not found at {worker_py}. "
+            f"Add it alongside run_pca_leiden.py."
+        )
+    work = Path(tempfile.mkdtemp(prefix="leiden_rapids_"))
+    try:
+        np.save(work / "embedding.npy",
+                np.asarray(adata.obsm[canonical_rep], dtype=np.float32))
+        (work / "config.json").write_text(json.dumps({
+            "n_neighbors": int(n_neighbors),
+            "max_iters":   int(max_iters),
+            "rng_seed":    int(rng_seed),
+            "n_clusters":  int(n_clusters),
+        }))
+        # `bash -lc` so login-shell init (sourced by the user's
+        # `source /etc/profile.d/modules.sh`) is honoured. `set -e`
+        # makes a failed `conda activate` surface as a non-zero exit
+        # before reaching python.
+        cmd = (
+            f"set -e; {env_setup_cmd} && "
+            f"python {worker_py} --workdir {work}"
+        )
+        print(f"  [Leiden][rapids-subprocess] env: {env_setup_cmd!r}")
+        proc = subprocess.run(
+            ["bash", "-lc", cmd], capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            tail_out = "\n".join(proc.stdout.splitlines()[-40:])
+            tail_err = "\n".join(proc.stderr.splitlines()[-40:])
+            raise RuntimeError(
+                "rapids Leiden subprocess failed.\n"
+                f"--- stdout (tail) ---\n{tail_out}\n"
+                f"--- stderr (tail) ---\n{tail_err}"
+            )
+        for line in proc.stdout.splitlines():
+            print(f"  [Leiden][rapids-subprocess] {line}")
+        clusters = np.load(work / "clusters.npy", allow_pickle=True)
+        result = json.loads((work / "result.json").read_text())
+        adata.obs["leiden"] = pd.Categorical(
+            np.asarray(clusters).astype(str)
+        )
+        # Pull the worker's per-phase timings into the parent's
+        # singletons. All four are populated so `_record_seed_runtime`
+        # can compute the three runtime flavours (cluster total /
+        # model-only / model + neighbors + one-leiden).
+        _record_last_neighbors_seconds(
+            float(result.get("neighbors_seconds", 0.0))
+        )
+        _record_last_leiden_seconds(
+            float(result.get("leiden_seconds", 0.0))
+        )
+        _record_last_leiden_one_iter_seconds(
+            float(result.get("leiden_one_iter_seconds", 0.0))
+        )
+        _record_last_umap_seconds(
+            float(result.get("umap_seconds", 0.0))
+        )
+
+        # Paste the rapids-GPU-built kNN graph onto the parent's main
+        # adata. The worker dumped:
+        #   * connectivities.npz, distances.npz — scipy sparse CSRs.
+        #   * neighbors_uns.json — the uns['neighbors'] metadata dict
+        #     (params, connectivities_key, distances_key).
+        # Loading these directly avoids the CPU sc.pp.neighbors
+        # recomputation that this helper used to do.
+        conn_path = work / "connectivities.npz"
+        dist_path = work / "distances.npz"
+        # `uns_path` (neighbors_uns.json) is informational only — we
+        # don't trust its `use_rep` field. The worker's minimal AnnData
+        # stored the embedding at obsm['X_emb'], so the JSON would
+        # claim use_rep='X_emb'; the parent's real adata has it at
+        # obsm[<our use_rep>] (e.g. 'X_pca'), which is what scanpy's
+        # `sc.tl.umap` will try to look up. We instead reconstruct the
+        # uns dict from the parameters the parent actually knows.
+        if conn_path.is_file() and dist_path.is_file():
+            from scipy.sparse import load_npz
+            adata.obsp["connectivities"] = load_npz(conn_path)
+            adata.obsp["distances"]      = load_npz(dist_path)
+            # Build the uns dict on the parent side using the REAL
+            # adata's parameters. `method='umap'` is the canonical
+            # value scanpy looks for to confirm the graph is
+            # UMAP-compatible — without it `sc.tl.umap` warns
+            # ".obsp['connectivities'] have not been computed using
+            # umap" and falls through to recomputing from scratch
+            # (which then fails because use_rep doesn't match).
+            adata.uns["neighbors"] = {
+                "connectivities_key": "connectivities",
+                "distances_key":      "distances",
+                "params": {
+                    "n_neighbors":  int(n_neighbors),
+                    "method":       "umap",
+                    "random_state": int(rng_seed),
+                    # Standardised on `X_emb` so the parent and the
+                    # subprocess worker share the same key. We aliased
+                    # `obsm[use_rep] -> obsm['X_emb']` above, so this
+                    # lookup will resolve correctly downstream.
+                    "use_rep":      canonical_rep,
+                },
+            }
+            # Also load the GPU-computed UMAP coords if the worker
+            # dumped them. The runner's downstream `sc.tl.umap` call
+            # — when routed through `_compute_umap_if_needed` — will
+            # see `obsm['X_umap']` already populated and skip the CPU
+            # recomputation.
+            umap_path = work / "umap.npy"
+            umap_loaded_shape = None
+            if umap_path.is_file():
+                adata.obsm["X_umap"] = np.load(umap_path)
+                umap_loaded_shape = adata.obsm["X_umap"].shape
+            print(
+                f"  [Leiden][rapids-subprocess] loaded GPU pipeline "
+                f"onto parent adata: kNN graph "
+                f"(connectivities.nnz={adata.obsp['connectivities'].nnz}, "
+                f"distances.nnz={adata.obsp['distances'].nnz}), "
+                f"X_umap={umap_loaded_shape}, "
+                f"use_rep={canonical_rep!r} (original was {use_rep!r}). "
+                f"Downstream UMAP + re-clustering reuses the rapids "
+                f"outputs directly (no CPU recomputation)."
+            )
+        else:
+            # Worker didn't dump the graph (older worker, or partial
+            # write). Fall back to CPU recomputation so downstream
+            # UMAP still works.
+            missing = [
+                p.name for p in (conn_path, dist_path)
+                if not p.is_file()
+            ]
+            print(
+                f"  [Leiden][rapids-subprocess] WARN: graph artifacts "
+                f"missing in tempdir ({missing}); falling back to CPU "
+                f"sc.pp.neighbors on parent adata. "
+                f"Upgrade _leiden_rapids_worker.py to the latest "
+                f"version to skip this recomputation."
+            )
+            sc.pp.neighbors(
+                adata, n_neighbors=n_neighbors, use_rep=canonical_rep,
+                random_state=rng_seed,
+            )
+        return "leiden", int(result["n_found"]), float(result["resolution"])
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def _run_leiden_binary_search_rapids(
+        adata: ad.AnnData,
+        n_clusters: int,
+        n_neighbors: int,
+        max_iters: int,
+        rng_seed: int,
+        use_rep: str,
+    ) -> Tuple[str, int, float]:
+    """Inline rapids-singlecell Leiden binary-search. Calls
+    `rsc.pp.neighbors` + `rsc.tl.leiden` DIRECTLY on the parent's
+    adata — same API as scanpy, so the post-condition matches the
+    CPU path exactly (`adata.obs['leiden']` and `adata.uns['neighbors']`
+    both populated for downstream UMAP).
+
+    Requires `import rapids_singlecell` to succeed in the active venv.
+    Errors with a clear hint if it doesn't.
+    """
+    try:
+        import rapids_singlecell as rsc
+    except ImportError as exc:
+        raise SystemExit(
+            f"SQUINT_LEIDEN_BACKEND=rapids was requested but "
+            f"`import rapids_singlecell` failed in the active venv.\n"
+            f"Two ways to fix:\n"
+            f"  (a) run this baseline from the rapids-singlecell conda "
+            f"env directly (typically: `source /etc/profile.d/modules.sh "
+            f"&& module load cellgen/conda && conda activate /nfs/team361/"
+            f"sb75/ENVS/rapids-singlecell`), OR\n"
+            f"  (b) `pip install rapids-singlecell` into this venv "
+            f"(check cupy / cuML wheel compatibility first).\n"
+            f"Or unset SQUINT_LEIDEN_BACKEND to fall back to CPU scanpy.\n"
+            f"Original ImportError: {exc!r}"
+        ) from exc
+    if use_rep not in adata.obsm:
+        raise RuntimeError(
+            f"_run_leiden_binary_search_rapids: adata.obsm[{use_rep!r}] "
+            f"missing. Available obsm keys: {list(adata.obsm.keys())}"
+        )
+
+    # Stage the embedding under the canonical `X_emb` name so the
+    # inline and subprocess paths produce identical adata state
+    # (obsm['X_emb'] + uns['neighbors'].params.use_rep='X_emb').
+    if use_rep != "X_emb":
+        adata.obsm["X_emb"] = adata.obsm[use_rep]
+    canonical_rep = "X_emb"
+    print(f"  [Leiden][rapids] using rapids-singlecell "
+          f"v{getattr(rsc, '__version__', '?')} inline (rsc.pp.neighbors "
+          f"+ rsc.tl.leiden) on use_rep={canonical_rep!r} "
+          f"(original was {use_rep!r})")
+    # rapids-singlecell mirrors scanpy's API; the call has the SAME
+    # side-effect (populates adata.uns['neighbors']) so downstream
+    # `sc.tl.umap(adata)` works without any extra plumbing.
+    _t_n = time.time()
+    rsc.pp.neighbors(
+        adata, n_neighbors=n_neighbors, use_rep=canonical_rep,
+        random_state=rng_seed,
+    )
+    _record_last_neighbors_seconds(time.time() - _t_n)
+
+    # Also run UMAP on the same GPU kNN graph so the parent's adata
+    # ends up with obsm['X_umap'] populated. Downstream
+    # `_compute_umap_if_needed` will detect it and skip the CPU
+    # recomputation. UMAP time is recorded into _LAST_UMAP_SECONDS so
+    # the runtime tracker can report / subtract it correctly.
+    print(f"  [Leiden][rapids] running rsc.tl.umap inline on GPU graph "
+          f"(random_state={rng_seed})")
+    _umap_t0 = time.time()
+    rsc.tl.umap(adata, random_state=rng_seed)
+    _record_last_umap_seconds(time.time() - _umap_t0)
+    obs_key = "leiden"
+    lo, hi = 0.05, 10.0
+    best_diff = None
+    best_n = None
+    best_res = None
+    print(f"  [Leiden][rapids] Bisecting Leiden resolution to hit "
+          f"n_clusters = {n_clusters} (initial range {lo}-{hi}, "
+          f"max {max_iters} iters):")
+    _iter_times: List[float] = []
+    _t_l = time.time()
+    for it in range(max_iters):
+        mid = 0.5 * (lo + hi)
+        _t_iter = time.time()
+        rsc.tl.leiden(
+            adata, resolution=mid, key_added=obs_key,
+            random_state=rng_seed,
+        )
+        _iter_times.append(time.time() - _t_iter)
+        n_found = int(adata.obs[obs_key].astype(str).nunique())
+        diff = abs(n_found - n_clusters)
+        print(f"    iter {it+1:>2d}  resolution={mid:.4f}  -> "
+              f"n_clusters={n_found}")
+        if best_diff is None or diff < best_diff:
+            best_diff = diff
+            best_n = n_found
+            best_res = mid
+        if n_found == n_clusters:
+            _record_last_leiden_seconds(time.time() - _t_l)
+            if _iter_times:
+                _record_last_leiden_one_iter_seconds(
+                    sum(_iter_times) / len(_iter_times)
+                )
+            return obs_key, n_found, mid
+        if n_found < n_clusters:
+            lo = mid
+        else:
+            hi = mid
+    # Re-run at the best resolution we found (in case the loop ended
+    # on a non-best iteration).
+    _t_iter = time.time()
+    rsc.tl.leiden(
+        adata, resolution=best_res, key_added=obs_key,
+        random_state=rng_seed,
+    )
+    _iter_times.append(time.time() - _t_iter)
+    _record_last_leiden_seconds(time.time() - _t_l)
+    if _iter_times:
+        _record_last_leiden_one_iter_seconds(
+            sum(_iter_times) / len(_iter_times)
+        )
+    print(f"  [Leiden][rapids] ! exact match not reached; using closest "
+          f"(n={best_n}, resolution={best_res:.4f}).")
+    return obs_key, best_n, best_res
+
+
+def _compute_umap_if_needed(
+        adata: ad.AnnData,
+        random_state: int,
+        force: bool = False,
+    ) -> None:
+    """`sc.tl.umap(adata, random_state=...)` with a fast-path skip
+    when `obsm['X_umap']` is already populated (e.g. by the rapids
+    subprocess worker or the inline rapids path).
+
+    Use this in every runner INSTEAD of calling `sc.tl.umap` directly.
+    Drop-in replacement — same side effect (writes obsm['X_umap'])
+    when rapids hasn't already done so.
+
+    `force=True` always recomputes (legacy escape hatch). Default
+    behaviour is to short-circuit if `obsm['X_umap']` exists, since the
+    rapids pipeline now bundles `pp.neighbors + tl.umap + tl.leiden`
+    in one GPU pass and populates `obsm['X_umap']` directly on the
+    parent's adata.
+    """
+    if not force and "X_umap" in adata.obsm:
+        print(f"  [umap] obsm['X_umap'] already populated "
+              f"(shape={adata.obsm['X_umap'].shape}) — skipping CPU "
+              f"recomputation (rapids did it).")
+        return
+    sc.tl.umap(adata, random_state=random_state)
+
+
 def _leiden_n_clusters(
         adata: ad.AnnData,
         n_clusters: int,
@@ -260,44 +768,102 @@ def _leiden_n_clusters(
     The standard scanpy Leiden takes a `resolution` knob with no closed-
     form mapping to cluster count; for benchmark reproducibility we
     bisect resolution in [0.05, 10.0] until cluster count matches.
+
+    Timing + GPU
+    ------------
+    Wall-clock elapsed seconds are recorded into the module-level
+    `_LAST_LEIDEN_SECONDS` singleton on EVERY call (CPU and GPU paths
+    alike). `_record_seed_runtime` reads it.
+
+    When `SQUINT_LEIDEN_RAPIDS_ENV_SETUP` is set, the binary search
+    runs in a subprocess inside the rapids-singlecell env for
+    GPU-accelerated neighbors + Leiden. Otherwise (default) the
+    binary search runs on CPU via scanpy.
     """
-    sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep="X_pca",
-                    random_state=rng_seed)
+    _reset_last_phase_timings()
+    t0 = time.time()
+    try:
+        rapids_env_setup = _rapids_leiden_setup_cmd()
+        if rapids_env_setup is not None:
+            # Subprocess path: rapids lives in a separate conda env.
+            return _run_leiden_binary_search_rapids_subprocess(
+                adata=adata, n_clusters=n_clusters,
+                n_neighbors=n_neighbors, max_iters=max_iters,
+                rng_seed=rng_seed, use_rep="X_pca",
+                env_setup_cmd=rapids_env_setup,
+            )
+        if _leiden_backend() == "rapids":
+            # Inline path: rapids importable in this venv.
+            return _run_leiden_binary_search_rapids(
+                adata=adata, n_clusters=n_clusters,
+                n_neighbors=n_neighbors, max_iters=max_iters,
+                rng_seed=rng_seed, use_rep="X_pca",
+            )
+        # ---- CPU scanpy path (original implementation) ----
+        _t_n = time.time()
+        sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep="X_pca",
+                        random_state=rng_seed)
+        _record_last_neighbors_seconds(time.time() - _t_n)
 
-    obs_key = "leiden"
-    lo, hi = 0.05, 10.0
-    best_key = None
-    best_diff = None
-    best_n = None
-    best_res = None
-    print(f"Bisecting Leiden resolution to hit n_clusters = {n_clusters} "
-          f"(initial range {lo}-{hi}, max {max_iters} iters):")
-    for it in range(max_iters):
-        mid = 0.5 * (lo + hi)
-        sc.tl.leiden(adata, resolution=mid, key_added=obs_key,
+        obs_key = "leiden"
+        lo, hi = 0.05, 10.0
+        best_key = None
+        best_diff = None
+        best_n = None
+        best_res = None
+        print(f"Bisecting Leiden resolution to hit n_clusters = {n_clusters} "
+              f"(initial range {lo}-{hi}, max {max_iters} iters):")
+        _iter_times: List[float] = []
+        _t_l = time.time()
+        for it in range(max_iters):
+            mid = 0.5 * (lo + hi)
+            _t_iter = time.time()
+            sc.tl.leiden(adata, resolution=mid, key_added=obs_key,
+                         random_state=rng_seed)
+            _iter_times.append(time.time() - _t_iter)
+            n_found = int(adata.obs[obs_key].astype(str).nunique())
+            diff = abs(n_found - n_clusters)
+            print(f"  iter {it+1:>2d}  resolution={mid:.4f}  -> n_clusters={n_found}")
+            if best_diff is None or diff < best_diff:
+                best_diff = diff
+                best_n = n_found
+                best_res = mid
+                best_key = obs_key
+            if n_found == n_clusters:
+                _record_last_leiden_seconds(time.time() - _t_l)
+                if _iter_times:
+                    _record_last_leiden_one_iter_seconds(
+                        sum(_iter_times) / len(_iter_times)
+                    )
+                return obs_key, n_found, mid
+            if n_found < n_clusters:
+                lo = mid
+            else:
+                hi = mid
+
+        # Re-run at the best resolution we found (in case the loop ended on
+        # a non-best iteration).
+        _t_iter = time.time()
+        sc.tl.leiden(adata, resolution=best_res, key_added=obs_key,
                      random_state=rng_seed)
-        n_found = int(adata.obs[obs_key].astype(str).nunique())
-        diff = abs(n_found - n_clusters)
-        print(f"  iter {it+1:>2d}  resolution={mid:.4f}  -> n_clusters={n_found}")
-        if best_diff is None or diff < best_diff:
-            best_diff = diff
-            best_n = n_found
-            best_res = mid
-            best_key = obs_key
-        if n_found == n_clusters:
-            return obs_key, n_found, mid
-        if n_found < n_clusters:
-            lo = mid
-        else:
-            hi = mid
-
-    # Re-run at the best resolution we found (in case the loop ended on
-    # a non-best iteration).
-    sc.tl.leiden(adata, resolution=best_res, key_added=obs_key,
-                 random_state=rng_seed)
-    print(f"  ! exact match not reached; using closest "
-          f"(n={best_n}, resolution={best_res:.4f}).")
-    return best_key, best_n, best_res
+        _iter_times.append(time.time() - _t_iter)
+        _record_last_leiden_seconds(time.time() - _t_l)
+        if _iter_times:
+            _record_last_leiden_one_iter_seconds(
+                sum(_iter_times) / len(_iter_times)
+            )
+        print(f"  ! exact match not reached; using closest "
+              f"(n={best_n}, resolution={best_res:.4f}).")
+        return best_key, best_n, best_res
+    finally:
+        # Each helper now sets _LAST_NEIGHBORS_SECONDS,
+        # _LAST_LEIDEN_SECONDS (binary search only),
+        # _LAST_LEIDEN_ONE_ITER_SECONDS, _LAST_UMAP_SECONDS directly.
+        # The finally block doesn't time anything — if an inner helper
+        # raised before setting timings, the singletons stay at the
+        # 0.0 from _reset_last_phase_timings() so we won't attribute
+        # stale values.
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -547,6 +1113,10 @@ def _record_seed_runtime(
         run_dir: Path,
         method: Optional[str] = None,
         shared_setup_seconds: float = 0.0,
+        leiden_seconds: Optional[float] = None,
+        umap_seconds: Optional[float] = None,
+        neighbors_seconds: Optional[float] = None,
+        leiden_one_iter_seconds: Optional[float] = None,
     ) -> None:
     """Append THIS seed's wall-clock runtime to the tracker, and also
     drop a `runtime.csv` into `<run_dir>/seeds/seed_<N>/` for per-seed
@@ -562,26 +1132,97 @@ def _record_seed_runtime(
         embedding the per-seed clusterer reads — e.g. BANKSY+Harmony,
         PCA, FM extraction (scGPT / Geneformer / etc.), neighbor-expr
         PCA. Zero for methods where everything is per-seed (scVI).
+      - `leiden_seconds`: ISOLATED cost of the Leiden binary-search
+        phase ONLY (sc.pp.neighbors + iterated sc.tl.leiden, or the
+        rapids-singlecell equivalent). Captured automatically from the
+        most recent `_leiden_n_clusters` /
+        `_leiden_binary_search_on_latent` call's wall-clock — callers
+        do NOT have to thread it through manually. Pass an explicit
+        value to override the auto-detection (e.g. Novae, which uses
+        `model.assign_domains` instead of Leiden — set to 0.0 there).
+      - `umap_seconds`: cost of the UMAP phase (rapids modes only —
+        the rapids pipeline runs `pp.neighbors + tl.leiden + tl.umap`
+        in one GPU pass). EXCLUDED from `runtime_seconds` because
+        UMAP is visualisation, not clustering cost. The caller's
+        `local_seconds` (timed around the helper call) is REDUCED by
+        this amount so the recorded clustering runtime is consistent
+        between rapids and scanpy modes.
       - `runtime_seconds` (= local + shared) is what gets reported in
         the per_seed_runtimes.csv. This is the "time to obtain
         clusters from raw data for one seed" — directly comparable to
         SQUINT's per-seed (train + predict) numbers.
 
-    EXCLUDED from both timers: UMAP (visualization only — it isn't a
-    preprocessing step for Leiden in any of our runners), NMI/ARI
-    computation, iLISI/MMD/ASW computation, per-seed plot writes.
-    Those are benchmark scaffolding, not method cost.
+    EXCLUDED from `runtime_seconds`: UMAP (visualization only — it
+    isn't a preprocessing step for Leiden in any of our runners),
+    NMI/ARI computation, iLISI/MMD/ASW computation, per-seed plot
+    writes. Those are benchmark scaffolding, not method cost.
 
     The single-row per-seed CSV has columns: seed, method,
-    runtime_seconds, local_seconds, shared_setup_seconds.
+    runtime_seconds, local_seconds, shared_setup_seconds, leiden_seconds.
     """
-    runtime_seconds = float(local_seconds) + float(shared_setup_seconds)
+    if leiden_seconds is None:
+        leiden_seconds = _get_last_leiden_seconds()
+    if umap_seconds is None:
+        umap_seconds = _get_last_umap_seconds()
+    if neighbors_seconds is None:
+        neighbors_seconds = _get_last_neighbors_seconds()
+    if leiden_one_iter_seconds is None:
+        leiden_one_iter_seconds = _get_last_leiden_one_iter_seconds()
+    leiden_seconds          = float(leiden_seconds)
+    umap_seconds            = float(umap_seconds)
+    neighbors_seconds       = float(neighbors_seconds)
+    leiden_one_iter_seconds = float(leiden_one_iter_seconds)
+
+    # The rapids leiden helper bundles UMAP into its work, so the
+    # caller's `local_seconds` (timed around the helper call) may
+    # include UMAP. UMAP is visualisation, not clustering — strip it
+    # here so the recorded runtimes are clustering-only. On the CPU
+    # scanpy path `umap_seconds` is 0 (UMAP runs OUTSIDE the helper)
+    # so this is a no-op.
+    local_seconds_clustering = max(
+        0.0, float(local_seconds) - umap_seconds
+    )
+    # Decompose the clustering wall time:
+    #     local_seconds_clustering  ≈  M + N + L_full
+    #   where
+    #     M       = model fit + inference (seed-dependent training,
+    #               zero for shared-embedding methods)
+    #     N       = neighbors_seconds (pp.neighbors only)
+    #     L_full  = leiden_seconds  (binary search loop only)
+    # Then derive the three runtime flavours the user requested:
+    model_only_local = max(
+        0.0, local_seconds_clustering - neighbors_seconds - leiden_seconds
+    )
+    one_leiden_local = max(
+        0.0,
+        local_seconds_clustering - leiden_seconds + leiden_one_iter_seconds,
+    )
+
+    # (1) total runtime to obtain clusters — the existing headline:
+    runtime_seconds                  = local_seconds_clustering   + float(shared_setup_seconds)
+    # (2) training + inference only (no neighbors, no leiden):
+    runtime_model_only_seconds       = model_only_local           + float(shared_setup_seconds)
+    # (3) training + inference + neighbors + ONE leiden iteration
+    #     (the binary-search overhead is a benchmark artifact —
+    #     this number reflects the cost of "fit the embedding and
+    #     run Leiden once at a single resolution"):
+    runtime_one_leiden_seconds       = one_leiden_local           + float(shared_setup_seconds)
+
     row = {
         "seed": int(seed),
         "method": method,
-        "runtime_seconds":      runtime_seconds,
-        "local_seconds":        float(local_seconds),
-        "shared_setup_seconds": float(shared_setup_seconds),
+        # Three runtime flavours (see decomposition above).
+        "runtime_seconds":             runtime_seconds,
+        "runtime_model_only_seconds":  runtime_model_only_seconds,
+        "runtime_one_leiden_seconds":  runtime_one_leiden_seconds,
+        # Underlying components.
+        "local_seconds":               local_seconds_clustering,
+        "shared_setup_seconds":        float(shared_setup_seconds),
+        "neighbors_seconds":           neighbors_seconds,
+        "leiden_seconds":              leiden_seconds,
+        "leiden_one_iter_seconds":     leiden_one_iter_seconds,
+        # Per-seed UMAP cost. NOT included in any runtime metric.
+        "umap_seconds":                umap_seconds,
     }
     tracker.append(row)
     seed_dir = Path(run_dir) / "seeds" / f"seed_{seed}"
@@ -595,15 +1236,26 @@ def _record_seed_runtime(
 # avoids silently comparing a "metrics-included" baseline against a
 # "metrics-excluded" SQUINT number.
 _RUNTIME_INCLUDES_NOTE = (
-    "model fit (per-seed where seed-dependent) + clustering "
-    "(typically Leiden binary search). Excludes metric computation "
-    "(NMI/ARI/iLISI/MMD), UMAP (visualization), and plot writes. "
-    "runtime_seconds = local_seconds + shared_setup_seconds where "
+    "Three per-seed runtime flavours, all excluding metric "
+    "computation (NMI/ARI/iLISI/MMD), UMAP (visualisation; reported "
+    "as umap_seconds and SUBTRACTED from local_seconds in rapids "
+    "modes), and plot writes. "
+    "(1) runtime_seconds = model fit + inference + pp.neighbors + "
+    "Leiden binary search + shared_setup. This is the 'time to "
+    "obtain clusters from raw data' headline, directly comparable to "
+    "SQUINT's per-seed (train + predict) numbers. "
+    "(2) runtime_model_only_seconds = model fit + inference + "
+    "shared_setup (no neighbors, no Leiden) — useful to isolate the "
+    "embedding-production cost from the clustering overhead. "
+    "(3) runtime_one_leiden_seconds = model fit + inference + "
+    "pp.neighbors + ONE Leiden iteration + shared_setup. The Leiden "
+    "binary-search loop is a benchmark artifact for landing on a "
+    "target cluster count; this flavour reports the cost of 'fit "
+    "embedding and Leiden once at a fixed resolution', which is "
+    "what users would do in practice. "
     "shared_setup_seconds amortises one-shot embedding compute "
     "(e.g. BANKSY+Harmony, PCA, FM extraction) by adding it back to "
-    "each seed's local cost — so each row represents 'time to obtain "
-    "clusters from raw data for one seed', directly comparable to "
-    "SQUINT's per-seed (train + predict) numbers."
+    "each seed's local cost."
 )
 
 
@@ -636,6 +1288,43 @@ def _write_runtime_csvs(
         float(long_df["shared_setup_seconds"].iloc[0])
         if "shared_setup_seconds" in long_df.columns else 0.0
     )
+    # Leiden seconds are per-seed (each seed runs its own binary search).
+    leiden_secs = (
+        long_df["leiden_seconds"].astype(float)
+        if "leiden_seconds" in long_df.columns
+        else pd.Series([0.0] * len(long_df))
+    )
+    # UMAP seconds are per-seed and NOT included in the headline
+    # runtime metric (visualisation cost, not clustering). Reported
+    # for transparency so users can compare GPU UMAP vs CPU UMAP cost.
+    umap_secs = (
+        long_df["umap_seconds"].astype(float)
+        if "umap_seconds" in long_df.columns
+        else pd.Series([0.0] * len(long_df))
+    )
+    # Neighbors-only and one-iteration timings (added to support the
+    # three runtime flavours).
+    neighbors_secs = (
+        long_df["neighbors_seconds"].astype(float)
+        if "neighbors_seconds" in long_df.columns
+        else pd.Series([0.0] * len(long_df))
+    )
+    leiden_one_iter_secs = (
+        long_df["leiden_one_iter_seconds"].astype(float)
+        if "leiden_one_iter_seconds" in long_df.columns
+        else pd.Series([0.0] * len(long_df))
+    )
+    # Companion runtime-flavour columns mirroring `runtime_seconds`.
+    rt_model_only = (
+        long_df["runtime_model_only_seconds"].astype(float)
+        if "runtime_model_only_seconds" in long_df.columns
+        else pd.Series([0.0] * len(long_df))
+    )
+    rt_one_leiden = (
+        long_df["runtime_one_leiden_seconds"].astype(float)
+        if "runtime_one_leiden_seconds" in long_df.columns
+        else pd.Series([0.0] * len(long_df))
+    )
     summary = pd.DataFrame([{
         "method":               long_df["method"].iloc[0]
                                 if "method" in long_df.columns
@@ -648,13 +1337,61 @@ def _write_runtime_csvs(
         "max_seconds":          float(secs.max()),
         "total_seconds":        float(secs.sum()),
         "shared_setup_seconds": shared_secs,
+        # Per-seed Leiden cost (mean / total across seeds). Useful to
+        # quantify the Leiden bottleneck vs the model-fit bottleneck
+        # — e.g. for foundation models (scGPT / UCE / NicheFormer)
+        # the FM extraction dominates `shared_setup_seconds`, while
+        # for shared-embedding methods (BANKSY / neigh-expr-pca)
+        # Leiden IS the per-seed cost.
+        "mean_leiden_seconds":            float(leiden_secs.mean()),
+        "total_leiden_seconds":           float(leiden_secs.sum()),
+        # Per-seed neighbors cost (pp.neighbors only) — useful to
+        # gauge how much of the clustering wall time is the kNN build
+        # vs the Leiden binary-search.
+        "mean_neighbors_seconds":         float(neighbors_secs.mean()),
+        "total_neighbors_seconds":        float(neighbors_secs.sum()),
+        # Mean cost of ONE Leiden iteration — drives the
+        # `runtime_one_leiden_seconds` flavour (= model + neighbors +
+        # one Leiden iter, excluding the binary-search overhead).
+        "mean_leiden_one_iter_seconds":   float(leiden_one_iter_secs.mean()),
+        # Companion runtime-flavour means (parallel to mean_seconds /
+        # total_seconds for the existing cluster-total metric).
+        "mean_runtime_model_only_seconds":  float(rt_model_only.mean()),
+        "total_runtime_model_only_seconds": float(rt_model_only.sum()),
+        "mean_runtime_one_leiden_seconds":  float(rt_one_leiden.mean()),
+        "total_runtime_one_leiden_seconds": float(rt_one_leiden.sum()),
+        # Per-seed UMAP cost (rapids modes only). NOT included in
+        # mean_seconds / total_seconds — visualisation only.
+        "mean_umap_seconds":              float(umap_secs.mean()),
+        "total_umap_seconds":             float(umap_secs.sum()),
+        # Which Leiden backend was active for this run? Recorded so
+        # the runtime CSVs are self-describing.
+        "leiden_backend":       (
+            "rapids-singlecell-subprocess"
+            if _rapids_leiden_setup_cmd() is not None
+            else (
+                "rapids-singlecell-inline"
+                if _leiden_backend() == "rapids"
+                else "scanpy-cpu"
+            )
+        ),
         "runtime_includes":     _RUNTIME_INCLUDES_NOTE,
     }])
     out = metrics_dir / "runtime_summary.csv"
     summary.to_csv(out, index=False)
-    print(f"  -> {out}  (mean={secs.mean():.1f}s ± "
+    print(f"  -> {out}")
+    print(f"     runtime [cluster total]:          mean={secs.mean():.1f}s ± "
           f"{secs.std(ddof=1) if len(secs) > 1 else 0.0:.1f}s, "
-          f"total={secs.sum():.1f}s; shared_setup={shared_secs:.1f}s)")
+          f"total={secs.sum():.1f}s")
+    print(f"     runtime [model only]:             "
+          f"mean={float(rt_model_only.mean()):.1f}s")
+    print(f"     runtime [model + neigh + 1 leiden]: "
+          f"mean={float(rt_one_leiden.mean()):.1f}s")
+    print(f"     phase breakdown — shared_setup={shared_secs:.1f}s, "
+          f"mean_neighbors={float(neighbors_secs.mean()):.2f}s, "
+          f"mean_leiden_full={float(leiden_secs.mean()):.2f}s, "
+          f"mean_leiden_one_iter={float(leiden_one_iter_secs.mean()):.3f}s, "
+          f"mean_umap={float(umap_secs.mean()):.2f}s (UMAP excluded)")
 
 
 # ---------------------------------------------------------------------------
@@ -919,7 +1656,7 @@ def main() -> None:
               f"total={seed_seconds + shared_setup_seconds:.1f}s")
 
         # ---- UNTIMED below: metric computation + visualization ----------
-        sc.tl.umap(adata, random_state=seed)
+        _compute_umap_if_needed(adata, random_state=seed)
 
         print("\n  -- Niche identification --")
         niche_df = _compute_niche_identification(

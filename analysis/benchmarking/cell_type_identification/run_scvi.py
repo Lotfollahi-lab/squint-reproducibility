@@ -77,8 +77,15 @@ from run_pca_leiden import (  # noqa: E402
     _compute_niche_identification,
     _import_metric_helpers,
     _load_concat,
+    _leiden_backend,
     _plot_umap,
+    _rapids_leiden_setup_cmd,
+    _record_last_leiden_seconds,
+    _reset_last_phase_timings,
+    _run_leiden_binary_search_rapids,
+    _run_leiden_binary_search_rapids_subprocess,
     _sanitize_for_h5ad,
+    _compute_umap_if_needed,
     _record_seed_runtime,
     _write_per_seed_outputs,
     _write_runtime_csvs,
@@ -150,35 +157,98 @@ def _leiden_binary_search_on_latent(
     Harmony latent IS the embedding we want to cluster).
 
     Returns (leiden_obs_key, n_found, resolution).
+
+    Timing + GPU
+    ------------
+    Wall-clock elapsed seconds are recorded into the module-level
+    `_LAST_LEIDEN_SECONDS` singleton (in run_pca_leiden.py) on EVERY
+    call. `_record_seed_runtime` reads it as `leiden_seconds` for the
+    per-seed runtime CSV.
+
+    When `SQUINT_LEIDEN_RAPIDS_ENV_SETUP` is set, the binary search
+    runs in a subprocess inside the rapids-singlecell env using the
+    shared `_run_leiden_binary_search_rapids` helper. Otherwise
+    (default) the binary search runs on CPU via scanpy.
     """
-    sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep=latent_key,
-                    random_state=seed)
-    leiden_key = "leiden"
-    lo, hi = 0.05, 10.0
-    best_n = best_res = best_diff = None
-    n_found = 0; resolution = 1.0
-    print(f"  Bisecting Leiden resolution to hit {n_clusters} clusters:")
-    for it in range(max_iters):
-        mid = 0.5 * (lo + hi)
-        sc.tl.leiden(adata, resolution=mid, key_added=leiden_key,
+    _reset_last_phase_timings()
+    t0 = time.time()
+    try:
+        rapids_env_setup = _rapids_leiden_setup_cmd()
+        if rapids_env_setup is not None:
+            # Subprocess: rapids in a separate conda env.
+            return _run_leiden_binary_search_rapids_subprocess(
+                adata=adata, n_clusters=n_clusters,
+                n_neighbors=n_neighbors, max_iters=max_iters,
+                rng_seed=seed, use_rep=latent_key,
+                env_setup_cmd=rapids_env_setup,
+            )
+        if _leiden_backend() == "rapids":
+            # Inline: rapids importable in this venv.
+            return _run_leiden_binary_search_rapids(
+                adata=adata, n_clusters=n_clusters,
+                n_neighbors=n_neighbors, max_iters=max_iters,
+                rng_seed=seed, use_rep=latent_key,
+            )
+        # ---- CPU scanpy path (original implementation) ----
+        from run_pca_leiden import (  # noqa: E402
+            _record_last_neighbors_seconds,
+            _record_last_leiden_one_iter_seconds,
+        )
+        _t_n = time.time()
+        sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep=latent_key,
+                        random_state=seed)
+        _record_last_neighbors_seconds(time.time() - _t_n)
+
+        leiden_key = "leiden"
+        lo, hi = 0.05, 10.0
+        best_n = best_res = best_diff = None
+        n_found = 0; resolution = 1.0
+        print(f"  Bisecting Leiden resolution to hit {n_clusters} clusters:")
+        _iter_times = []
+        _t_l = time.time()
+        for it in range(max_iters):
+            mid = 0.5 * (lo + hi)
+            _t_iter = time.time()
+            sc.tl.leiden(adata, resolution=mid, key_added=leiden_key,
+                         random_state=seed)
+            _iter_times.append(time.time() - _t_iter)
+            n_found = int(adata.obs[leiden_key].astype(str).nunique())
+            diff = abs(n_found - n_clusters)
+            print(f"    iter {it+1:>2d}  resolution={mid:.4f}  -> "
+                  f"n_clusters={n_found}")
+            if best_diff is None or diff < best_diff:
+                best_diff = diff; best_n = n_found; best_res = mid
+            if n_found == n_clusters:
+                _record_last_leiden_seconds(time.time() - _t_l)
+                if _iter_times:
+                    _record_last_leiden_one_iter_seconds(
+                        sum(_iter_times) / len(_iter_times)
+                    )
+                return leiden_key, n_found, mid
+            if n_found < n_clusters:
+                lo = mid
+            else:
+                hi = mid
+        _t_iter = time.time()
+        sc.tl.leiden(adata, resolution=best_res, key_added=leiden_key,
                      random_state=seed)
-        n_found = int(adata.obs[leiden_key].astype(str).nunique())
-        diff = abs(n_found - n_clusters)
-        print(f"    iter {it+1:>2d}  resolution={mid:.4f}  -> "
-              f"n_clusters={n_found}")
-        if best_diff is None or diff < best_diff:
-            best_diff = diff; best_n = n_found; best_res = mid
-        if n_found == n_clusters:
-            return leiden_key, n_found, mid
-        if n_found < n_clusters:
-            lo = mid
-        else:
-            hi = mid
-    sc.tl.leiden(adata, resolution=best_res, key_added=leiden_key,
-                 random_state=seed)
-    print(f"  ! exact match not reached; using closest "
-          f"(n={best_n}, resolution={best_res:.4f}).")
-    return leiden_key, best_n, best_res
+        _iter_times.append(time.time() - _t_iter)
+        _record_last_leiden_seconds(time.time() - _t_l)
+        if _iter_times:
+            _record_last_leiden_one_iter_seconds(
+                sum(_iter_times) / len(_iter_times)
+            )
+        print(f"  ! exact match not reached; using closest "
+              f"(n={best_n}, resolution={best_res:.4f}).")
+        return leiden_key, best_n, best_res
+    finally:
+        # Each helper now sets _LAST_NEIGHBORS_SECONDS,
+        # _LAST_LEIDEN_SECONDS, _LAST_LEIDEN_ONE_ITER_SECONDS, and
+        # _LAST_UMAP_SECONDS directly. Finally is a no-op (singletons
+        # are left at the values the helper recorded, or at the 0.0
+        # from _reset_last_phase_timings() if the helper raised before
+        # setting them).
+        pass
 
 
 def main() -> None:
@@ -292,7 +362,7 @@ def main() -> None:
               f"total={seed_seconds + shared_setup_seconds:.1f}s")
 
         # ---- UNTIMED below: metrics + visualization ---------------------
-        sc.tl.umap(adata, random_state=seed)
+        _compute_umap_if_needed(adata, random_state=seed)
 
         print("\n  -- Niche identification --")
         niche_df = _compute_niche_identification(

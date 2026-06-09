@@ -90,6 +90,7 @@ from run_pca_leiden import (  # noqa: E402
     _load_concat,
     _plot_umap,
     _sanitize_for_h5ad,
+    _compute_umap_if_needed,
     _record_seed_runtime,
     _write_per_seed_outputs,
     _write_runtime_csvs,
@@ -270,7 +271,7 @@ def main() -> None:
               f"total={seed_seconds + shared_setup_seconds:.1f}s")
 
         # ---- UNTIMED below: metrics + visualization ---------------------
-        sc.tl.umap(adata, random_state=seed)
+        _compute_umap_if_needed(adata, random_state=seed)
 
         print("\n  -- Niche identification --")
         niche_df = _compute_niche_identification(

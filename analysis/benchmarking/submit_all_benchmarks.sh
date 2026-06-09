@@ -140,7 +140,13 @@ NICHECOMPASS_MEBOCOST_DIR="${NICHECOMPASS_MEBOCOST_DIR:-$REPO/analysis/benchmark
 LSF_GROUP="${LSF_GROUP:-s10396}"
 LSF_QUEUE="${LSF_QUEUE:-training-parallel}"
 LSF_GPU="${LSF_GPU:-mode=exclusive_process:num=1:block=yes}"
-LSF_WALL="${LSF_WALL:-24:00}"
+# Default wall-time bumped 24h -> 96h (4 days). The 24h ceiling was too
+# tight for the heaviest baselines on the largest datasets — Geneformer
+# / scGPT FM extraction alone can take 12-18h on chl59 / spatch_1p, and
+# stacking that on top of a per-seed Leiden binary search occasionally
+# overran 24h. 96h gives every baseline plenty of headroom regardless of
+# dataset scale. Override via `--wall` on the wrappers or the env var.
+LSF_WALL="${LSF_WALL:-96:00}"
 DRY_RUN="${DRY_RUN:-0}"
 ONLY="${ONLY:-}"
 EXCLUDE="${EXCLUDE:-}"
@@ -167,6 +173,13 @@ UNIFORM_RESOURCE="${UNIFORM_RESOURCE:-}"
 #     actually use 384 GB; the bump just gives them a wider safety
 #     margin and lets `UNIFORM_RESOURCE=gpu_high_memory` keep
 #     producing apples-to-apples runtime numbers across methods.
+#   - gpu_xtreme_memory (768 GB) added for runs where even
+#     gpu_high_memory's 384 GB is insufficient. First hit on
+#     spatch_ov_1p, where GraphST's PASTE alignment + adjacency matrix
+#     blew through 384 GB. Intended for rerunning specific heavy
+#     baselines on the bigger spatial datasets; not the default for the
+#     wrappers (which still pin `UNIFORM_RESOURCE=gpu_high_memory` so
+#     the apples-to-apples comparison stays sane on smaller datasets).
 resource_args() {
     case "$1" in
         cpu_small)
@@ -177,6 +190,9 @@ resource_args() {
             ;;
         gpu_high_memory)
             echo "-n 8 -M 384000 -R select[mem>384000] -R rusage[mem=384000] -R span[ptile=8] -gpu $LSF_GPU"
+            ;;
+        gpu_xtreme_memory)
+            echo "-n 12 -M 768000 -R select[mem>768000] -R rusage[mem=768000] -R span[ptile=12] -gpu $LSF_GPU"
             ;;
         *)
             echo "ERROR: unknown resource class $1" >&2
@@ -190,10 +206,10 @@ resource_args() {
 # and `resource_args` errors out per-job).
 if [[ -n "$UNIFORM_RESOURCE" ]]; then
     case "$UNIFORM_RESOURCE" in
-        cpu_small|gpu_standard|gpu_high_memory) ;;
+        cpu_small|gpu_standard|gpu_high_memory|gpu_xtreme_memory) ;;
         *)
             echo "ERROR: UNIFORM_RESOURCE=$UNIFORM_RESOURCE is not a known class." >&2
-            echo "       Valid: cpu_small | gpu_standard | gpu_high_memory" >&2
+            echo "       Valid: cpu_small | gpu_standard | gpu_high_memory | gpu_xtreme_memory" >&2
             exit 1
             ;;
     esac
@@ -405,6 +421,22 @@ for entry in "${METHODS[@]}"; do
     RUNNER_ENV_ARGS=()
     if [[ -n "${HOLDOUT_BATCHES:-}" ]]; then
         RUNNER_ENV_ARGS+=( --env "SQUINT_EXCLUDE_BATCHES=$HOLDOUT_BATCHES" )
+    fi
+    # Optional: rapids-singlecell GPU-accelerated Leiden. The wrappers
+    # set these env vars when --rapids-leiden is passed:
+    #   * SQUINT_LEIDEN_BACKEND=rapids
+    #     -> arms the inline path (used when rapids is importable in
+    #        the baseline's own venv).
+    #   * SQUINT_LEIDEN_RAPIDS_ENV_SETUP="<bash cmd>"
+    #     -> arms the subprocess path (rapids in a separate conda env;
+    #        helper spawns bash -lc "<cmd> && python worker.py").
+    # When both are set the helper prefers subprocess (env-setup
+    # cmd wins). See run_pca_leiden.py for the full dispatcher.
+    if [[ -n "${SQUINT_LEIDEN_BACKEND:-}" ]]; then
+        RUNNER_ENV_ARGS+=( --env "SQUINT_LEIDEN_BACKEND=$SQUINT_LEIDEN_BACKEND" )
+    fi
+    if [[ -n "${SQUINT_LEIDEN_RAPIDS_ENV_SETUP:-}" ]]; then
+        RUNNER_ENV_ARGS+=( --env "SQUINT_LEIDEN_RAPIDS_ENV_SETUP=$SQUINT_LEIDEN_RAPIDS_ENV_SETUP" )
     fi
 
     if [[ -n "$UNIFORM_RESOURCE" && "$EFFECTIVE_RESOURCE" != "$RESOURCE" ]]; then

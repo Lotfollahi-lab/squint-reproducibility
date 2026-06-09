@@ -55,13 +55,31 @@
 #                                     Overridable via LSF_QUEUE env var.
 #   --group          / -g GROUP       LSF cost-code group (default: s10396).
 #                                     Overridable via LSF_GROUP env var.
+#   --wall           / -w HH:MM       LSF wall-clock limit (default:
+#                                     inherits 96:00 from submit_all_benchmarks.sh).
+#                                     Overridable via LSF_WALL env var.
+#   --rapids-leiden                   Use rapids-singlecell (GPU-
+#                                     accelerated) for the per-seed
+#                                     Leiden binary search. Calls
+#                                     rsc.pp.neighbors + rsc.tl.leiden
+#                                     INLINE on the parent adata (same
+#                                     API as scanpy). Sets
+#                                     SQUINT_LEIDEN_BACKEND=rapids;
+#                                     rapids-singlecell must be
+#                                     importable in the venv running
+#                                     the baseline (either install it
+#                                     there, or run the baseline from
+#                                     the rapids-singlecell conda env).
 #   --resource-class / -r CLASS       Force every method onto the same
 #                                     LSF resource class. Default:
 #                                     gpu_high_memory (fits the heaviest
 #                                     baseline — CellCharter / NicheCompass /
 #                                     GraphST / Novae all need a GPU + decent
 #                                     memory). Valid: cpu_small |
-#                                     gpu_standard | gpu_high_memory.
+#                                     gpu_standard | gpu_high_memory |
+#                                     gpu_xtreme_memory (768 GB; for
+#                                     GraphST / NicheCompass on the bigger
+#                                     spatial datasets where 384 GB OOMs).
 #                                     Overridable via UNIFORM_RESOURCE
 #                                     env var.
 #   --help           / -h             Print this usage block and exit.
@@ -122,8 +140,26 @@ ALL_METHODS=(
 QUEUE="${LSF_QUEUE:-$DEFAULT_QUEUE}"
 GROUP="${LSF_GROUP:-$DEFAULT_GROUP}"
 RESOURCE_ARG="${UNIFORM_RESOURCE:-$DEFAULT_RESOURCE}"
+WALL_ARG="${LSF_WALL:-}"          # empty -> let submit_all_benchmarks.sh default kick in
 METHODS_CSV=""
 PASSTHROUGH_ARGS=()
+
+# `--rapids-leiden` enables GPU Leiden via rapids-singlecell. Two
+# modes coexist in the shared Leiden helpers:
+#   * SUBPROCESS  — rapids lives in a separate conda env. We spawn
+#                   `bash -lc "<env-setup> && python _leiden_rapids_worker.py"`
+#                   from the baseline's normal venv. Activated by
+#                   setting SQUINT_LEIDEN_RAPIDS_ENV_SETUP.
+#   * INLINE      — rapids importable in the baseline's own venv.
+#                   `rsc.pp.neighbors` + `rsc.tl.leiden` called
+#                   DIRECTLY on the parent adata. Activated by
+#                   setting SQUINT_LEIDEN_BACKEND=rapids.
+# `--rapids-leiden` sets BOTH env vars by default — the helper
+# prefers subprocess if its env-setup cmd is present, so subprocess
+# wins on the cluster (where rapids lives in /nfs/.../ENVS/rapids-
+# singlecell, not in each baseline venv).
+RAPIDS_LEIDEN_ENV_SETUP_DEFAULT="source /etc/profile.d/modules.sh && module load cellgen/conda && conda activate /nfs/team361/sb75/ENVS/rapids-singlecell"
+USE_RAPIDS_LEIDEN=0
 
 # --- Parse CLI flags --------------------------------------------------------
 while [[ $# -gt 0 ]]; do
@@ -180,6 +216,23 @@ while [[ $# -gt 0 ]]; do
             RESOURCE_ARG="${1#--resource-class=}"
             shift
             ;;
+        --wall|-w)
+            shift
+            if [[ $# -eq 0 ]]; then
+                echo "ERROR: --wall / -w requires a value (e.g. 96:00 or 168:00)." >&2
+                exit 2
+            fi
+            WALL_ARG="$1"
+            shift
+            ;;
+        --wall=*)
+            WALL_ARG="${1#--wall=}"
+            shift
+            ;;
+        --rapids-leiden)
+            USE_RAPIDS_LEIDEN=1
+            shift
+            ;;
         --help|-h)
             awk '/^[^#]/ {exit} {print}' "$0"
             exit 0
@@ -221,19 +274,39 @@ else
     ONLY_VALUE="$METHODS_CSV"
 fi
 
-# --- Print resolved values + delegate --------------------------------------
 echo "[niche-id baselines] LSF_QUEUE        = $QUEUE"
 echo "[niche-id baselines] LSF_GROUP        = $GROUP"
 echo "[niche-id baselines] UNIFORM_RESOURCE = $RESOURCE_ARG"
+echo "[niche-id baselines] LSF_WALL         = ${WALL_ARG:-<inherit submit_all_benchmarks.sh default>}"
+echo "[niche-id baselines] RAPIDS_LEIDEN    = $USE_RAPIDS_LEIDEN"
 echo "[niche-id baselines] ONLY             = $ONLY_VALUE"
 
 # Export so submit_all_benchmarks.sh's `${LSF_QUEUE:-...}` /
-# `${LSF_GROUP:-...}` / `${ONLY:-...}` / `${UNIFORM_RESOURCE:-...}`
-# fallbacks pick them up.
+# `${LSF_GROUP:-...}` / `${ONLY:-...}` / `${UNIFORM_RESOURCE:-...}` /
+# `${LSF_WALL:-...}` fallbacks pick them up.
 export LSF_QUEUE="$QUEUE"
 export LSF_GROUP="$GROUP"
 export ONLY="$ONLY_VALUE"
 export UNIFORM_RESOURCE="$RESOURCE_ARG"
+if [[ -n "$WALL_ARG" ]]; then
+    export LSF_WALL="$WALL_ARG"
+fi
+# When --rapids-leiden was passed, set SQUINT_LEIDEN_BACKEND=rapids so
+# each per-method job's Leiden binary search calls rapids-singlecell
+# INLINE on the parent adata (no subprocess; same API as scanpy).
+# rapids-singlecell must be importable in the venv running the
+# baseline — see the helper docstring in run_pca_leiden.py for the
+# install / env-activation options.
+if [[ "$USE_RAPIDS_LEIDEN" == "1" ]]; then
+    # Both modes are armed; the helper prefers subprocess when the
+    # env-setup cmd is present. Override the env-setup cmd by
+    # exporting SQUINT_LEIDEN_RAPIDS_ENV_SETUP yourself before
+    # invoking this wrapper.
+    export SQUINT_LEIDEN_BACKEND="rapids"
+    export SQUINT_LEIDEN_RAPIDS_ENV_SETUP="${SQUINT_LEIDEN_RAPIDS_ENV_SETUP:-$RAPIDS_LEIDEN_ENV_SETUP_DEFAULT}"
+    echo "[niche-id baselines] SQUINT_LEIDEN_BACKEND          = $SQUINT_LEIDEN_BACKEND"
+    echo "[niche-id baselines] SQUINT_LEIDEN_RAPIDS_ENV_SETUP = $SQUINT_LEIDEN_RAPIDS_ENV_SETUP"
+fi
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 exec bash "$SCRIPT_DIR/submit_all_benchmarks.sh" \

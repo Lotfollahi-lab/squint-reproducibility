@@ -106,6 +106,7 @@ from run_pca_leiden import (  # noqa: E402
     _load_concat,
     _plot_umap,
     _sanitize_for_h5ad,
+    _compute_umap_if_needed,
     _record_seed_runtime,
     _write_per_seed_outputs,
     _write_runtime_csvs,
@@ -360,6 +361,17 @@ def main() -> None:
     if args.batch_key not in adata.obs.columns:
         raise SystemExit(f"--batch-key={args.batch_key!r} missing from obs.")
     adata.obs[args.batch_key] = adata.obs[args.batch_key].astype("category")
+    # Cast X to float32. NicheCompass's encoder is float32 (PyTorch
+    # nn.Linear default); when adata.X is float64 the encoder errors with
+    # `mat1 and mat2 must have the same dtype, but got Double and Float`
+    # at the first linear layer. chl59 / mmb silver files happen to be
+    # float32 already; spatch silver files are float64 — this cast makes
+    # the runner dtype-agnostic. `.astype("float32")` works for both
+    # dense ndarray and scipy.sparse, returning the same container type.
+    if adata.X.dtype != np.float32:
+        print(f"  Casting adata.X from {adata.X.dtype} -> float32 for "
+              f"NicheCompass.")
+        adata.X = adata.X.astype(np.float32)
     # Raw counts on layers['counts'] for the NB likelihood.
     adata.layers[NC_COUNTS_KEY] = adata.X.copy()
     adata = _spatial_knn_per_batch(
@@ -458,7 +470,7 @@ def main() -> None:
               f"total={seed_seconds + shared_setup_seconds:.1f}s")
 
         # ---- UNTIMED below: metrics + visualization ---------------------
-        sc.tl.umap(adata, random_state=seed)
+        _compute_umap_if_needed(adata, random_state=seed)
 
         print("\n  -- Niche identification --")
         niche_df = _compute_niche_identification(

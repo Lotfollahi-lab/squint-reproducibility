@@ -97,6 +97,7 @@ from run_pca_leiden import (  # noqa: E402
     _load_concat,
     _plot_umap,
     _sanitize_for_h5ad,
+    _compute_umap_if_needed,
     _record_seed_runtime,
     _write_per_seed_outputs,
     _write_runtime_csvs,
@@ -454,7 +455,7 @@ def main() -> None:
         # metrics + plot writes ------------------------------------------
         sc.pp.neighbors(adata, n_neighbors=args.n_neighbors,
                         use_rep=latent_key, random_state=seed)
-        sc.tl.umap(adata, random_state=seed)
+        _compute_umap_if_needed(adata, random_state=seed)
 
         print("\n  -- Niche identification (using Novae domains) --")
         # Novae assigns its own clusters; we feed them in the same role
