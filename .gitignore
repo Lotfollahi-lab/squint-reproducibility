@@ -2,3 +2,12 @@ logs/
 *.ipynb_checkpoints/
 
 *.pyc
+
+/analysis/benchmarking/geneformer
+/analysis/benchmarking/nichecompass
+/analysis/benchmarking/nicheformer
+/analysis/benchmarking/scGPT
+/analysis/benchmarking/scGPT-spatial
+/analysis/benchmarking/uce_model
+
+artifacts
