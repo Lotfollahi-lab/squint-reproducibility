@@ -133,10 +133,23 @@ def train(config: Dict):
                     accelerator="auto",
                     devices="auto",
                     deterministic=True,
+                    # Mirror run_squint.py: honour an opt-in
+                    # `trainer.precision` cfg key (e.g. "bf16-mixed")
+                    # if provided, otherwise fall back to "32-true"
+                    # for legacy behaviour. Legacy callers that don't
+                    # set the key are unaffected.
+                    precision=config['trainer'].get('precision', '32-true'),
                     logger=logger,
                     callbacks=checkpoints,
                     strategy=strategy,
                     max_epochs=config['trainer']['max_epochs'],
+                    # Mirror run_squint.py: validate every N train epochs
+                    # (default N=1 if the cfg doesn't carry the key, to
+                    # preserve legacy behaviour for any caller that
+                    # uses this trainer without the new setting).
+                    check_val_every_n_epoch=int(
+                        config['trainer'].get('check_val_every_n_epoch', 1)
+                    ),
                     enable_checkpointing=enable_checkpointing,
                     num_sanity_val_steps=0,
                     enable_progress_bar=False,

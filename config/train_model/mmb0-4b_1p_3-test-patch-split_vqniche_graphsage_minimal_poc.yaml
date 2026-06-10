@@ -1,0 +1,256 @@
+# =============================================================================
+#                  MINIMAL POC CONFIG - GRAPH VQ-VAE BASELINE
+# =============================================================================
+# Purpose: strip SQUINT down to a minimal Graph VQ-VAE so we can verify the
+# *core* mechanism is learning before adding components back on. This config:
+#   - Keeps the GNN encoder (this is the spatial part of the contribution).
+#   - Drops FiLM conditioning (encoder + attribute decoder).
+#   - Drops masking (mask_strategy: original, mask_ratio = 0).
+#   - Drops mask-token regularization.
+#   - Drops adjacency reconstruction (no BCE adjacency loss).
+#   - Drops predictor / cross-entropy loss.
+#   - Uses cell-wise NB reconstruction (k_hop_nb_loss: 0) — the simplest target.
+#   - Single-head VQ with a smaller codebook for fast iteration.
+#   - K-means init, EMA codebook.
+#
+# Once this config trains stably and shows non-trivial codebook utilisation +
+# rising cell-wise Pearson, layer back: (1) k_hop_nb_loss=1, (2) adjacency
+# loss, (3) FiLM conditioning, (4) masking. One axis at a time.
+# =============================================================================
+
+experiment:
+  seed: 0
+  mode: standalone
+
+logging:
+  root_log_dir: /nfs/team361/am84/VQNiche/logs/
+  log_model: true
+  offline: false
+  enabled: true
+
+dataset:
+  dataset_name: mmb0-4b_1p
+  adata_batch_idx:
+    - 0
+    - 1
+    - 2
+    - 3
+
+  root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
+
+  gene_count_transform_names:
+    - SubsetHVG
+  gene_count_transform_params:
+    n_genes: 1000
+
+  graph_params:
+    spatial_key: spatial
+    delaunay: false
+    n_neighs: 8
+    radius: null
+
+  feature_names:
+    - X
+
+  label_name: cell_types
+
+  train_transform_names:
+    - SpatialBatchSplit
+  train_transform_params:
+    region: [
+          {
+            x_min: 20750,
+            x_max: 21000,
+            y_min: -125,
+            y_max: 125,
+          },
+          {
+            x_min: 22000,
+            x_max: 22250,
+            y_min: 250,
+            y_max: 500,
+          },
+          {
+            x_min: 20000,
+            x_max: 20250,
+            y_min: -750,
+            y_max: -500,
+          }
+      ]
+    train_batches:
+      - 1
+      - 2
+      - 3
+    val_batches: []
+    test_batches:
+      - 4
+    xy_key: xy_coordinates
+
+datamodule:
+  loader_name: NeighborLoader
+  loader_params:
+    batch_size: 128
+  sampler_name: NeighborSampler
+  sampler_params:
+    num_neighbors: [8, 8]
+  inference_params:
+    sample_neighbors_for_inference: false
+
+model:
+  model_name: VQNiche
+  encoder_name: VQNiche_Encoder
+  attribute_decoder_name: MLPSoftmax
+  adjacency_decoder_name: MLP_AdjacencyDecoder
+  predictor_name: Linear
+
+  imputation_params:
+    # POC: NO masking. The model becomes a pure graph autoencoder so the
+    # codebook only has to cluster real (un-corrupted) inputs. This isolates
+    # whether the VQ + GNN combination is learning anything useful.
+    mask_strategy: original
+    base_mask_ratio: 0.0
+    final_mask_ratio: 0.0
+    warmup_epochs: 0
+    deterministic_masking: false
+    compute_mask_input_diversity: false
+    mask_token_eps: 0.0001
+
+  train_metrics_list:
+    - codebook_utilization
+    - pearson_cell_wise
+
+  test_metrics_list:
+    - codebook_utilization
+    - pearson_cell_wise
+    - pearson_gene_wise
+
+  encoder_params:
+
+    gnn_name: SAGEConv
+
+    mlp_params:
+      hidden_channels: [600, 400]
+      dropout: 0.1
+      act: relu
+      norm: null
+
+    gnn_params:
+      hidden_channels: 400
+      num_layers: 1
+      act_first: true
+      activation: relu
+      norm: null
+      dropout: 0.1
+      init_method: kaiming_uniform
+
+    # POC: NO FiLM conditioning. We drop the conditioning_params block
+    # entirely; the encoder will set self.conditioning_module = None.
+    # conditioning_params:
+    #   condition_list:
+    #     - rbf_distances
+    #     - cell_batch_id
+    #   use_bias: true
+    #   use_residual: false
+    #   residual_weight: 0.2
+    #   init_mode: identity
+
+    vq_params:
+      vq_name: VectorQuantize
+      freeze_codebook: false
+
+      # EMA update related params
+      use_cosine_sim: true
+      ema_update: true
+      manual_ema_update: false
+      threshold_ema_dead_code: 2
+      manual_in_place_optimizer_update: false
+      learnable_codebook: false
+
+      # POC: smaller codebook + single head. With heads=1 and codebook_size=512,
+      # batch_size=128 produces 128/512 ≈ 0.25 EMA mass per code per step.
+      # That's a working scale for the threshold of 2. Once this trains,
+      # scale up codebook_size and heads.
+      codebook_size: 512
+      heads: 1
+      separate_codebook_per_head: false
+      decay: 0.8
+      eps: 0.00001
+      kmeans_init: true
+      kmeans_iters: 10
+      sync_kmeans: true
+      sample_codebook_temp: 0.0
+
+      # commitment loss related params (handled inside VQ module; we use the
+      # external mse_commit_loss instead, so keep this 0).
+      commitment_weight: 0.0
+      commitment_use_cross_entropy_loss: false
+
+      codebook_diversity_loss_weight: 0.0
+      codebook_diversity_temperature: 100.0
+
+      orthogonal_reg_weight: 0.0
+      orthogonal_reg_max_codes: null
+      orthogonal_reg_active_codes_only: false
+
+  attribute_decoder_params:
+    # POC: NO FiLM in the decoder either.
+    apply_conditioning: null
+
+    mlp_params:
+      hidden_channels: [600]
+      dropout: 0.1
+      act: gelu
+      norm: layer_norm
+
+  # The adjacency decoder is still constructed (the model's forward calls it),
+  # but its output is unused in the loss for the POC. Keep defaults.
+  adjacency_decoder_params:
+    out_channels: 600
+
+    mlp_params:
+      hidden_channels: [400]
+      dropout: 0.2
+      act: relu
+      norm: layer_norm
+
+  optimizer_params:
+    optimizer_name: adam
+    lr: 0.001
+    weight_decay: 0.001
+    mask_lr_scale: 1.0  # no learnable mask in this POC
+
+  loss_params:
+    # POC: only the two losses needed for a vanilla VQ-VAE on counts:
+    #   1) nb_attribute_reconstruction_loss : decoder reconstructs raw counts.
+    #   2) mse_commit_loss                   : encoder is pulled toward codes.
+    # Codebook updates are EMA, so no separate code loss is needed.
+    loss_names:
+      - nb_attribute_reconstruction_loss
+      - mse_commit_loss
+    loss_kwargs:
+      # cell-wise NB (k_hop_nb_loss=0) is the simplest target. Once this works,
+      # bump to 1 to recover the neighborhood-aware story.
+      k_hop_nb_loss: 0
+      only_masked: false
+      # adjacency-related kwargs retained for compatibility but unused
+      # because bce_adjacency_reconstruction_loss is not in loss_names.
+      edge_sampling_ratio: 2
+      use_pos_weight: true
+      estimate_adj_kwargs:
+        nonlinearity: sigmoid
+        k: 8
+      wt_attr_reconstr: 1.0
+      wt_commit: 1.0
+
+trainer:
+  # Use cell-wise Pearson as the monitor since we have no neighborhood loss
+  # and no adjacency objective.
+  monitor: train_pearson_cell_wise
+  checkpoint_params:
+    mode: max
+    save_top_k: 1
+    save_last: true
+  # POC: train longer than 5 epochs so we can actually see learning curves.
+  max_epochs: 30
+  enable_checkpointing: true
+  ckpt_path: best

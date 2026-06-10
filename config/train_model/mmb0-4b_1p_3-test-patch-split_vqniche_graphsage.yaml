@@ -153,7 +153,12 @@ model:
       use_cosine_sim: true
       ema_update: true # if true, learnable related stuff is ignored
       manual_ema_update: false
-      threshold_ema_dead_code: 100
+      # NOTE: previously 100. With codebook_size=5000, heads=10 (sharing the
+      # codebook), batch_size=128 → on average 128*10/5000 ≈ 0.26 EMA cluster
+      # mass per code at steady state. A threshold of 100 caused ~all codes
+      # to be expired (re-initialised) every step, destroying the codebook.
+      # 2 is the library default and is a much more reasonable expiry signal.
+      threshold_ema_dead_code: 2
       manual_in_place_optimizer_update: false # must be false if ema_update is true
       learnable_codebook: false # must be false if ema_update is true
 
@@ -172,7 +177,8 @@ model:
       separate_codebook_per_head: false
       decay: 0.8
       eps: 0.00001
-      kmeans_init: false
+      # NOTE: paper claims K-means initialization. Set to true to match it.
+      kmeans_init: true
       kmeans_iters: 10
       sync_kmeans: true
       sample_codebook_temp: 0.0
@@ -254,8 +260,19 @@ model:
       wt_adj_reconstr: 1.0
       wt_joint_code_commit: 1.0
       wt_commit: 1.0
-      wt_code: 1.0
-      wt_mask_token_regularization: 1.0
+      # NOTE: under EMA codebook (ema_update=true, learnable_codebook=false)
+      # the codebook is a buffer, so `mse_code_loss` does not update the codes
+      # directly. With straight-through gradients it just adds another push
+      # of the encoder toward the chosen code — i.e. it is redundant with
+      # `mse_commit_loss`. Keep at 0.0 in EMA mode; restore (e.g. 1.0) only
+      # when learnable_codebook=true.
+      wt_code: 0.0
+      # NOTE: the regularizer is now squared-L2 (matches paper). With a mask
+      # token of dim 1000 init ~ N(2, 1) the squared-norm is ~5000 at init,
+      # so the previous weight 1.0 would dominate every other loss term by
+      # 2-3 orders of magnitude. Scaled down to keep this term in the
+      # ~1-10 range at init.
+      wt_mask_token_regularization: 0.001
 
 trainer:
   monitor: train_pearson_1hop_nbr
