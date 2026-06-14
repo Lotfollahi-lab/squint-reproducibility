@@ -70,8 +70,11 @@ _R_TEMPLATE = r"""
 args <- commandArgs(trailingOnly = TRUE)
 out_h5ad <- args[[1]]
 install_deps <- length(args) >= 2 && args[[2]] == "install"
-user_lib <- if (length(args) >= 3 && nzchar(args[[3]])) args[[3]]
-            else Sys.getenv("R_LIBS_USER")
+if (length(args) >= 3 && nzchar(args[[3]])) {
+    user_lib <- args[[3]]
+} else {
+    user_lib <- Sys.getenv("R_LIBS_USER")
+}
 
 ## The system R library is typically READ-ONLY on a cluster, so install
 ## into a WRITABLE personal library: use --r-libs / R_LIBS_USER if given,
