@@ -70,21 +70,37 @@ _R_TEMPLATE = r"""
 args <- commandArgs(trailingOnly = TRUE)
 out_h5ad <- args[[1]]
 install_deps <- length(args) >= 2 && args[[2]] == "install"
+user_lib <- if (length(args) >= 3 && nzchar(args[[3]])) args[[3]]
+            else Sys.getenv("R_LIBS_USER")
+
+## The system R library is typically READ-ONLY on a cluster, so install
+## into a WRITABLE personal library: use --r-libs / R_LIBS_USER if given,
+## else a HOME-based default. Create it and put it first on .libPaths()
+## (so both installs and requireNamespace() see it).
+if (is.na(user_lib) || !nzchar(user_lib) || identical(user_lib, "NULL")) {
+    user_lib <- file.path(Sys.getenv("HOME"), "R",
+                          paste0(R.version$platform, "-library-",
+                                 paste(getRversion()[, 1:2], collapse = ".")))
+}
+dir.create(user_lib, recursive = TRUE, showWarnings = FALSE)
+.libPaths(c(user_lib, .libPaths()))
+cat("R library (install target): ", user_lib, "\n", sep = "")
 
 pkgs <- c("HCATonsilData", "SpatialExperiment", "zellkonverter",
           "SummarizedExperiment")
 if (install_deps) {
     if (!requireNamespace("BiocManager", quietly = TRUE))
-        install.packages("BiocManager", repos = "https://cloud.r-project.org")
-    BiocManager::install(pkgs, update = FALSE, ask = FALSE)
+        install.packages("BiocManager",
+                         repos = "https://cloud.r-project.org", lib = user_lib)
+    BiocManager::install(pkgs, update = FALSE, ask = FALSE, lib = user_lib)
 }
 
 missing <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
 if (length(missing)) {
     stop(sprintf(
-        "Missing R packages: %s. Re-run with --install-deps, or install via\n  BiocManager::install(c(%s))",
-        paste(missing, collapse = ", "),
-        paste(sprintf('\"%s\"', missing), collapse = ", ")))
+        "Missing R packages: %s. Re-run with --install-deps and a writable --r-libs dir, or install manually:\n  .libPaths(c('%s', .libPaths())); BiocManager::install(c(%s), lib='%s')",
+        paste(missing, collapse = ", "), user_lib,
+        paste(sprintf('\"%s\"', missing), collapse = ", "), user_lib))
 }
 
 suppressMessages({
@@ -127,13 +143,15 @@ cat("WROTE_COMBINED_H5AD: ", out_h5ad, "\n", sep = "")
 
 
 def _run_r_export(combined_h5ad: str, rscript: str,
-                  install_deps: bool) -> None:
+                  install_deps: bool, r_libs: str | None) -> None:
     with tempfile.NamedTemporaryFile("w", suffix=".R", delete=False) as fh:
         fh.write(_R_TEMPLATE)
         r_path = fh.name
-    cmd = [rscript, "--vanilla", r_path, combined_h5ad]
-    if install_deps:
-        cmd.append("install")
+    # NOT --vanilla: that implies --no-environ and would suppress
+    # R_LIBS_USER. We pass the lib explicitly (arg 3) and also keep the
+    # environment so a configured R_LIBS_USER is honoured.
+    cmd = [rscript, "--no-save", "--no-restore", r_path, combined_h5ad,
+           "install" if install_deps else "noinstall", r_libs or ""]
     print(f"[fetch] running R: {' '.join(cmd)}", flush=True)
     try:
         subprocess.run(cmd, check=True)
@@ -243,6 +261,12 @@ def main():
                    help="Path to the Rscript executable.")
     p.add_argument("--install-deps", action="store_true",
                    help="Install the required R/Bioconductor packages first.")
+    p.add_argument("--r-libs", default=None,
+                   help="Writable R library dir to install into / load from "
+                        "(the system R lib is usually read-only). On the farm, "
+                        "use ample NFS space, e.g. "
+                        "/nfs/team361/sb75/.R/library, to avoid HOME quota "
+                        "limits. Defaults to $R_LIBS_USER or ~/R/<...>-library.")
     p.add_argument("--sample-key", default=None,
                    help="obs column identifying the Visium sample/section "
                         "(default: auto-detect).")
@@ -262,7 +286,7 @@ def main():
         args.out_dir, "_tonsil_spatial_combined.h5ad")
 
     if args.force or not os.path.isfile(combined):
-        _run_r_export(combined, args.rscript, args.install_deps)
+        _run_r_export(combined, args.rscript, args.install_deps, args.r_libs)
     else:
         print(f"[fetch] reusing existing combined .h5ad: {combined} "
               f"(use --force to refetch)")
