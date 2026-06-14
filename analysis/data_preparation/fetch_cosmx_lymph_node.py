@@ -136,7 +136,6 @@ def main():
     p.add_argument("--sample-name", default="cosmx_human_lymph_node",
                    help="Name for the single section when there is no "
                         "sample column.")
-    p.add_argument("--no-squint-aliases", action="store_true")
     p.add_argument("--keep-cache", action="store_true")
     args = p.parse_args()
 
@@ -184,21 +183,26 @@ def main():
               f"(no usable sample column; this dataset is one CosMx section)")
 
     os.makedirs(args.out_dir, exist_ok=True)
-    for sname, sub in samples:
+    for bidx, (sname, sub) in enumerate(samples):
         sub = sub.copy()
         _ensure_spatial(sub)
-        if not args.no_squint_aliases:
-            if ct_key:
-                sub.obs["annotation"] = sub.obs[ct_key].astype(str)
-            sub.obs["spatial_cluster"] = sub.obs[ni_key].astype(str)
-            sub.obs["batch"] = str(sname)
+        # Keep the label columns under their ORIGINAL names — they're
+        # registered in the SQUINT blob via label_names (cell_types=<col> /
+        # niche_types=<col>). Only add the infra fields the blob builder
+        # requires: obs['cell_id'], obs['batch'] (graph batch_key), and the
+        # canonical per-section id uns['batch'] (int).
+        sub.obs["batch"] = str(bidx)
+        if "cell_id" not in sub.obs.columns:
+            sub.obs["cell_id"] = sub.obs_names.astype(str)
+        sub.uns["batch"] = int(bidx)
         sub.uns["squint_source"] = "spatial-niche-benchmark_CosMx_lymph_node"
         sub.uns["sample_id"] = str(sname)
         fp = os.path.join(args.out_dir, f"{_sanitize(sname)}.h5ad")
         sub.write_h5ad(fp)
-        print(f"[fetch]   wrote {fp}  ({sub.n_obs} cells, "
-              f"niches={sub.obs['spatial_cluster'].nunique() if 'spatial_cluster' in sub.obs else 'n/a'}, "
-              f"cell_types={sub.obs['annotation'].nunique() if 'annotation' in sub.obs else 'n/a'})")
+        print(f"[fetch]   wrote {fp}  ({sub.n_obs} cells; "
+              f"cell-type col={ct_key!r} "
+              f"({sub.obs[ct_key].nunique() if ct_key else 'n/a'}); "
+              f"niche col={ni_key!r} ({sub.obs[ni_key].nunique()}))")
 
     if not args.keep_cache and args.h5ad is None and os.path.isfile(cache):
         os.unlink(cache)

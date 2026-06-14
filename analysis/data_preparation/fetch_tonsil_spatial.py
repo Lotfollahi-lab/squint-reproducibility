@@ -207,7 +207,7 @@ def _sanitize(name: str) -> str:
 
 
 def split_per_sample(combined_h5ad, out_dir, sample_key, celltype_key,
-                     niche_key, squint_aliases):
+                     niche_key):
     import anndata as ad
     adata = ad.read_h5ad(combined_h5ad)
     print(f"[fetch] combined: {adata.n_obs} spots x {adata.n_vars} genes")
@@ -219,31 +219,35 @@ def split_per_sample(combined_h5ad, out_dir, sample_key, celltype_key,
 
     for key, label in [(celltype_key, "cell-type"), (niche_key, "niche")]:
         if key not in adata.obs.columns:
-            print(f"[fetch] WARNING: {label} key {key!r} not in obs — "
-                  f"alias will be skipped.", file=sys.stderr)
+            print(f"[fetch] WARNING: {label} key {key!r} not in obs — point "
+                  f"the SQUINT blob's label_names at the real column name.",
+                  file=sys.stderr)
 
     os.makedirs(out_dir, exist_ok=True)
     samples = list(map(str, adata.obs[skey].astype(str).unique()))
     written = []
-    for s in samples:
+    for bidx, s in enumerate(samples):
         sub = adata[adata.obs[skey].astype(str) == s].copy()
         _ensure_spatial(sub)
-        if squint_aliases:
-            if celltype_key in sub.obs.columns:
-                sub.obs["annotation"] = sub.obs[celltype_key].astype(str)
-            if niche_key in sub.obs.columns:
-                sub.obs["spatial_cluster"] = sub.obs[niche_key].astype(str)
-            sub.obs["batch"] = str(s)
+        # Keep label columns under their ORIGINAL names (registered in the
+        # SQUINT blob via label_names). Only add the infra fields the blob
+        # builder requires: obs['cell_id'], obs['batch'] (graph batch_key),
+        # and the canonical per-section id uns['batch'] (int).
+        sub.obs["batch"] = str(bidx)
+        if "cell_id" not in sub.obs.columns:
+            sub.obs["cell_id"] = sub.obs_names.astype(str)
+        sub.uns["batch"] = int(bidx)
         sub.uns["squint_source"] = "HCATonsilData_Spatial_Visium"
         sub.uns["sample_id"] = str(s)
         fp = os.path.join(out_dir, f"{_sanitize(s)}.h5ad")
         sub.write_h5ad(fp)
-        nct = (sub.obs["annotation"].nunique()
-               if "annotation" in sub.obs else "n/a")
-        nni = (sub.obs["spatial_cluster"].nunique()
-               if "spatial_cluster" in sub.obs else "n/a")
-        print(f"[fetch]   wrote {fp}  ({sub.n_obs} spots, "
-              f"cell_types={nct}, niches={nni})")
+        nct = (sub.obs[celltype_key].nunique()
+               if celltype_key in sub.obs else "n/a")
+        nni = (sub.obs[niche_key].nunique()
+               if niche_key in sub.obs else "n/a")
+        print(f"[fetch]   wrote {fp}  ({sub.n_obs} spots; "
+              f"cell-type col={celltype_key!r} ({nct}); "
+              f"niche col={niche_key!r} ({nni}))")
         written.append(fp)
     print(f"[fetch] DONE: {len(written)} per-sample files in {out_dir}")
     return written
@@ -270,11 +274,12 @@ def main():
     p.add_argument("--sample-key", default=None,
                    help="obs column identifying the Visium sample/section "
                         "(default: auto-detect).")
-    p.add_argument("--celltype-key", default=_CELLTYPE_DEFAULT)
-    p.add_argument("--niche-key", default=_NICHE_DEFAULT)
-    p.add_argument("--no-squint-aliases", action="store_true",
-                   help="Do not add obs[annotation]/spatial_cluster/batch "
-                        "aliases; keep only the original fields.")
+    p.add_argument("--celltype-key", default=_CELLTYPE_DEFAULT,
+                   help="obs column with the cell-type label (kept as-is; "
+                        "register it in the SQUINT blob via label_names).")
+    p.add_argument("--niche-key", default=_NICHE_DEFAULT,
+                   help="obs column with the manual niche/region label "
+                        "(kept as-is; register via label_names).")
     p.add_argument("--force", action="store_true",
                    help="Re-run the R fetch even if the combined .h5ad "
                         "already exists.")
@@ -297,7 +302,6 @@ def main():
         sample_key=args.sample_key,
         celltype_key=args.celltype_key,
         niche_key=args.niche_key,
-        squint_aliases=not args.no_squint_aliases,
     )
 
     if not args.keep_combined and os.path.isfile(combined):
