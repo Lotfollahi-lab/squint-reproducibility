@@ -135,6 +135,23 @@ if (methods::is(spe, "SpatialExperiment")) {
     }
 }
 
+## zellkonverter's SCE2AnnData builds pandas Index objects from the
+## row/col names; NULL dimnames -> "Index(...) must be called with a
+## collection ... None was passed". Ensure both are set.
+if (is.null(rownames(spe))) rownames(spe) <- paste0("gene_", seq_len(nrow(spe)))
+if (is.null(colnames(spe))) colnames(spe) <- paste0("cell_", seq_len(ncol(spe)))
+
+## Coerce SpatialExperiment -> plain SingleCellExperiment before export.
+## We already copied the coords into colData (spatial_x/spatial_y; the
+## Python side rebuilds obsm['spatial'] from them), so we don't need
+## zellkonverter's SpatialExperiment-specific spatialCoords conversion,
+## which is a common source of these Index(None) errors. assays / colData
+## / rowData are preserved by the coercion.
+if (methods::is(spe, "SpatialExperiment")) {
+    spe <- as(spe, "SingleCellExperiment")
+    cat("coerced SpatialExperiment -> SingleCellExperiment for export\n")
+}
+
 ## Prefer raw counts as X (SQUINT's NB loss expects counts).
 xname <- if ("counts" %in% assayNames(spe)) "counts" else assayNames(spe)[1]
 cat("writing X from assay: ", xname, "\n", sep = "")
