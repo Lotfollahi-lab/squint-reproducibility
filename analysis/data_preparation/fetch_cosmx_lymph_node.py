@@ -191,10 +191,12 @@ def main():
         # niche_types=<col>). Only add the infra fields the blob builder
         # requires: obs['cell_id'], obs['batch'] (graph batch_key), and the
         # canonical per-section id uns['batch'] (int).
-        sub.obs["batch"] = str(bidx)
+        # SQUINT convention: uns['batch'] is a 'batchN' STRING (the blob
+        # joins it as a path component AND parses it to the int section id).
+        sub.obs["batch"] = f"batch{bidx}"
         if "cell_id" not in sub.obs.columns:
             sub.obs["cell_id"] = sub.obs_names.astype(str)
-        sub.uns["batch"] = int(bidx)
+        sub.uns["batch"] = f"batch{bidx}"
         sub.uns["squint_source"] = "spatial-niche-benchmark_CosMx_lymph_node"
         sub.uns["sample_id"] = str(sname)
         fp = os.path.join(args.out_dir, f"{_sanitize(sname)}.h5ad")
