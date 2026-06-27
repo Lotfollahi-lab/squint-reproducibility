@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+"""
+Multi-seed ablation DATA SUMMARY — aggregate per-seed metrics across a set of
+variants' multi-seed sweeps into one tidy table (mean ± 95% CI per metric),
+with significance vs a reference variant. Lightweight: reads the already-
+aggregated per_seed_*.csv files (pandas/numpy/scipy only — no anndata,
+matplotlib or sklearn).
+
+For each variant it reads
+    <artifacts>/<dataset>/<variant>*__multiseed/<latest_TS>/metrics/
+        per_seed_niche_identification.csv   (NMI / ARI by code_key + label_key)
+        per_seed_batch_integration.csv      (iLISI / MMD by emb_key)
+and summarises 8 metrics, split into the two axes of the trade-off:
+    resolution : Cell NMI, Cell ARI, Niche NMI, Niche ARI   (↑ better)
+    integration: Cell iLISI (↑), Cell MMD (↓), Niche iLISI (↑), Niche MMD (↓)
+
+Default variant set = the s55 cross-batch-MNN sweep vs the s49_v23 reference
+(within-batch only, wt_cross=0). Override with --variants / --reference.
+
+Outputs (to --out, default <artifacts>/<dataset>/_ablation_summary/):
+    ablation_summary_long.csv   one row per (variant, metric): n, mean, std,
+                                sem, ci95, p_vs_ref, stars
+    ablation_summary_wide.csv   variants × metrics, "mean ± ci95" cells
+and prints the wide table.
+
+Usage:
+    python summarize_ablation_multiseed.py                       # s55 vs s49_v23
+    python summarize_ablation_multiseed.py \
+        --variants s51_v1_ s51_v3_ s51_v4_ --reference s51_v1_
+"""
+from __future__ import annotations
+
+import argparse
+import glob
+import os
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+DEFAULT_ARTIFACTS_ROOT = "/nfs/team361/sb75/squint-reproducibility/artifacts"
+DEFAULT_DATASET = "mmb0-1b_smb1-1b_1p"
+
+CELL_CODE_KEY = "cell_code_indices[level_0]"
+NICHE_CODE_KEY = "neighborhood_code_indices[level_0]"
+CELL_LABELS = ("cell_type", "cell_types", "annotation")
+NICHE_LABELS = ("niche", "Sub_molecular_tissue_region", "ccf_region_name",
+                "spatial_cluster")
+
+# (display name, higher_is_better) for the niche_identification table
+NICHE_METRICS = [
+    ("Cell NMI", CELL_CODE_KEY, "cell", "NMI", True),
+    ("Cell ARI", CELL_CODE_KEY, "cell", "ARI", True),
+    ("Niche NMI", NICHE_CODE_KEY, "niche", "NMI", True),
+    ("Niche ARI", NICHE_CODE_KEY, "niche", "ARI", True),
+]
+# (display name, emb_key, metric_tag, higher_is_better) for batch_integration
+BATCH_METRICS = [
+    ("Cell iLISI", "cell_emb", "iLISI", True),
+    ("Cell MMD", "cell_emb", "MMD", False),
+    ("Niche iLISI", "neighborhood_emb", "iLISI", True),
+    ("Niche MMD", "neighborhood_emb", "MMD", False),
+]
+METRIC_ORDER = [m[0] for m in NICHE_METRICS] + [m[0] for m in BATCH_METRICS]
+
+# Default sweep: s55 cross-batch-MNN vs the s49_v23 reference. (prefix, label)
+DEFAULT_SET = [
+    ("s49_v23_", "Reference (wt_cross=0)"),
+    ("s55_v1_", "cross wt=1 k=1"),
+    ("s55_v2_", "cross wt=5 k=1"),
+    ("s55_v3_", "cross wt=10 k=1"),
+    ("s55_v4_", "cross wt=5 k=2"),
+    ("s55_v5_", "cross wt=2 k=1 floor=0.5"),
+]
+DEFAULT_REFERENCE = "s49_v23_"
+
+
+# ---------------------------------------------------------------------------
+def _resolve_metrics_dir(prefix, artifacts_root, dataset):
+    """Latest <TS>/metrics dir under <root>/<dataset>/<prefix>*__multiseed/."""
+    base = Path(artifacts_root) / dataset
+    cands = sorted(d for d in base.glob(f"{prefix}*__multiseed") if d.is_dir())
+    if not cands:
+        return None
+    if len(cands) > 1:
+        print(f"  WARN: {prefix!r} matched {len(cands)} sweeps; using {cands[0].name}",
+              file=sys.stderr)
+    for ts in sorted((p for p in cands[0].iterdir() if p.is_dir()),
+                     key=lambda p: p.name, reverse=True):
+        m = ts / "metrics"
+        if m.is_dir() and (
+            (m / "per_seed_niche_identification.csv").is_file()
+            or (m / "per_seed_batch_integration.csv").is_file()
+        ):
+            return m
+    return None
+
+
+def _niche_vals(metrics_dir, code_key, branch, col):
+    f = metrics_dir / "per_seed_niche_identification.csv"
+    if not f.is_file():
+        return np.array([])
+    d = pd.read_csv(f)
+    if "split" in d.columns:
+        d = d[d["split"] == "all"]
+    d = d[d["code_key"] == code_key]
+    pref = CELL_LABELS if branch == "cell" else NICHE_LABELS
+    have = set(d["label_key"].unique()) if "label_key" in d.columns else set()
+    lk = next((l for l in pref if l in have), None)
+    if lk is None:
+        return np.array([])
+    d = d[d["label_key"] == lk]
+    return pd.to_numeric(d[col], errors="coerce").dropna().to_numpy()
+
+
+def _batch_vals(metrics_dir, emb_key, tag):
+    f = metrics_dir / "per_seed_batch_integration.csv"
+    if not f.is_file():
+        return np.array([])
+    d = pd.read_csv(f)
+    d = d[(d["emb_key"] == emb_key) & (d["metric"] == tag)]
+    return pd.to_numeric(d["score"], errors="coerce").dropna().to_numpy()
+
+
+def _per_seed_for_metric(metrics_dir, name):
+    for disp, ck, branch, col, _hib in NICHE_METRICS:
+        if disp == name:
+            return _niche_vals(metrics_dir, ck, branch, col)
+    for disp, ek, tag, _hib in BATCH_METRICS:
+        if disp == name:
+            return _batch_vals(metrics_dir, ek, tag)
+    raise ValueError(name)
+
+
+def _ci95(v):
+    v = np.asarray(v, float); v = v[np.isfinite(v)]
+    n = v.size
+    if n < 2:
+        return 0.0
+    sem = v.std(ddof=1) / np.sqrt(n)
+    try:
+        from scipy import stats
+        t = float(stats.t.ppf(0.975, n - 1))
+    except Exception:
+        t = 1.96
+    return float(t * sem)
+
+
+def _pvalue(a, b, test):
+    a = np.asarray(a, float); a = a[np.isfinite(a)]
+    b = np.asarray(b, float); b = b[np.isfinite(b)]
+    if a.size < 2 or b.size < 2:
+        return float("nan")
+    try:
+        from scipy import stats
+        if test == "mannwhitney":
+            return float(stats.mannwhitneyu(a, b, alternative="two-sided")[1])
+        return float(stats.ttest_ind(a, b, equal_var=False)[1])
+    except Exception:
+        return float("nan")
+
+
+def _stars(p):
+    if p != p:
+        return ""
+    return "***" if p < 1e-3 else "**" if p < 1e-2 else "*" if p < 0.05 else "ns"
+
+
+# ---------------------------------------------------------------------------
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--variants", nargs="+", default=None,
+                    help="Variant key prefixes (e.g. s55_v1_). Default: the s55 "
+                         "sweep + s49_v23 reference.")
+    ap.add_argument("--labels", nargs="+", default=None,
+                    help="Optional display labels matching --variants.")
+    ap.add_argument("--reference", default=DEFAULT_REFERENCE,
+                    help="Reference variant prefix for significance (default s49_v23_).")
+    ap.add_argument("--artifacts-root", default=DEFAULT_ARTIFACTS_ROOT)
+    ap.add_argument("--dataset", default=DEFAULT_DATASET)
+    ap.add_argument("--test", choices=["ttest", "mannwhitney"], default="ttest")
+    ap.add_argument("--out", default=None)
+    args = ap.parse_args(argv)
+
+    if args.variants:
+        pairs = list(zip(args.variants,
+                         args.labels if args.labels else args.variants))
+    else:
+        pairs = DEFAULT_SET
+
+    out_dir = Path(args.out) if args.out else (
+        Path(args.artifacts_root) / args.dataset / "_ablation_summary")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Reference per-seed values (for significance).
+    ref_dir = _resolve_metrics_dir(args.reference, args.artifacts_root, args.dataset)
+    ref_vals = {}
+    if ref_dir is not None:
+        ref_vals = {m: _per_seed_for_metric(ref_dir, m) for m in METRIC_ORDER}
+    else:
+        print(f"WARN: reference {args.reference!r} has no sweep — p-values will be NaN",
+              file=sys.stderr)
+
+    rows = []
+    print(f"dataset={args.dataset}  test={args.test}  reference={args.reference}\n")
+    for prefix, label in pairs:
+        md = _resolve_metrics_dir(prefix, args.artifacts_root, args.dataset)
+        if md is None:
+            print(f"  SKIP {label} ({prefix}): no multiseed per_seed data")
+            continue
+        is_ref = (prefix == args.reference)
+        for m in METRIC_ORDER:
+            v = _per_seed_for_metric(md, m)
+            if v.size == 0:
+                continue
+            p = (float("nan") if is_ref or not ref_vals
+                 else _pvalue(ref_vals.get(m, np.array([])), v, args.test))
+            rows.append({
+                "variant": label, "prefix": prefix, "metric": m,
+                "n": int(v.size), "mean": float(v.mean()),
+                "std": float(v.std(ddof=1)) if v.size > 1 else 0.0,
+                "sem": float(v.std(ddof=1) / np.sqrt(v.size)) if v.size > 1 else 0.0,
+                "ci95": _ci95(v), "p_vs_ref": p, "stars": "" if is_ref else _stars(p),
+            })
+        print(f"  OK   {label} ({prefix})  <- {md}")
+
+    if not rows:
+        raise SystemExit("No data found for any variant.")
+    long_df = pd.DataFrame(rows)
+
+    # Wide table: variants × metrics, "mean ± ci (stars)".
+    def _cell(r):
+        s = f"{r['mean']:.3f}±{r['ci95']:.3f}"
+        return s + (f" {r['stars']}" if r["stars"] and r["stars"] != "ns" else "")
+    long_df["_cell"] = long_df.apply(_cell, axis=1)
+    var_order = [lbl for _, lbl in pairs if lbl in set(long_df["variant"])]
+    wide = (long_df.pivot_table(index="variant", columns="metric", values="_cell",
+                                aggfunc="first")
+            .reindex(index=var_order, columns=METRIC_ORDER))
+
+    long_out = out_dir / "ablation_summary_long.csv"
+    wide_out = out_dir / "ablation_summary_wide.csv"
+    long_df.drop(columns="_cell").to_csv(long_out, index=False)
+    wide.to_csv(wide_out)
+
+    pd.set_option("display.width", 220)
+    pd.set_option("display.max_columns", 40)
+    print("\n" + "=" * 78)
+    print("ABLATION SUMMARY  (mean ± 95% CI across seeds; stars = vs reference)")
+    print("  resolution: Cell/Niche NMI, ARI (↑)   |   "
+          "integration: iLISI (↑), MMD (↓)")
+    print("=" * 78)
+    print(wide.to_string())
+    print(f"\n[summary] wrote {long_out}")
+    print(f"[summary] wrote {wide_out}")
+
+
+if __name__ == "__main__":
+    main()

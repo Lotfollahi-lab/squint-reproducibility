@@ -63,13 +63,20 @@ import sys
 
 import numpy as np
 
-# --- default discrete run dirs (the 5 s49_v23 seeds; de-duped at runtime) ----
+# --- default sweep dirs ------------------------------------------------------
+# Default to the s49_v23 (discrete) and s53_v1 (continuous) multi-seed sweep
+# PARENT dirs. `_expand_runs` auto-descends each to its latest
+# <timestamp>/seed_run_index.csv, so these stay correct across re-runs (always
+# picks the newest sweep). Override with --discrete-runs / --continuous-runs.
 _ARTROOT = "/nfs/team361/sb75/squint-reproducibility/artifacts/mmb0-1b_smb1-1b_1p"
 _DISCRETE_VARIANT = ("s49_v23_dualvq+rvq-both+decoder-cov+no-batch-int+enc-deeper+"
                      "dec-w32+knn16+sampler16+cell-w1+bs512+lr7e-4+within-sec+"
                      "decoupled-enc+diversity-w10+contrastWB-w10-k5+mmb0-1b_smb1-1b_1p")
-DEFAULT_DISCRETE_RUNS = [os.path.join(_ARTROOT, _DISCRETE_VARIANT, ts) for ts in (
-    "20260513_214133", "20260513_220352", "20260513_214135")]
+_CONTINUOUS_VARIANT = ("s53_v1_continuous-latent+decoder-cov+no-batch-int+enc-deeper+"
+                       "dec-w32+knn16+sampler16+cell-w1+bs512+lr7e-4+within-sec+"
+                       "decoupled-enc+diversity-w10+contrastWB-w10-k5+mmb0-1b_smb1-1b_1p")
+DEFAULT_DISCRETE_RUNS = [os.path.join(_ARTROOT, _DISCRETE_VARIANT + "__multiseed")]
+DEFAULT_CONTINUOUS_RUNS = [os.path.join(_ARTROOT, _CONTINUOUS_VARIANT + "__multiseed")]
 
 # Per-branch keys.
 _QUANT_KEY    = {"cell": "cell_emb",    "niche": "neighborhood_emb"}      # z_q
@@ -291,7 +298,7 @@ def main():
     ap.add_argument("--discrete-runs", nargs="+", default=DEFAULT_DISCRETE_RUNS,
                     help="Discrete (VQ-VAE) run dirs / multiseed sweep dir / "
                          "seed_run_index.csv (auto-expanded).")
-    ap.add_argument("--continuous-runs", nargs="+", required=False, default=None,
+    ap.add_argument("--continuous-runs", nargs="+", default=DEFAULT_CONTINUOUS_RUNS,
                     help="Continuous run dirs / multiseed sweep dir / "
                          "seed_run_index.csv (auto-expanded).")
     ap.add_argument("--discrete-label", default="Discrete VQ")
@@ -311,9 +318,6 @@ def main():
     ap.add_argument("--no-plot", action="store_true")
     args = ap.parse_args()
 
-    if not args.continuous_runs:
-        raise SystemExit("--continuous-runs is required (the 5 s53_v1 seed runs, "
-                         "or the s53_v1 multiseed sweep dir / seed_run_index.csv).")
 
     import anndata as ad
     import pandas as pd
