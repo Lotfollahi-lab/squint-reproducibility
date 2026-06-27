@@ -1,32 +1,33 @@
 #!/usr/bin/env bash
 # submit_compare_discrete_vs_continuous.sh
 # -----------------------------------------------------------------------------
-# Submit the discrete-vs-continuous run comparison to LSF.
+# Submit the 4-fold, multi-seed discrete-vs-continuous comparison to LSF.
 #
-# Compares a discrete dual-VQ run against its continuous-latent twin on the
-# FAIR footing (k-means clustering of the per-cell embeddings vs ground-truth
-# cell-type / niche labels, identical for both), plus reconstruction + batch-
-# integration metrics from each run's metrics/*.csv. CPU-only (reads the two
-# predicted_adata.h5ad files; no GPU, no model reload).
+# For each branch (cell, niche) it scores 4 representations vs ground-truth
+# labels (NMI/ARI), across the 5 training seeds of each model:
+#   1) discrete codes, 2) VQ-VAE quantized emb clustered, 3) VQ-VAE pre-quant
+#   emb clustered, 4) continuous-model emb clustered (k = #discrete codes).
+# Reports mean/std + per-seed points + pairwise significance. CPU-only (reads
+# each run's predicted_adata.h5ad and runs k-means; no GPU, no model reload).
 #
 # Usage:
-#   bash submit_compare_discrete_vs_continuous.sh [<args forwarded to the .py>]
-#
-# With NO args it compares the two default runs baked into the .py
-# (the s49_v23 discrete run @20260513_223846 and the s53_v1 continuous run
-# @20260627_074514). Forward overrides verbatim, e.g.:
 #   bash submit_compare_discrete_vs_continuous.sh \
-#        --continuous-run /path/to/<timestamp> --discrete-run /path/to/<timestamp>
-#   bash submit_compare_discrete_vs_continuous.sh --out-dir /path/out
+#       --discrete-runs   <s49_v23 sweep dir | seed_run_index.csv | run dirs...> \
+#       --continuous-runs <s53_v1 sweep dir | seed_run_index.csv | run dirs...>
+#
+# --continuous-runs is REQUIRED; --discrete-runs defaults to the 5 s49_v23 seed
+# dirs baked into the .py (dedupe-on-load). Each path may be a run dir, a
+# multiseed sweep dir / seed_run_index.csv (auto-expanded), or a variant parent
+# dir. Any extra flags (--match, --test, --out-dir, ...) are forwarded verbatim.
 #
 # Env overrides:
 #   VENV_PATH   /nfs/team361/sb75/.venvs/squint
 #   LOG_ROOT    /nfs/team361/sb75/squint-reproducibility/artifacts/logs
 #   LSF_GROUP   team361
 #   LSF_QUEUE   normal
-#   LSF_CORES   4
+#   LSF_CORES   8
 #   LSF_MEM_MB  128000
-#   LSF_WALL    2:00
+#   LSF_WALL    4:00      (4 folds x up to 10 runs of k-means)
 #   DRY_RUN     0
 # -----------------------------------------------------------------------------
 set -euo pipefail
@@ -40,9 +41,9 @@ VENV_PATH="${VENV_PATH:-/nfs/team361/sb75/.venvs/squint}"
 LOG_ROOT="${LOG_ROOT:-/nfs/team361/sb75/squint-reproducibility/artifacts/logs}"
 LSF_GROUP="${LSF_GROUP:-team361}"
 LSF_QUEUE="${LSF_QUEUE:-normal}"
-LSF_CORES="${LSF_CORES:-4}"
+LSF_CORES="${LSF_CORES:-8}"
 LSF_MEM_MB="${LSF_MEM_MB:-128000}"
-LSF_WALL="${LSF_WALL:-2:00}"
+LSF_WALL="${LSF_WALL:-4:00}"
 DRY_RUN="${DRY_RUN:-0}"
 
 STAMP="$(date +%Y%m%d_%H%M%S)"
