@@ -14,8 +14,11 @@ and summarises 8 metrics, split into the two axes of the trade-off:
     resolution : Cell NMI, Cell ARI, Niche NMI, Niche ARI   (↑ better)
     integration: Cell iLISI (↑), Cell MMD (↓), Niche iLISI (↑), Niche MMD (↓)
 
-Default variant set = the s55 cross-batch-MNN sweep vs the s49_v23 reference
-(within-batch only, wt_cross=0). Override with --variants / --reference.
+Pick a named preset with --set: s55 (cross-batch-MNN weight sweep vs the
+s49_v23 within-batch reference), s56 (encoder cell/niche coupling methods
+vs the decoupled s55_v3 reference; the DEFAULT), or s57 (all s51/s52/s54
+ablations on the cross-batch spine vs s55_v3). Override with --variants /
+--reference for an arbitrary set.
 
 Outputs (to --out, default <artifacts>/<dataset>/_ablation_summary/):
     ablation_summary_long.csv   one row per (variant, metric): n, mean, std,
@@ -24,7 +27,9 @@ Outputs (to --out, default <artifacts>/<dataset>/_ablation_summary/):
 and prints the wide table.
 
 Usage:
-    python summarize_ablation_multiseed.py                       # s55 vs s49_v23
+    python summarize_ablation_multiseed.py                       # s56 coupling (default)
+    python summarize_ablation_multiseed.py --set s55            # cross-batch weight sweep
+    python summarize_ablation_multiseed.py --set s57            # all ablations, cross spine
     python summarize_ablation_multiseed.py \
         --variants s51_v1_ s51_v3_ s51_v4_ --reference s51_v1_
 """
@@ -64,8 +69,12 @@ BATCH_METRICS = [
 ]
 METRIC_ORDER = [m[0] for m in NICHE_METRICS] + [m[0] for m in BATCH_METRICS]
 
-# Default sweep: s55 cross-batch-MNN vs the s49_v23 reference. (prefix, label)
-DEFAULT_SET = [
+# ---------------------------------------------------------------------------
+# Named preset sweeps. Each is (list of (prefix, label), reference_prefix).
+# Pick one with --set; override with --variants / --reference.
+#
+# s55 — cross-batch-MNN weight/k sweep vs the s49_v23 within-batch reference.
+S55_SET = [
     ("s49_v23_", "Reference (wt_cross=0)"),
     ("s55_v1_", "cross wt=1 k=1"),
     ("s55_v2_", "cross wt=5 k=1"),
@@ -73,7 +82,54 @@ DEFAULT_SET = [
     ("s55_v4_", "cross wt=5 k=2"),
     ("s55_v5_", "cross wt=2 k=1 floor=0.5"),
 ]
-DEFAULT_REFERENCE = "s49_v23_"
+S55_REFERENCE = "s49_v23_"
+
+# s56 — encoder cell/niche COUPLING-METHOD sweep on the cross-batch-MNN spine.
+# Reference = s55_v3 (the decoupled endpoint that all s56 variants modify).
+S56_SET = [
+    ("s55_v3_", "Decoupled (ref)"),
+    ("s56_v1_", "Coupled (shared trunk)"),
+    ("s56_v2_", "Y-shape 192/64"),
+    ("s56_v3_", "Y-shape 128/128"),
+    ("s56_v4_", "Y-shape 64/192"),
+    ("s56_v5_", "Cross-stitch (scalar)"),
+    ("s56_v6_", "Cross-stitch (per-ch)"),
+    ("s56_v7_", "Stop-gradient (coupled)"),
+    ("s56_v8_", "Soft L2 coupling"),
+]
+S56_REFERENCE = "s55_v3_"
+
+# s57 — all s51/s52/s54 ablations re-run on the cross-batch-MNN spine.
+# Reference = s55_v3 (the un-ablated cross-batch spine).
+S57_SET = [
+    ("s55_v3_", "Cross-MNN spine (ref)"),
+    ("s57_v1_", "No adjacency"),
+    ("s57_v2_", "No decoder cov"),
+    ("s57_v3_", "GNN 2 layers"),
+    ("s57_v4_", "knn8"),
+    ("s57_v5_", "knn16/sampler8"),
+    ("s57_v6_", "knn24"),
+    ("s57_v7_", "Cell RVQ 30/10"),
+    ("s57_v8_", "Cell RVQ 30/30"),
+    ("s57_v9_", "Cell RVQ 30/300"),
+    ("s57_v10_", "Niche RVQ 30/10"),
+    ("s57_v11_", "Niche RVQ 30/30"),
+    ("s57_v12_", "Niche RVQ 30/300"),
+    ("s57_v13_", "Cell RVQ 10/30"),
+    ("s57_v14_", "Cell RVQ 90/30"),
+    ("s57_v15_", "Cell RVQ 300/30"),
+    ("s57_v16_", "Niche RVQ 10/30"),
+    ("s57_v17_", "Niche RVQ 90/30"),
+    ("s57_v18_", "Niche RVQ 300/30"),
+]
+S57_REFERENCE = "s55_v3_"
+
+NAMED_SETS = {
+    "s55": (S55_SET, S55_REFERENCE),
+    "s56": (S56_SET, S56_REFERENCE),
+    "s57": (S57_SET, S57_REFERENCE),
+}
+DEFAULT_SET_NAME = "s56"
 
 
 # ---------------------------------------------------------------------------
@@ -171,13 +227,20 @@ def _stars(p):
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--set", dest="preset", choices=list(NAMED_SETS),
+                    default=DEFAULT_SET_NAME,
+                    help=f"Named preset sweep to summarise (default {DEFAULT_SET_NAME!r}). "
+                         f"s55=cross-batch weight sweep; s56=encoder coupling methods; "
+                         f"s57=all ablations on the cross-batch spine. Ignored when "
+                         f"--variants is given.")
     ap.add_argument("--variants", nargs="+", default=None,
-                    help="Variant key prefixes (e.g. s55_v1_). Default: the s55 "
-                         "sweep + s49_v23 reference.")
+                    help="Variant key prefixes (e.g. s56_v1_). Overrides --set.")
     ap.add_argument("--labels", nargs="+", default=None,
                     help="Optional display labels matching --variants.")
-    ap.add_argument("--reference", default=DEFAULT_REFERENCE,
-                    help="Reference variant prefix for significance (default s49_v23_).")
+    ap.add_argument("--reference", default=None,
+                    help="Reference variant prefix for significance. Default: the "
+                         "chosen preset's reference (s56 -> s55_v3_), or the first "
+                         "--variants entry when --variants is given.")
     ap.add_argument("--artifacts-root", default=DEFAULT_ARTIFACTS_ROOT)
     ap.add_argument("--dataset", default=DEFAULT_DATASET)
     ap.add_argument("--test", choices=["ttest", "mannwhitney"], default="ttest")
@@ -187,30 +250,35 @@ def main(argv=None):
     if args.variants:
         pairs = list(zip(args.variants,
                          args.labels if args.labels else args.variants))
+        # default reference = explicit --reference, else the first variant.
+        reference = args.reference or args.variants[0]
     else:
-        pairs = DEFAULT_SET
+        pairs, set_reference = NAMED_SETS[args.preset]
+        reference = args.reference or set_reference
 
     out_dir = Path(args.out) if args.out else (
         Path(args.artifacts_root) / args.dataset / "_ablation_summary")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Reference per-seed values (for significance).
-    ref_dir = _resolve_metrics_dir(args.reference, args.artifacts_root, args.dataset)
+    ref_dir = _resolve_metrics_dir(reference, args.artifacts_root, args.dataset)
     ref_vals = {}
     if ref_dir is not None:
         ref_vals = {m: _per_seed_for_metric(ref_dir, m) for m in METRIC_ORDER}
     else:
-        print(f"WARN: reference {args.reference!r} has no sweep — p-values will be NaN",
+        print(f"WARN: reference {reference!r} has no sweep — p-values will be NaN",
               file=sys.stderr)
 
     rows = []
-    print(f"dataset={args.dataset}  test={args.test}  reference={args.reference}\n")
+    set_label = "custom" if args.variants else args.preset
+    print(f"set={set_label}  dataset={args.dataset}  test={args.test}  "
+          f"reference={reference}\n")
     for prefix, label in pairs:
         md = _resolve_metrics_dir(prefix, args.artifacts_root, args.dataset)
         if md is None:
             print(f"  SKIP {label} ({prefix}): no multiseed per_seed data")
             continue
-        is_ref = (prefix == args.reference)
+        is_ref = (prefix == reference)
         for m in METRIC_ORDER:
             v = _per_seed_for_metric(md, m)
             if v.size == 0:
