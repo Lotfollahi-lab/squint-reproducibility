@@ -36,7 +36,8 @@ Layout choices:
 
 Axes (one figure each):
   1. ADJACENCY RECONSTRUCTION LOSS  — default vs s51_v3 (no-adj)
-  2. CONTRASTIVE CELL LOSS          — default vs s51_v2 (no-contrastive)
+  2. CONTRASTIVE CELL LOSS          — default (within-batch) vs s51_v2 (none)
+                                       + s55_v3 (cross-batch MNN)
   3. DECODER COVARIATE              — default vs s51_v4 (no-decoder-cov)
   4. GNN DEPTH                      — default vs s51_v11 (gnn-l2)
   5. NUMBER OF NEIGHBOURS           — default vs s51_v8 (knn8),
@@ -158,11 +159,13 @@ AXES: Tuple[AxisSpec, ...] = (
     AxisSpec(
         key="axis_2_contrastive",
         title="Contrastive Cell Loss",
-        # Default = s51_v1 (the full model WITH contrastive, == s49_v23);
-        # s51_v2 (drops contrastive) is the comparator in grey.
+        # 3-way: within-batch contrastive (default, == s49_v23) vs none
+        # (s51_v2) vs cross-batch MNN (s55_v3 = wt_cross=10, k_cross=1).
+        # Significance is computed vs the default (within-batch).
         entries=(
-            VariantEntry("s51_v1_", "w. Contrastive", is_default=True),
-            VariantEntry("s51_v2_", "w/o Contrastive"),
+            VariantEntry("s51_v1_", "Within-batch", is_default=True),
+            VariantEntry("s55_v3_", "Cross-batch MNN"),
+            VariantEntry("s51_v2_", "No contrastive"),
         ),
     ),
     AxisSpec(
