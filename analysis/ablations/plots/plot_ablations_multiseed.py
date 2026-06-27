@@ -209,44 +209,79 @@ def _stars(p: float) -> str:
 # ---------------------------------------------------------------------------
 # Plotting
 # ---------------------------------------------------------------------------
+def _darken(colour, f: float = 0.62):
+    """Darken a colour for the per-seed dots so they read against their bar."""
+    import matplotlib.colors as mcolors
+    r, g, b = mcolors.to_rgb(colour)
+    return (r * f, g * f, b * f)
+
+
 def _plot_panel(ax, method_order: List[str],
                 per_method_values: Dict[str, np.ndarray],
                 default_method: str, colour_for: Dict[str, str],
                 metric_label: str, direction: str, test: str, err_kind: str,
-                show_y_ticklabels: bool) -> None:
+                show_y_ticklabels: bool, zoom: bool = False) -> None:
     n = len(method_order)
-    BAR_HEIGHT = 0.45
-    DOT_JITTER = 0.10
-    rng = np.random.default_rng(0)
-    default_vals = np.asarray(per_method_values.get(default_method, np.array([])), float)
-    default_vals = default_vals[np.isfinite(default_vals)]
+    BAR_HEIGHT = 0.52
+    DOT_SPREAD = 0.13
+
+    def _clean(m):
+        v = np.asarray(per_method_values.get(m, np.array([])), float)
+        return v[np.isfinite(v)]
+
+    default_vals = _clean(default_method)
+
+    # Pre-pass: per-method (vals, mean, err) + panel extent, so the
+    # significance stars can be aligned in a single column past the longest
+    # bar and the x-limits leave room for them.
+    stats = {}
+    for m in method_order:
+        v = _clean(m)
+        stats[m] = (v, float(v.mean()), _err_halfwidth(v, err_kind)) if v.size else None
+    ends = [max(mn + er, float(v.max())) for v, mn, er in (s for s in stats.values() if s)]
+    lows = [min(mn - er, float(v.min())) for v, mn, er in (s for s in stats.values() if s)]
+    max_end = max(ends) if ends else 1.0
+    min_low = min(lows) if lows else 0.0
+    span = max(max_end - min(min_low, 0.0), 1e-6)
+    star_x = max_end + 0.05 * span
+
+    # Faint reference line at the default's mean — shows at a glance which
+    # comparators beat the reference.
+    if stats.get(default_method) is not None:
+        ax.axvline(stats[default_method][1], color="0.6", lw=0.6,
+                   ls=(0, (3, 2)), alpha=0.8, zorder=1)
 
     for j, method in enumerate(method_order):
-        vals = np.asarray(per_method_values.get(method, np.array([])), float)
-        vals = vals[np.isfinite(vals)]
-        if vals.size == 0:
+        s = stats[method]
+        if s is None:
             ax.text(0.5, j, "n/a", va="center", ha="center", fontsize=5.5,
-                    fontstyle="italic", color="0.5",
+                    fontstyle="italic", color="0.55",
                     transform=ax.get_yaxis_transform())
             continue
-        mean = float(vals.mean())
+        v, mean, err = s
         colour = colour_for.get(method, COLOUR_OTHER)
-        ax.barh(j, mean, height=BAR_HEIGHT, color=colour, edgecolor=colour,
-                linewidth=0.5, alpha=0.55, zorder=2)
-        err = _err_halfwidth(vals, err_kind)
+        ax.barh(j, mean, height=BAR_HEIGHT, color=colour, edgecolor="none",
+                alpha=0.85, zorder=2)
         if err > 0:
-            ax.errorbar(mean, j, xerr=err, fmt="none", ecolor="0.3",
-                        elinewidth=0.6, capsize=1.5, capthick=0.5, zorder=3)
-        # individual-seed dots (vertical jitter so overlaps stay visible)
-        yj = rng.uniform(-DOT_JITTER, DOT_JITTER, size=vals.size)
-        ax.scatter(vals, np.full(vals.size, j, dtype=float) + yj, s=6,
-                   color="0.12", alpha=0.85, zorder=4, linewidths=0)
-        # significance vs the axis default
-        if method != default_method and default_vals.size >= 2 and vals.size >= 2:
-            s = _stars(_pvalue(default_vals, vals, test))
-            if s:
-                ax.text(mean + err, j - 0.30, s, fontsize=5, va="center",
-                        ha="left", color="0.25", clip_on=False, zorder=5)
+            ax.errorbar(mean, j, xerr=err, fmt="none", ecolor="0.25",
+                        elinewidth=0.8, capsize=2.0, capthick=0.6, zorder=3)
+        # per-seed dots: deterministic value-ordered spread (no random jitter),
+        # white-edged, darker shade of the bar colour -> crisp + tied to bar.
+        if v.size > 1:
+            yoff = np.empty(v.size)
+            yoff[np.argsort(v)] = np.linspace(-DOT_SPREAD, DOT_SPREAD, v.size)
+        else:
+            yoff = np.zeros(1)
+        ax.scatter(v, np.full(v.size, j, dtype=float) + yoff, s=11,
+                   facecolor=_darken(colour), edgecolor="white",
+                   linewidths=0.4, zorder=6)
+        # significance vs the default — single aligned column, "ns" omitted.
+        if method != default_method and default_vals.size >= 2 and v.size >= 2:
+            st = _stars(_pvalue(default_vals, v, test))
+            if st and st != "ns":
+                ax.text(star_x, j, st, fontsize=6.5, fontweight="bold",
+                        va="center", ha="left", color="0.3",
+                        clip_on=False, zorder=7)
 
     ax.set_yticks(range(n))
     if show_y_ticklabels:
@@ -258,7 +293,11 @@ def _plot_panel(ax, method_order: List[str],
     ax.spines["right"].set_visible(False)
     ax.set_ylim(-0.5, n - 0.5)
     ax.invert_yaxis()
-    ax.xaxis.grid(True, linewidth=0.2, alpha=0.4, color="0.65", linestyle="--")
+    # Honest baseline (bars from 0) by default; --zoom truncates to the data
+    # range to amplify small differences.
+    left = (min_low - 0.04 * span) if zoom else min(0.0, min_low)
+    ax.set_xlim(left=left, right=star_x + 0.12 * span)
+    ax.xaxis.grid(True, linewidth=0.3, alpha=0.25, color="0.75")
     ax.yaxis.grid(False)
     ax.set_axisbelow(True)
     ax.xaxis.set_major_locator(MaxNLocator(nbins=1))
@@ -268,15 +307,16 @@ def _plot_panel(ax, method_order: List[str],
 
 def render_axis(axis, per_metric_values: Dict[str, Dict[str, np.ndarray]],
                 labels: Dict[str, str], default_label: str,
-                out_path_base: Path, test: str, err_kind: str) -> None:
+                out_path_base: Path, test: str, err_kind: str,
+                zoom: bool = False) -> None:
     method_order = [labels[e.prefix] for e in axis.entries]
     colour_for = {labels[e.prefix]: (COLOUR_DEFAULT if e.is_default else COLOUR_OTHER)
                   for e in axis.entries}
     n_methods = len(method_order)
     n_panels = len(METRICS)
-    panel_width_in = 0.68
-    fig_width_in = panel_width_in * n_panels + 0.6
-    fig_height_in = max(0.95, 0.26 * n_methods + 0.55)
+    panel_width_in = 0.80
+    fig_width_in = panel_width_in * n_panels + 0.7
+    fig_height_in = max(1.0, 0.30 * n_methods + 0.7)
     fig, axes = plt.subplots(1, n_panels, figsize=(fig_width_in, fig_height_in),
                              sharey=True)
     if n_panels == 1:
@@ -286,16 +326,24 @@ def render_axis(axis, per_metric_values: Dict[str, Dict[str, np.ndarray]],
                     per_method_values=per_metric_values[metric_label],
                     default_method=default_label, colour_for=colour_for,
                     metric_label=metric_label, direction=direction,
-                    test=test, err_kind=err_kind, show_y_ticklabels=(i == 0))
+                    test=test, err_kind=err_kind, show_y_ticklabels=(i == 0),
+                    zoom=zoom)
     err_name = {"ci95": "95% CI", "sem": "SEM", "std": "SD"}[err_kind]
-    fig.suptitle(f"{axis.title}   (mean ± {err_name}, {test}, per-seed dots)",
-                 fontsize=8, fontweight="medium", y=1.04)
+    test_name = {"ttest": "Welch t-test", "mannwhitney": "Mann–Whitney"}[test]
+    # Title big + bold; metadata/legend as a small grey line beneath it (both
+    # above the panels, so they never collide with the bottom x-tick labels).
+    fig.suptitle(axis.title, fontsize=9, fontweight="bold", y=1.12)
+    fig.text(0.5, 1.03,
+             f"bars: mean ± {err_name}   ·   dots: per-seed   ·   "
+             f"dashed: default mean   ·   "
+             f"* p<0.05  ** p<0.01  *** p<0.001 ({test_name} vs default)",
+             ha="center", va="center", fontsize=5.5, color="0.4")
     plt.tight_layout()
-    plt.subplots_adjust(wspace=0.18)
+    plt.subplots_adjust(wspace=0.28)
     out_path_base.parent.mkdir(parents=True, exist_ok=True)
     for ext in ("svg", "png", "pdf"):
         out = out_path_base.with_suffix(f".{ext}")
-        fig.savefig(out, bbox_inches="tight", pad_inches=0.05)
+        fig.savefig(out, bbox_inches="tight", pad_inches=0.06)
         print(f"  -> {out}")
     plt.close(fig)
 
@@ -316,6 +364,10 @@ def main(argv: Optional[List[str]] = None) -> None:
                    help="Significance test vs the axis default (ttest = Welch).")
     p.add_argument("--error", choices=["ci95", "sem", "std"], default="ci95",
                    help="Error-bar half-width (default 95%% CI).")
+    p.add_argument("--zoom", action="store_true",
+                   help="Zoom the x-axis to the data range (amplifies small "
+                        "differences; truncates the bar baseline). Default: "
+                        "honest bars from 0.")
     p.add_argument("--cell-label-keys", type=str,
                    default=",".join(DEFAULT_CELL_LABEL_KEYS))
     p.add_argument("--niche-label-keys", type=str,
@@ -362,7 +414,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         nseed = {m: per_metric_values[m][labels[default_prefix]].size for m, _ in METRICS}
         print(f"  default per-seed n: {nseed}")
         render_axis(axis, per_metric_values, labels, labels[default_prefix],
-                    out_dir / axis.key, args.test, args.error)
+                    out_dir / axis.key, args.test, args.error,
+                    zoom=args.zoom)
 
     print(f"\n[ablations-multiseed] DONE -> {out_dir}")
 
