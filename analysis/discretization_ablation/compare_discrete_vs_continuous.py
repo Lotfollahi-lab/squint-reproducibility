@@ -133,6 +133,12 @@ def _expand_runs(paths, tag):
                         d = fh.read().strip()
                         if d:
                             out.append(d)
+            elif glob.glob(os.path.join(p, "*", "seed_run_index.csv")):
+                # a <variant>__multiseed PARENT dir: descend to the latest
+                # timestamped sweep and read its seed_run_index.csv.
+                idx = sorted(glob.glob(os.path.join(p, "*", "seed_run_index.csv")))[-1]
+                print(f"    [{tag}] using multiseed sweep {os.path.dirname(idx)}")
+                out += _read_run_dirs_csv(idx)
             else:                                                    # variant parent
                 out += [d for d in sorted(glob.glob(os.path.join(p, "*")))
                         if os.path.isfile(os.path.join(d, "predicted_adata.h5ad"))]
