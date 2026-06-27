@@ -209,14 +209,40 @@ AXES: Tuple[AxisSpec, ...] = (
     AxisSpec(
         key="axis_7_niche_codebook_size",
         title="Niche Codebook Size",
-        # The s51_v2 default uses `+rvq-both+` which sets the NICHE RVQ
-        # to (30, 90) as well as the cell RVQ — so the same s51_v2_
+        # The s51_v1 default uses `+rvq-both+` which sets the NICHE RVQ
+        # to (30, 90) as well as the cell RVQ — so the same s51_v1_
         # prefix is the default for this axis, just like axis_6.
         entries=(
             VariantEntry("s52_v1_", "(30, 10) Codebook"),
             VariantEntry("s52_v2_", "(30, 30) Codebook"),
             VariantEntry("s51_v1_", "(30, 90) Codebook", is_default=True),
             VariantEntry("s52_v3_", "(30, 300) Codebook"),
+        ),
+    ),
+    AxisSpec(
+        key="axis_8_cell_codebook_L0",
+        title="Cell Codebook Size (L0)",
+        # L0 sweep: vary the FIRST RVQ level (L0) with L1 HELD AT 30. Unlike the
+        # L1 axis (axis_6), this does NOT pass through the global (30, 90)
+        # reference (which fixes L0=30, L1=90), so the axis centre is L0=30 ->
+        # cell (30, 30) = s51_v5 (red). Niche RVQ held at the default (30, 90).
+        entries=(
+            VariantEntry("s54_v1_", "(10, 30) Codebook"),
+            VariantEntry("s51_v5_", "(30, 30) Codebook", is_default=True),
+            VariantEntry("s54_v2_", "(90, 30) Codebook"),
+            VariantEntry("s54_v3_", "(300, 30) Codebook"),
+        ),
+    ),
+    AxisSpec(
+        key="axis_9_niche_codebook_L0",
+        title="Niche Codebook Size (L0)",
+        # L0 sweep on the NICHE branch (cell RVQ held at the default (30, 90)).
+        # Centre is L0=30 -> niche (30, 30) = s52_v2 (red).
+        entries=(
+            VariantEntry("s54_v4_", "(10, 30) Codebook"),
+            VariantEntry("s52_v2_", "(30, 30) Codebook", is_default=True),
+            VariantEntry("s54_v5_", "(90, 30) Codebook"),
+            VariantEntry("s54_v6_", "(300, 30) Codebook"),
         ),
     ),
 )
@@ -582,6 +608,15 @@ def main(argv: Optional[List[str]] = None) -> None:
     # ---- Render each axis -------------------------------------------------
     for axis in AXES:
         print(f"\n=== {axis.key}: {axis.title} ===")
+        # Skip an axis whose variants aren't all in summary_long.csv yet (e.g.
+        # the s54 L0 axes before those multi-seed runs land) instead of crashing
+        # the whole figure run.
+        missing = [e.prefix for e in axis.entries
+                   if not any(v.startswith(e.prefix) for v in all_variants)]
+        if missing:
+            print(f"  SKIP {axis.key}: no summary_long rows for prefixes "
+                  f"{missing} — run those variants + rebuild summary_long.csv.")
+            continue
         variant_map = _resolve_variants_for_axis(axis, all_variants)
         labels = {e.prefix: e.label for e in axis.entries}
 
