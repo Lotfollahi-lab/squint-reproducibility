@@ -310,6 +310,23 @@ def _pick_batch_emb_key_cell(emb_keys: List[str]) -> Optional[str]:
     return emb_keys[0]
 
 
+def _warn_duplicate_seed_values(df: pd.DataFrame, method_label: str) -> None:
+    """Warn if, within a metric, multiple seeds carry IDENTICAL values — the
+    fingerprint of a multi-seed run-dir collision (seeds that aren't actually
+    independent; see run_squint_multi_seed.py's duplicate-run-dir guard). Such
+    duplication biases the mean and understates the per-seed error bars."""
+    if df.empty or "seed" not in df.columns:
+        return
+    for metric, g in df.groupby("metric"):
+        n_seed = g["seed"].nunique()
+        n_val = g["value"].round(6).nunique()
+        if n_seed >= 2 and n_val < n_seed:
+            print(f"  WARNING [{method_label}] {metric}: {n_seed} seeds but only "
+                  f"{n_val} distinct value(s) — likely a run-dir collision "
+                  f"(seeds not independent; error bars understated).",
+                  file=sys.stderr)
+
+
 def load_method_metrics(variant_dir: Path, method_label: str) -> pd.DataFrame:
     """Return tidy DataFrame: columns = (method, seed, metric, value).
 
@@ -376,7 +393,9 @@ def load_method_metrics(variant_dir: Path, method_label: str) -> pd.DataFrame:
                 "value":  float(r["score"]),
             })
 
-    return pd.DataFrame(rows)
+    out_df = pd.DataFrame(rows)
+    _warn_duplicate_seed_values(out_df, method_label)
+    return out_df
 
 
 # ---------------------------------------------------------------------------

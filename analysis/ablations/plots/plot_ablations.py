@@ -17,10 +17,12 @@ in RED (`#FF006E`, the SQUINT accent) and the non-selected variants
 in GREY (`#888888`, matching the "Vanilla VQ-VAE" colour in the
 Pearson plots).
 
-Default variant (RED in every axis):
-  s51_v2_dualvq+rvq-both+decoder-cov+no-batch-int+enc-deeper+dec-w32
+Default variant (RED in every axis) — the full SQUINT model WITH the
+within-batch contrastive loss (== the s49_v23 benchmark variant), so every
+axis differs from it in exactly ONE factor:
+  s51_v1_dualvq+rvq-both+decoder-cov+no-batch-int+enc-deeper+dec-w32
     +knn16+sampler16+cell-w1+bs512+lr7e-4+within-sec
-    +decoupled-enc+diversity-w10
+    +decoupled-enc+diversity-w10+contrastWB-w10-k5
     +mmb0-1b_smb1-1b_1p
 
 Layout choices:
@@ -34,7 +36,7 @@ Layout choices:
 
 Axes (one figure each):
   1. ADJACENCY RECONSTRUCTION LOSS  — default vs s51_v3 (no-adj)
-  2. CONTRASTIVE CELL LOSS          — default vs s51_v1 (with-contrastive)
+  2. CONTRASTIVE CELL LOSS          — default vs s51_v2 (no-contrastive)
   3. DECODER COVARIATE              — default vs s51_v4 (no-decoder-cov)
   4. GNN DEPTH                      — default vs s51_v11 (gnn-l2)
   5. NUMBER OF NEIGHBOURS           — default vs s51_v8 (knn8),
@@ -149,25 +151,25 @@ AXES: Tuple[AxisSpec, ...] = (
         key="axis_1_adjacency",
         title="Adjacency Reconstruction Loss",
         entries=(
-            VariantEntry("s51_v2_", "w. Adj. Recon.",  is_default=True),
+            VariantEntry("s51_v1_", "w. Adj. Recon.",  is_default=True),
             VariantEntry("s51_v3_", "w/o Adj. Recon."),
         ),
     ),
     AxisSpec(
         key="axis_2_contrastive",
         title="Contrastive Cell Loss",
-        # User's chosen default DROPS the contrastive loss (s51_v2).
-        # s51_v1 (with contrastive) is the comparator in grey.
+        # Default = s51_v1 (the full model WITH contrastive, == s49_v23);
+        # s51_v2 (drops contrastive) is the comparator in grey.
         entries=(
-            VariantEntry("s51_v1_", "w. Contrastive"),
-            VariantEntry("s51_v2_", "w/o Contrastive", is_default=True),
+            VariantEntry("s51_v1_", "w. Contrastive", is_default=True),
+            VariantEntry("s51_v2_", "w/o Contrastive"),
         ),
     ),
     AxisSpec(
         key="axis_3_decoder_cov",
         title="Decoder Covariate",
         entries=(
-            VariantEntry("s51_v2_", "w. Dec. Cov.",  is_default=True),
+            VariantEntry("s51_v1_", "w. Dec. Cov.",  is_default=True),
             VariantEntry("s51_v4_", "w/o Dec. Cov."),
         ),
     ),
@@ -175,7 +177,7 @@ AXES: Tuple[AxisSpec, ...] = (
         key="axis_4_gnn_layers",
         title="GNN Depth",
         entries=(
-            VariantEntry("s51_v2_",  "1 Layer",  is_default=True),
+            VariantEntry("s51_v1_",  "1 Layer",  is_default=True),
             VariantEntry("s51_v11_", "2 Layers"),
         ),
     ),
@@ -190,7 +192,7 @@ AXES: Tuple[AxisSpec, ...] = (
         entries=(
             VariantEntry("s51_v8_",  "8 Neigh."),
             VariantEntry("s51_v9_",  "16 Neigh. (8 Sampled)"),
-            VariantEntry("s51_v2_",  "16 Neigh.", is_default=True),
+            VariantEntry("s51_v1_",  "16 Neigh.", is_default=True),
             VariantEntry("s51_v10_", "24 Neigh."),
         ),
     ),
@@ -200,7 +202,7 @@ AXES: Tuple[AxisSpec, ...] = (
         entries=(
             VariantEntry("s51_v6_", "(30, 10) Codebook"),
             VariantEntry("s51_v5_", "(30, 30) Codebook"),
-            VariantEntry("s51_v2_", "(30, 90) Codebook", is_default=True),
+            VariantEntry("s51_v1_", "(30, 90) Codebook", is_default=True),
             VariantEntry("s51_v7_", "(30, 300) Codebook"),
         ),
     ),
@@ -213,7 +215,7 @@ AXES: Tuple[AxisSpec, ...] = (
         entries=(
             VariantEntry("s52_v1_", "(30, 10) Codebook"),
             VariantEntry("s52_v2_", "(30, 30) Codebook"),
-            VariantEntry("s51_v2_", "(30, 90) Codebook", is_default=True),
+            VariantEntry("s51_v1_", "(30, 90) Codebook", is_default=True),
             VariantEntry("s52_v3_", "(30, 300) Codebook"),
         ),
     ),
