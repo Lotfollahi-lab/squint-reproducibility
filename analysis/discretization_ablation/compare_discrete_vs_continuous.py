@@ -90,6 +90,16 @@ C1, C2, C3, C4 = ("1. Discrete codes (L0)",
                   "4. Continuous emb, clustered")
 SHORT = {C1: "Codes", C2: "Quant.\nemb", C3: "Pre-quant\nemb", C4: "Continuous\nemb"}
 BRANCHES = [("cell", "Cell-type"), ("niche", "Niche")]
+# Per-condition colours: the three VQ-VAE folds in the red family, the
+# continuous baseline in grey — mirrors the ablation figure's red-vs-grey.
+COND_COLOURS = {C1: "#C2185B", C2: "#E91E63", C3: "#F06292", C4: "#9E9E9E"}
+
+
+def _darken(colour, f: float = 0.62):
+    """Darker shade for the per-seed dots (so they read against their bar)."""
+    import matplotlib.colors as mcolors
+    r, g, b = mcolors.to_rgb(colour)
+    return (r * f, g * f, b * f)
 
 
 # ----------------------------------------------------------------------------
@@ -223,6 +233,27 @@ def _stars(p):
     return "***" if p < 1e-3 else "**" if p < 1e-2 else "*" if p < 5e-2 else "ns"
 
 
+def _err_halfwidth(vals, kind="ci95"):
+    """Error-bar half-width: 95% CI (default), SEM, or STD."""
+    v = np.asarray(vals, float)
+    v = v[np.isfinite(v)]
+    n = v.size
+    if n < 2:
+        return 0.0
+    sd = float(v.std(ddof=1))
+    if kind == "std":
+        return sd
+    sem = sd / np.sqrt(n)
+    if kind == "sem":
+        return sem
+    try:
+        from scipy import stats
+        t = float(stats.t.ppf(0.975, n - 1))
+    except Exception:
+        t = 1.96
+    return t * sem
+
+
 def _pvalue(a, b, paired, test):
     a, b = np.asarray(a, float), np.asarray(b, float)
     a, b = a[~np.isnan(a)], b[~np.isnan(b)]
@@ -268,6 +299,8 @@ def main():
     ap.add_argument("--kmeans-seed", type=int, default=0,
                     help="Fixed k-means seed (variance comes from training seeds).")
     ap.add_argument("--test", choices=["ttest", "mannwhitney"], default="ttest")
+    ap.add_argument("--error", choices=["ci95", "sem", "std"], default="ci95",
+                    help="Error-bar half-width (default 95%% CI).")
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("--no-plot", action="store_true")
     args = ap.parse_args()
@@ -434,7 +467,10 @@ def main():
     print(sig_df.to_string(index=False))
     print(f"\n[compare] wrote {ps_csv}\n[compare] wrote {su_csv}\n[compare] wrote {sg_csv}")
 
-    # ---- figure: 2 metrics x 2 branches, 4 bars each + points + std + brackets ----
+    # ---- figure: 2 metrics x 2 branches, 4 bars each — same look as the
+    #      ablation figure: white-edged per-seed dots (deterministic spread),
+    #      95% CI, reference line at the continuous mean, significance stars
+    #      (each VQ-VAE fold vs the continuous baseline; no "ns" clutter) ----
     if not args.no_plot:
         try:
             import matplotlib
@@ -443,47 +479,78 @@ def main():
             matplotlib.rcParams["pdf.fonttype"] = 42
             matplotlib.rcParams["ps.fonttype"] = 42
             import matplotlib.pyplot as plt
-            rng = np.random.default_rng(0)
-            fig, axes = plt.subplots(2, 2, figsize=(11, 9), squeeze=False)
+            err_name = {"ci95": "95% CI", "sem": "SEM", "std": "SD"}[args.error]
+            fig, axes = plt.subplots(2, 2, figsize=(10, 8.5), squeeze=False)
             for r, metric in enumerate(("NMI", "ARI")):
                 for c, (branch, bn) in enumerate(BRANCHES):
                     ax = axes[r][c]
-                    means, stds, pts = [], [], []
+                    means, errs, pts = [], [], []
                     for cond in order:
-                        v = ps_df[(ps_df.branch == branch) & (ps_df.condition == cond)][metric].to_numpy()
-                        means.append(np.nanmean(v) if len(v) else np.nan)
-                        stds.append(np.nanstd(v, ddof=1) if len(v) > 1 else 0.0)
+                        v = ps_df[(ps_df.branch == branch)
+                                  & (ps_df.condition == cond)][metric].to_numpy()
+                        v = v[np.isfinite(v)]
+                        means.append(float(v.mean()) if v.size else np.nan)
+                        errs.append(_err_halfwidth(v, args.error))
                         pts.append(v)
                     x = np.arange(len(order))
-                    ax.bar(x, means, yerr=stds, capsize=4, color="0.8",
-                           edgecolor="0.3", zorder=1)
-                    for xi, v in zip(x, pts):
-                        if len(v):
-                            ax.scatter(np.full(len(v), xi) + rng.uniform(-.12, .12, len(v)),
-                                       v, s=22, zorder=3, color="0.15", alpha=0.85)
-                    # significance brackets: each discrete fold vs continuous (fold 4)
+                    colours = [COND_COLOURS.get(c2, "#888888") for c2 in order]
+                    # reference line at the continuous (C4) mean
+                    c4_mean = means[order.index(C4)] if C4 in order else np.nan
+                    if c4_mean == c4_mean:
+                        ax.axhline(c4_mean, color="0.6", lw=0.7, ls=(0, (3, 2)),
+                                   alpha=0.8, zorder=1)
+                    ax.bar(x, means, yerr=errs, width=0.66, color=colours,
+                           edgecolor="none", alpha=0.85, zorder=2,
+                           error_kw=dict(ecolor="0.25", elinewidth=0.9,
+                                         capsize=2.5, capthick=0.7, zorder=3))
+                    # white-edged per-seed dots, deterministic value-ordered spread
+                    for xi, v, col in zip(x, pts, colours):
+                        if v.size == 0:
+                            continue
+                        if v.size > 1:
+                            xoff = np.empty(v.size)
+                            xoff[np.argsort(v)] = np.linspace(-0.16, 0.16, v.size)
+                        else:
+                            xoff = np.zeros(1)
+                        ax.scatter(np.full(v.size, xi) + xoff, v, s=16,
+                                   facecolor=_darken(col), edgecolor="white",
+                                   linewidths=0.4, zorder=6)
+                    # significance stars: each VQ-VAE fold (C1/C2/C3) vs continuous (C4)
                     sub = sig_df[(sig_df.branch == branch) & (sig_df.metric == metric)]
-                    top = np.nanmax([np.nanmax(v) if len(v) else 0 for v in pts])
-                    step = 0.05 * (top if top > 0 else 1.0)
-                    lvl = 0
-                    for a_i, cond in enumerate((C1, C2, C3)):
+                    tops = [(float(v.max()) if v.size else 0.0) + e
+                            for v, e in zip(pts, errs)]
+                    pad = 0.02 * (max(tops) if max(tops) > 0 else 1.0)
+                    for a_i, cond in enumerate(order):
+                        if cond == C4:
+                            continue
                         row = sub[(sub.cond_a == cond) & (sub.cond_b == C4)]
                         if row.empty:
                             continue
-                        star = row.iloc[0]["stars"]
-                        y = top + step * (1.5 + lvl)
-                        ax.plot([a_i, a_i, 3, 3], [y, y + step * .4, y + step * .4, y],
-                                lw=1.0, c="0.3", zorder=4)
-                        ax.text((a_i + 3) / 2, y + step * .4, star, ha="center",
-                                va="bottom", fontsize=8)
-                        lvl += 1
+                        st = str(row.iloc[0]["stars"])
+                        if st in ("", "ns", "n/a"):
+                            continue
+                        ax.text(a_i, tops[a_i] + pad, st, ha="center", va="bottom",
+                                fontsize=7, fontweight="bold", color="0.3")
                     ax.set_xticks(x)
-                    ax.set_xticklabels([SHORT[c2] for c2 in order], fontsize=8)
+                    ax.set_xticklabels([SHORT[c2] for c2 in order], fontsize=7.5)
                     ax.set_ylabel(metric)
-                    ax.set_title(f"{bn} — {metric} vs Ground-Truth Labels", fontsize=10)
-            fig.suptitle("Discrete Codes vs Clustered Embeddings Across 5 Seeds "
-                         "(k = Number of Discrete Codes)", fontsize=12)
-            fig.tight_layout(rect=(0, 0, 1, 0.96))
+                    ax.set_ylim(bottom=0)
+                    ax.spines["top"].set_visible(False)
+                    ax.spines["right"].set_visible(False)
+                    ax.yaxis.grid(True, linewidth=0.3, alpha=0.25, color="0.75")
+                    ax.set_axisbelow(True)
+                    ax.set_title(f"{bn} — {metric} vs ground-truth labels",
+                                 fontsize=9, fontweight="medium")
+            fig.suptitle("Discrete Codes vs Clustered Embeddings "
+                         "(5 seeds, k = #discrete codes)",
+                         fontsize=11, fontweight="bold", y=1.0)
+            fig.text(0.5, 0.005,
+                     f"bars: mean ± {err_name}   ·   dots: per-seed   ·   "
+                     f"dashed: continuous mean   ·   "
+                     f"* p<0.05  ** p<0.01  *** p<0.001 vs continuous "
+                     f"(independent {args.test})",
+                     ha="center", va="bottom", fontsize=6, color="0.4")
+            fig.tight_layout(rect=(0, 0.03, 1, 0.97))
             for ext in ("png", "svg", "pdf"):
                 fig.savefig(os.path.join(out_dir, f"comparison.{ext}"),
                             dpi=150, bbox_inches="tight")
