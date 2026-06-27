@@ -65,29 +65,43 @@ DEFAULT_ARTIFACTS_ROOT = Path(
 # ---------------------------------------------------------------------------
 # Per-seed data loading (from the __multiseed sweeps)
 # ---------------------------------------------------------------------------
+# Config-identical aliases: if a prefix has no __multiseed sweep, fall back to
+# these. s51_v1 (the cross-axis reference in axes 1-7) IS the s49_v23 benchmark
+# winner under a different key — so a figure can reuse an existing s49_v23 sweep
+# for the reference slot instead of re-running s51_v1. Tries the primary prefix
+# FIRST, then the alias.
+REF_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "s51_v1_": ("s49_v23_",),
+}
+
+
 def _multiseed_metrics_dir(prefix: str, dataset: str,
                            artifacts_root: Path) -> Optional[Path]:
     """Resolve an axis-entry prefix (e.g. 's51_v5_') to the latest
     `<TS>/metrics` dir under `<root>/<dataset>/<prefix>*__multiseed/` that has
-    per_seed_*.csv. Returns None if the variant's sweep isn't present yet."""
+    per_seed_*.csv. Falls back to REF_ALIASES (config-identical variants) if the
+    primary prefix has no sweep. Returns None if nothing is found."""
     base = artifacts_root / dataset
     if not base.is_dir():
         return None
-    cands = sorted(d for d in base.glob(f"{prefix}*__multiseed") if d.is_dir())
-    if not cands:
-        return None
-    if len(cands) > 1:
-        print(f"  WARN: prefix {prefix!r} matched {len(cands)} __multiseed "
-              f"dirs; using {cands[0].name}", file=sys.stderr)
-    vdir = cands[0]
-    for ts in sorted((p for p in vdir.iterdir() if p.is_dir()),
-                     key=lambda p: p.name, reverse=True):
-        m = ts / "metrics"
-        if m.is_dir() and (
-            (m / "per_seed_niche_identification.csv").is_file()
-            or (m / "per_seed_batch_integration.csv").is_file()
-        ):
-            return m
+    for pref in (prefix, *REF_ALIASES.get(prefix, ())):
+        cands = sorted(d for d in base.glob(f"{pref}*__multiseed") if d.is_dir())
+        if not cands:
+            continue
+        if len(cands) > 1:
+            print(f"  WARN: prefix {pref!r} matched {len(cands)} __multiseed "
+                  f"dirs; using {cands[0].name}", file=sys.stderr)
+        for ts in sorted((p for p in cands[0].iterdir() if p.is_dir()),
+                         key=lambda p: p.name, reverse=True):
+            m = ts / "metrics"
+            if m.is_dir() and (
+                (m / "per_seed_niche_identification.csv").is_file()
+                or (m / "per_seed_batch_integration.csv").is_file()
+            ):
+                if pref != prefix:
+                    print(f"  (alias: using {pref!r} sweep for {prefix!r} "
+                          f"-> {cands[0].name})")
+                return m
     return None
 
 
