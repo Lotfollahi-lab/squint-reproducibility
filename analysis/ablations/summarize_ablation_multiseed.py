@@ -27,7 +27,8 @@ Outputs (to --out, default <artifacts>/<dataset>/_ablation_summary/):
 and prints the wide table.
 
 Usage:
-    python summarize_ablation_multiseed.py                       # s56 coupling (default)
+    python summarize_ablation_multiseed.py                       # s58 info-flow (default)
+    python summarize_ablation_multiseed.py --set s56            # encoder coupling methods
     python summarize_ablation_multiseed.py --set s55            # cross-batch weight sweep
     python summarize_ablation_multiseed.py --set s57            # all ablations, cross spine
     python summarize_ablation_multiseed.py \
@@ -124,12 +125,27 @@ S57_SET = [
 ]
 S57_REFERENCE = "s55_v3_"
 
+# s58 — information-flow / complementarity coupling (beyond trunk-sharing).
+# Reference = s55_v3 (the decoupled baseline these variants modify).
+S58_SET = [
+    ("s55_v3_", "Decoupled (ref)"),
+    ("s58_v1_", "Compose z_q_cell"),
+    ("s58_v2_", "Compose z_q_cell proj64"),
+    ("s58_v3_", "Compose z_mlp (cont.)"),
+    ("s58_v4_", "Compose z_q_cell no-detach"),
+    ("s58_v5_", "Disentangle w=100"),
+    ("s58_v6_", "Disentangle w=1000"),
+    ("s58_v7_", "Compose + disentangle"),
+]
+S58_REFERENCE = "s55_v3_"
+
 NAMED_SETS = {
     "s55": (S55_SET, S55_REFERENCE),
     "s56": (S56_SET, S56_REFERENCE),
     "s57": (S57_SET, S57_REFERENCE),
+    "s58": (S58_SET, S58_REFERENCE),
 }
-DEFAULT_SET_NAME = "s56"
+DEFAULT_SET_NAME = "s58"
 
 
 # ---------------------------------------------------------------------------
@@ -231,8 +247,8 @@ def main(argv=None):
                     default=DEFAULT_SET_NAME,
                     help=f"Named preset sweep to summarise (default {DEFAULT_SET_NAME!r}). "
                          f"s55=cross-batch weight sweep; s56=encoder coupling methods; "
-                         f"s57=all ablations on the cross-batch spine. Ignored when "
-                         f"--variants is given.")
+                         f"s57=all ablations on the cross-batch spine; s58=information-"
+                         f"flow / complementarity coupling. Ignored when --variants is given.")
     ap.add_argument("--variants", nargs="+", default=None,
                     help="Variant key prefixes (e.g. s56_v1_). Overrides --set.")
     ap.add_argument("--labels", nargs="+", default=None,
