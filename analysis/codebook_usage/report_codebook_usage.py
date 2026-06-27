@@ -299,6 +299,13 @@ def main():
         try:
             import matplotlib
             matplotlib.use("Agg")
+            # Keep all text as EDITABLE TEXT (not outlined paths) in vector
+            # exports so labels can be retyped/restyled in Adobe Illustrator:
+            #   svg.fonttype='none' -> SVG <text> elements referencing fonts by name
+            #   pdf/ps.fonttype=42  -> embedded TrueType, text stays selectable/editable
+            matplotlib.rcParams["svg.fonttype"] = "none"
+            matplotlib.rcParams["pdf.fonttype"] = 42
+            matplotlib.rcParams["ps.fonttype"] = 42
             import matplotlib.pyplot as plt
             items = sorted(usage_for_plot.keys())
             ncol = max(len(set(q for _, q in items)), 1)
@@ -317,23 +324,25 @@ def main():
                 # reference line = uniform usage level (1/K)
                 ax.axhline(1.0 / K, ls="--", lw=0.8, color="0.4")
                 mrow = df[(df.branch == branch) & (df.level == f"L{q}")].iloc[0]
-                ax.set_title(f"{branch} L{q}: K={K}, used={n_used} "
+                ax.set_title(f"{branch.capitalize()} L{q}: K={K}, Used={n_used} "
                              f"({mrow.active_fraction:.0%}), "
-                             f"ppl={mrow.perplexity:.1f}/{K}", fontsize=9)
-                ax.set_xlabel("code (sorted by usage)")
-                ax.set_ylabel("fraction of cells")
+                             f"Perplexity={mrow.perplexity:.1f}/{K}", fontsize=9)
+                ax.set_xlabel("Code (Sorted by Usage)")
+                ax.set_ylabel("Fraction of Cells")
             for r in range(nrow):
                 for c in range(ncol):
                     if (branch_order[r] if r < len(branch_order) else None, c) \
                             not in usage_for_plot:
                         axes[r][c].axis("off")
-            fig.suptitle("SQUINT codebook usage — sorted per-code assignment "
-                         "frequency (dashed = uniform 1/K)", fontsize=10)
+            fig.suptitle("SQUINT Codebook Usage — Sorted Per-Code Assignment "
+                         "Frequency (Dashed = Uniform 1/K)", fontsize=10)
             fig.tight_layout(rect=(0, 0, 1, 0.96))
-            for ext in ("png", "svg"):
+            # PNG for quick viewing; SVG + PDF carry editable text for Illustrator.
+            for ext in ("png", "svg", "pdf"):
                 fig.savefig(os.path.join(out_dir, f"codebook_usage.{ext}"),
                             dpi=150, bbox_inches="tight")
-            print(f"[usage] wrote {os.path.join(out_dir, 'codebook_usage.png')} (+ .svg)")
+            print(f"[usage] wrote {os.path.join(out_dir, 'codebook_usage.png')} "
+                  f"(+ .svg, .pdf — editable text in Illustrator)")
         except Exception as e:  # plotting is a nicety; never fail the report
             print(f"[usage] plot skipped ({type(e).__name__}: {e})", file=sys.stderr)
 
