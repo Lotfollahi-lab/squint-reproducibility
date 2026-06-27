@@ -361,6 +361,26 @@ def _to_dense(a):
     return np.asarray(a.todense()) if hasattr(a, "todense") else np.asarray(a)
 
 
+def _resolve_codes(A, obs_key, obsm_key, uns_key):
+    """Per-cell L0 code, resolved from obs -> obsm -> uns (RVQ: take level 0).
+    Mirrors report_codebook_usage.py's branch-key fallback so it works whether
+    the run wrote codes to obs['*_code_index'], obsm['*_code_indices'], or
+    uns['Indices_*']."""
+    arr = None
+    if obs_key in A.obs.columns:
+        arr = A.obs[obs_key].to_numpy()
+    elif obsm_key in A.obsm:
+        arr = _to_dense(A.obsm[obsm_key])
+    elif uns_key in A.uns:
+        arr = np.asarray(A.uns[uns_key])
+    if arr is None:
+        return None
+    arr = np.asarray(arr)
+    if arr.ndim == 2:                                   # (n_cells, n_levels) RVQ
+        arr = arr[:, 0]
+    return arr.astype(int).reshape(-1)
+
+
 def diagnose_one(path):
     import anndata as ad
     A = ad.read_h5ad(path)
@@ -405,10 +425,10 @@ def diagnose_one(path):
             feat_cell, obs[niche_lab].to_numpy())
 
     # 3. Composition premise (idea #1) --------------------------------------
-    have_codes = CODE_CELL in obs.columns
+    cell_codes = _resolve_codes(A, CODE_CELL, "cell_code_indices", "Indices_cell")
+    have_codes = cell_codes is not None
     have_spatial = "spatial" in A.obsm
     if have_codes and have_spatial and sec_key is not None and niche_lab is not None:
-        cell_codes = obs[CODE_CELL].to_numpy().astype(int)
         n_codes = int(cell_codes.max()) + 1
         out["n_cell_codes_seen"] = int(np.unique(cell_codes).size)
         coords = _to_dense(A.obsm["spatial"])[:, :2]
@@ -425,6 +445,13 @@ def diagnose_one(path):
         miss = [n for n, ok in [("codes", have_codes), ("spatial", have_spatial),
                                 ("section", sec_key is not None),
                                 ("niche_label", niche_lab is not None)] if not ok]
+        # List what IS available so a rerun can pinpoint the right key names.
+        print(f"    [diag] available obs cols: {list(obs.columns)[:40]}",
+              file=sys.stderr)
+        print(f"    [diag] available obsm keys: {list(A.obsm.keys())}",
+              file=sys.stderr)
+        print(f"    [diag] available uns keys: {list(A.uns.keys())[:40]}",
+              file=sys.stderr)
         print(f"    [diag] skipping composition test (missing: {', '.join(miss)})",
               file=sys.stderr)
     return out

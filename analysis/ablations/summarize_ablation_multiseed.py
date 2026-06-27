@@ -27,7 +27,8 @@ Outputs (to --out, default <artifacts>/<dataset>/_ablation_summary/):
 and prints the wide table.
 
 Usage:
-    python summarize_ablation_multiseed.py                       # s58 info-flow (default)
+    python summarize_ablation_multiseed.py                       # s59 param-efficient (default)
+    python summarize_ablation_multiseed.py --set s58            # info-flow / complementarity
     python summarize_ablation_multiseed.py --set s56            # encoder coupling methods
     python summarize_ablation_multiseed.py --set s55            # cross-batch weight sweep
     python summarize_ablation_multiseed.py --set s57            # all ablations, cross spine
@@ -139,13 +140,29 @@ S58_SET = [
 ]
 S58_REFERENCE = "s55_v3_"
 
+# s59 — soft-L2 weight sweep + parameter-efficient coupling (shared trunk +
+# per-branch adapter). Reference = s55_v3 (decoupled).
+S59_SET = [
+    ("s55_v3_", "Decoupled (ref)"),
+    ("s56_v1_", "Coupled (no adapter)"),
+    ("s56_v8_", "Soft L2 w=1e-3"),
+    ("s59_v1_", "Soft L2 w=1e-4"),
+    ("s59_v2_", "Soft L2 w=1e-2"),
+    ("s59_v3_", "Soft L2 w=1e-1"),
+    ("s59_v4_", "Coupled + affine (~50%)"),
+    ("s59_v5_", "Coupled + LoRA r16 (~52%)"),
+    ("s59_v6_", "Coupled + MLP head (~80%)"),
+]
+S59_REFERENCE = "s55_v3_"
+
 NAMED_SETS = {
     "s55": (S55_SET, S55_REFERENCE),
     "s56": (S56_SET, S56_REFERENCE),
     "s57": (S57_SET, S57_REFERENCE),
     "s58": (S58_SET, S58_REFERENCE),
+    "s59": (S59_SET, S59_REFERENCE),
 }
-DEFAULT_SET_NAME = "s58"
+DEFAULT_SET_NAME = "s59"
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +265,8 @@ def main(argv=None):
                     help=f"Named preset sweep to summarise (default {DEFAULT_SET_NAME!r}). "
                          f"s55=cross-batch weight sweep; s56=encoder coupling methods; "
                          f"s57=all ablations on the cross-batch spine; s58=information-"
-                         f"flow / complementarity coupling. Ignored when --variants is given.")
+                         f"flow / complementarity coupling; s59=soft-L2 sweep + "
+                         f"parameter-efficient coupling. Ignored when --variants is given.")
     ap.add_argument("--variants", nargs="+", default=None,
                     help="Variant key prefixes (e.g. s56_v1_). Overrides --set.")
     ap.add_argument("--labels", nargs="+", default=None,
