@@ -96,6 +96,14 @@ case "$DATASET_TAG" in
         SILVER_ROOT_DEFAULT="/nfs/team361/sb75/DATASETS/silver"
         SILVER_LEAF_DEFAULT="$DATASET_TAG"
         ;;
+    spatch_ov_1p|spatch_hcc_1p|spatch_coad_1p)
+        # SPATCH pan-cancer spatial subsets (ovarian / HCC / colon adeno),
+        # human, multi-section (dataset_id_*.h5ad). Standard team361 silver
+        # leaf (== the `*` default, explicit so it groups with the
+        # dataset-args case below).
+        SILVER_ROOT_DEFAULT="/nfs/team361/sb75/DATASETS/silver"
+        SILVER_LEAF_DEFAULT="$DATASET_TAG"
+        ;;
     mmb0-1b_smb1-1b_1p)
         # 1 MERFISH + 1 STARmap mouse-brain silver. The on-disk leaf
         # is `<tag>_coord_aligned` (post xy-alignment pass); the
@@ -339,6 +347,34 @@ case "$DATASET_TAG" in
         # Sub_molecular_tissue_region / ccf_region_name — ALL already in the
         # runner defaults, so no explicit override needed (same as the mmb
         # case). Leave LABEL_KEY_ARGS empty.
+        ;;
+    spatch_ov_1p|spatch_hcc_1p|spatch_coad_1p)
+        # SPATCH pan-cancer spatial subsets (ovarian / HCC / colon adeno).
+        # HUMAN, multi-section (dataset_id_*.h5ad) -> iLISI/MMD batch
+        # integration IS meaningful here.
+        SPECIES="human"
+        # !! PLATFORM-DEPENDENT (verify per subset). The SPATCH extraction
+        # supports BOTH Xenium (var_names = ENSG + an `ensembl_id` var col)
+        # AND CosMx (var_names = HGNC symbols). The geneformer/nicheformer
+        # flag below is ROBUST to both: `_ensure_ensembl_ids` auto-detects
+        # ENSG var_names BEFORE falling back to mygene symbol->ENSG mapping.
+        # nicheformer technology defaults to the common Xenium case; switch
+        # to `cosmx` (or another) per subset if needed.
+        NICHEFORMER_TECHNOLOGY="xenium"
+        HOLDOUT_BATCHES=""
+        # scGPT vocab is HGNC SYMBOLS. If a subset's var_names are ENSG
+        # (Xenium), scGPT/scGPT-spatial will under-match genes -> consider
+        # excluding them or pre-mapping ENSG->symbol for that subset.
+        SCGPT_GENE_FLAGS=""
+        SCGPT_SPATIAL_GENE_FLAGS=""
+        GENEFORMER_GENE_FLAGS="--auto-map-symbols"
+        NICHEFORMER_GENE_FLAGS="--auto-map-symbols"
+        UCE_SPECIES_FLAGS="--uce-species human"
+        NICHECOMPASS_SPECIES="human"
+        # spatch blob labels (== what the SQUINT run uses): cell=annotation,
+        # niche=spatial_cluster. Pass explicitly so the right columns are
+        # scored even if a section also carries a stray `cell_type` column.
+        LABEL_KEY_ARGS="--cell-label-keys annotation --niche-label-keys spatial_cluster"
         ;;
     *)
         echo "WARNING: unknown DATASET_TAG=$DATASET_TAG; falling back to mouse defaults" >&2
