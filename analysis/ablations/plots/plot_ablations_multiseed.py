@@ -366,8 +366,8 @@ def main(argv: Optional[List[str]] = None) -> None:
                    help="Root containing <dataset>/<variant>__multiseed/ dirs.")
     p.add_argument("--dataset", type=str, default=DEFAULT_DATASET)
     p.add_argument("--out-dir", type=Path, default=None,
-                   help="Output dir (default: <artifacts-root>/<dataset>/"
-                        "_ablation_multiseed_figures/).")
+                   help="Output dir for ALL ablation plots (default: "
+                        "<artifacts-root>/<dataset>/ablations/).")
     p.add_argument("--test", choices=["ttest", "mannwhitney"], default="ttest",
                    help="Significance test vs the axis default (ttest = Welch).")
     p.add_argument("--error", choices=["ci95", "sem", "std"], default="ci95",
@@ -386,8 +386,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                         "(k-means clustering of embeddings) into the same out-dir.")
     args = p.parse_args(argv)
 
-    out_dir = args.out_dir or (args.artifacts_root / args.dataset
-                               / "_ablation_multiseed_figures")
+    out_dir = args.out_dir or (args.artifacts_root / args.dataset / "ablations")
     out_dir.mkdir(parents=True, exist_ok=True)
     _apply_nature_style()
     cell_pref = tuple(k.strip() for k in args.cell_label_keys.split(",") if k.strip())
