@@ -24,6 +24,8 @@
 #   bash submit_codebook_usage.sh                       # default variant, latest run
 #   bash submit_codebook_usage.sh "<VARIANT>" -- --timestamp 20260601_120000
 #   bash submit_codebook_usage.sh -- --predicted-adata /path/predicted_adata.h5ad
+#   # ALL seed runs of a variant (per-seed reports + across-seed aggregate):
+#   bash submit_codebook_usage.sh "<VARIANT>" -- --all-seeds
 #
 # Env overrides:
 #   VENV_PATH    /nfs/team361/sb75/.venvs/squint

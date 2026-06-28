@@ -29,7 +29,7 @@ for. A high active fraction (≈1.0, no dead codes) plus a perplexity that is a
 large fraction of K together demonstrate the EMA dead-code reinitialisation
 is preventing collapse.
 
-Outputs (to --out-dir, default <run_dir>/codebook_usage/):
+Outputs (to --out-dir, default <run_dir>/codebook_usage_plots/):
   codebook_usage.csv     one row per (branch, level) + joint rows
   codebook_usage.json    same, machine-readable
   codebook_usage.png/svg per-(branch, level) sorted usage bar charts
@@ -204,9 +204,176 @@ def _joint_metrics(idx: np.ndarray, sizes: list) -> dict:
 
 
 # ----------------------------------------------------------------------------
+# Per-run report (reusable for single-run AND --all-seeds)
+# ----------------------------------------------------------------------------
+_COLS = ["branch", "level", "K", "n_used", "active_fraction", "n_dead",
+         "perplexity", "normalized_perplexity", "entropy_bits",
+         "max_code_share", "n_cells"]
+
+
+def _compute_rows(adata):
+    """Return (rows, usage_for_plot) of per (branch, level) codebook metrics."""
+    rows, usage_for_plot = [], {}
+    for branch in ("cell", "niche"):
+        idx = _get_indices(adata, branch)
+        if idx is None:
+            print(f"[usage] WARNING: no code indices for '{branch}' "
+                  f"(uns/{_BRANCH_KEYS[branch]['uns']}, "
+                  f"obsm/{_BRANCH_KEYS[branch]['obsm']}). Skipping.", file=sys.stderr)
+            continue
+        sizes = _get_sizes(adata, branch, idx)
+        for q in range(idx.shape[1]):
+            m, counts = _level_metrics(idx[:, q], sizes[q])
+            rows.append({"branch": branch, "level": f"L{q}", **m})
+            usage_for_plot[(branch, q)] = counts
+        if idx.shape[1] > 1:
+            rows.append({"branch": branch, "level": "joint",
+                         **_joint_metrics(idx, sizes)})
+    return rows, usage_for_plot
+
+
+def _plot_usage(usage_for_plot, df, out_dir, stem, suptitle):
+    """Sorted per-code usage bar charts (per branch/level) -> png/svg/pdf."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        # editable text in Illustrator (svg=named fonts, pdf/ps=embedded TrueType)
+        matplotlib.rcParams["svg.fonttype"] = "none"
+        matplotlib.rcParams["pdf.fonttype"] = 42
+        matplotlib.rcParams["ps.fonttype"] = 42
+        import matplotlib.pyplot as plt
+        items = sorted(usage_for_plot.keys())
+        ncol = max(len(set(q for _, q in items)), 1)
+        nrow = max(len(set(b for b, _ in items)), 1)
+        fig, axes = plt.subplots(nrow, ncol, figsize=(5.0 * ncol, 3.4 * nrow),
+                                 squeeze=False)
+        branch_order = ["cell", "niche"]
+        for (branch, q), counts in usage_for_plot.items():
+            r = branch_order.index(branch) if branch in branch_order else 0
+            ax = axes[r][q]
+            order = np.argsort(counts)[::-1]
+            frac = counts[order] / counts.sum()
+            ax.bar(np.arange(len(frac)), frac, width=1.0)
+            K = len(counts)
+            n_used = int((counts > 0).sum())
+            ax.axhline(1.0 / K, ls="--", lw=0.8, color="0.4")  # uniform 1/K
+            mrow = df[(df.branch == branch) & (df.level == f"L{q}")].iloc[0]
+            ax.set_title(f"{branch.capitalize()} L{q}: K={K}, Used={n_used} "
+                         f"({mrow.active_fraction:.0%}), "
+                         f"Perplexity={mrow.perplexity:.1f}/{K}", fontsize=9)
+            ax.set_xlabel("Code (Sorted by Usage)")
+            ax.set_ylabel("Fraction of Cells")
+        for r in range(nrow):
+            for c in range(ncol):
+                if (branch_order[r] if r < len(branch_order) else None, c) \
+                        not in usage_for_plot:
+                    axes[r][c].axis("off")
+        fig.suptitle(suptitle, fontsize=10)
+        fig.tight_layout(rect=(0, 0, 1, 0.96))
+        for ext in ("png", "svg", "pdf"):
+            fig.savefig(os.path.join(out_dir, f"{stem}.{ext}"), dpi=150,
+                        bbox_inches="tight")
+        plt.close(fig)
+        print(f"[usage] wrote {os.path.join(out_dir, stem + '.png')} (+ .svg, .pdf)")
+    except Exception as e:                       # plotting is a nicety; never fail
+        print(f"[usage] plot skipped ({type(e).__name__}: {e})", file=sys.stderr)
+
+
+def _report_one(path, out_dir, variant, stem, make_plot):
+    """Compute + write csv/json + plot for one run. Returns the metrics df (or None)."""
+    import anndata as ad
+    import pandas as pd
+    print(f"[usage] reading {path}")
+    adata = ad.read_h5ad(path)
+    rows, usage_for_plot = _compute_rows(adata)
+    if not rows:
+        print(f"[usage] no code indices in {path} (continuous / old artifact?) — skip",
+              file=sys.stderr)
+        return None
+    df = pd.DataFrame(rows)[_COLS]
+    df.to_csv(os.path.join(out_dir, f"{stem}.csv"), index=False)
+    with open(os.path.join(out_dir, f"{stem}.json"), "w") as fh:
+        json.dump({"source": path, "variant": variant,
+                   "n_cells": int(adata.n_obs), "metrics": rows}, fh, indent=2)
+    pd.set_option("display.width", 160)
+    pd.set_option("display.float_format", lambda v: f"{v:.4f}")
+    print(df.to_string(index=False))
+    if make_plot:
+        _plot_usage(usage_for_plot, df, out_dir, stem,
+                    "SQUINT Codebook Usage — Sorted Per-Code Assignment "
+                    "Frequency (Dashed = Uniform 1/K)")
+    return df
+
+
+def _print_interpretation(df):
+    per_level = df[df["level"].str.startswith("L")]
+    print("\nInterpretation:")
+    print("  active_fraction       -> 1.00 = every code used (no dead codes).")
+    print("  normalized_perplexity -> 1.00 = perfectly uniform; >> 1/K = broad.")
+    print("  max_code_share        -> ~1.0 = collapse onto a single code.")
+    if not per_level.empty:
+        print(f"  min active_fraction = {per_level['active_fraction'].min():.3f}; "
+              f"min normalized_perplexity = "
+              f"{per_level['normalized_perplexity'].min():.3f}.")
+
+
+def _plot_aggregate(alldf, out_dir):
+    """Across-seed bars (mean + per-seed dots + SD) for active_fraction and
+    normalized_perplexity, per (branch, level)."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        matplotlib.rcParams["svg.fonttype"] = "none"
+        matplotlib.rcParams["pdf.fonttype"] = 42
+        matplotlib.rcParams["ps.fonttype"] = 42
+        import matplotlib.pyplot as plt
+        groups = (alldf[["branch", "level"]].drop_duplicates()
+                  .sort_values(["branch", "level"]).itertuples(index=False))
+        groups = [(b, l) for b, l in groups]
+        xlabels = [f"{b[0].upper()}-{l}" for b, l in groups]
+        x = np.arange(len(groups))
+        metrics = [("active_fraction", "Active fraction"),
+                   ("normalized_perplexity", "Normalized perplexity")]
+        fig, axes = plt.subplots(1, 2, figsize=(max(6, 1.1 * len(groups)), 4.2),
+                                 squeeze=False)
+        for ax, (col, title) in zip(axes[0], metrics):
+            means, pts = [], []
+            for b, l in groups:
+                v = alldf[(alldf.branch == b) & (alldf.level == l)][col].to_numpy()
+                v = v[np.isfinite(v)]
+                means.append(float(v.mean()) if v.size else np.nan)
+                pts.append(v)
+            errs = [float(v.std(ddof=1)) if v.size > 1 else 0.0 for v in pts]
+            ax.bar(x, means, yerr=errs, width=0.66, color="#FF006E", alpha=0.85,
+                   error_kw=dict(ecolor="0.25", elinewidth=0.9, capsize=2.5))
+            for xi, v in zip(x, pts):
+                if v.size:
+                    jit = np.linspace(-0.14, 0.14, v.size) if v.size > 1 else np.zeros(1)
+                    ax.scatter(np.full(v.size, xi) + jit, v, s=16,
+                               facecolor="#7A0033", edgecolor="white", linewidths=0.4,
+                               zorder=5)
+            ax.set_xticks(x)
+            ax.set_xticklabels(xlabels, rotation=45, ha="right", fontsize=7.5)
+            ax.set_ylabel(title)
+            ax.set_title(title, fontsize=9)
+        fig.suptitle("SQUINT Codebook Usage Across Seeds (mean ± SD, dots = seeds)",
+                     fontsize=10)
+        fig.tight_layout(rect=(0, 0, 1, 0.95))
+        for ext in ("png", "svg", "pdf"):
+            fig.savefig(os.path.join(out_dir, f"codebook_usage_aggregate.{ext}"),
+                        dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"[usage] wrote {os.path.join(out_dir, 'codebook_usage_aggregate.png')} "
+              f"(+ .svg, .pdf)")
+    except Exception as e:
+        print(f"[usage] aggregate plot skipped ({type(e).__name__}: {e})",
+              file=sys.stderr)
+
+
+# ----------------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------------
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     src = ap.add_argument_group("run selection (pick one; else auto-resolve)")
@@ -221,132 +388,86 @@ def main():
     src.add_argument("--artifacts-root", default=DEFAULT_ARTIFACTS_ROOT)
     src.add_argument("--timestamp", default="latest",
                      help="Run timestamp, or 'latest' (default).")
+    src.add_argument("--all-seeds", action="store_true",
+                     help="Process EVERY <timestamp> run dir under the variant "
+                          "(one per seed): per-seed reports + an across-seed "
+                          "aggregate (mean ± SD CSV + plot). out-dir default "
+                          "becomes <variant>/codebook_usage_plots/.")
     ap.add_argument("--out-dir", default=None,
-                    help="Output dir (default: <run_dir>/codebook_usage/).")
+                    help="Output dir (default: <run_dir>/codebook_usage_plots/, or "
+                         "<variant>/codebook_usage_plots/ for --all-seeds).")
     ap.add_argument("--no-plot", action="store_true",
-                    help="Skip the usage bar-chart figure.")
-    args = ap.parse_args()
+                    help="Skip the usage bar-chart figures.")
+    args = ap.parse_args(argv)
 
-    import anndata as ad
+    if args.all_seeds:
+        _run_all_seeds(args)
+        return
 
     path = _resolve_predicted_adata(args)
-    out_dir = args.out_dir or os.path.join(os.path.dirname(path), "codebook_usage")
+    out_dir = args.out_dir or os.path.join(os.path.dirname(path), "codebook_usage_plots")
     os.makedirs(out_dir, exist_ok=True)
-    print(f"[usage] reading {path}")
-    adata = ad.read_h5ad(path)
-    print(f"[usage] {adata.n_obs} cells; out -> {out_dir}\n")
-
-    rows = []
-    usage_for_plot = {}   # (branch, level) -> counts array
-    for branch in ("cell", "niche"):
-        idx = _get_indices(adata, branch)
-        if idx is None:
-            print(f"[usage] WARNING: no code indices found for '{branch}' branch "
-                  f"(looked for uns/{_BRANCH_KEYS[branch]['uns']}, "
-                  f"obsm/{_BRANCH_KEYS[branch]['obsm']}). Skipping.",
-                  file=sys.stderr)
-            continue
-        sizes = _get_sizes(adata, branch, idx)
-        for q in range(idx.shape[1]):
-            m, counts = _level_metrics(idx[:, q], sizes[q])
-            m = {"branch": branch, "level": f"L{q}", **m}
-            rows.append(m)
-            usage_for_plot[(branch, q)] = counts
-        if idx.shape[1] > 1:
-            jm = {"branch": branch, "level": "joint", **_joint_metrics(idx, sizes)}
-            rows.append(jm)
-
-    if not rows:
+    print(f"[usage] out -> {out_dir}\n")
+    df = _report_one(path, out_dir, args.variant, "codebook_usage", not args.no_plot)
+    if df is None:
         raise SystemExit("No codebook indices found in the predicted adata — "
-                         "is this a continuous/non-VQ run, or an old artifact "
-                         "without code indices?")
-
-    import pandas as pd
-    df = pd.DataFrame(rows)
-    cols = ["branch", "level", "K", "n_used", "active_fraction", "n_dead",
-            "perplexity", "normalized_perplexity", "entropy_bits",
-            "max_code_share", "n_cells"]
-    df = df[cols]
-
-    # ---- write outputs ----
-    csv_path = os.path.join(out_dir, "codebook_usage.csv")
-    json_path = os.path.join(out_dir, "codebook_usage.json")
-    df.to_csv(csv_path, index=False)
-    with open(json_path, "w") as fh:
-        json.dump({"source": path, "variant": args.variant,
-                   "n_cells": int(adata.n_obs), "metrics": rows}, fh, indent=2)
-
-    # ---- pretty print ----
-    pd.set_option("display.width", 160)
-    pd.set_option("display.float_format", lambda v: f"{v:.4f}")
-    print("Codebook usage (per branch / level):\n")
-    print(df.to_string(index=False))
-    print("\nInterpretation:")
-    print("  active_fraction  -> 1.00 means every code is used (no dead codes).")
-    print("  normalized_perplexity (perplexity/K) -> 1.00 means perfectly")
-    print("    uniform usage; well above 1/K means usage is broadly spread.")
-    print("  max_code_share   -> close to 1.0 would indicate collapse onto")
-    print("    a single code.")
-    per_level = df[df["level"].str.startswith("L")]
-    print(f"\nSummary: min active_fraction across all (L,K) levels = "
-          f"{per_level['active_fraction'].min():.3f}; "
-          f"min normalized_perplexity = "
-          f"{per_level['normalized_perplexity'].min():.3f}.")
-    print(f"\n[usage] wrote {csv_path}\n[usage] wrote {json_path}")
-
-    # ---- figure ----
-    if not args.no_plot:
-        try:
-            import matplotlib
-            matplotlib.use("Agg")
-            # Keep all text as EDITABLE TEXT (not outlined paths) in vector
-            # exports so labels can be retyped/restyled in Adobe Illustrator:
-            #   svg.fonttype='none' -> SVG <text> elements referencing fonts by name
-            #   pdf/ps.fonttype=42  -> embedded TrueType, text stays selectable/editable
-            matplotlib.rcParams["svg.fonttype"] = "none"
-            matplotlib.rcParams["pdf.fonttype"] = 42
-            matplotlib.rcParams["ps.fonttype"] = 42
-            import matplotlib.pyplot as plt
-            items = sorted(usage_for_plot.keys())
-            ncol = max(len(set(q for _, q in items)), 1)
-            nrow = max(len(set(b for b, _ in items)), 1)
-            fig, axes = plt.subplots(nrow, ncol, figsize=(5.0 * ncol, 3.4 * nrow),
-                                     squeeze=False)
-            branch_order = ["cell", "niche"]
-            for (branch, q), counts in usage_for_plot.items():
-                r = branch_order.index(branch) if branch in branch_order else 0
-                ax = axes[r][q]
-                order = np.argsort(counts)[::-1]
-                frac = counts[order] / counts.sum()
-                ax.bar(np.arange(len(frac)), frac, width=1.0)
-                K = len(counts)
-                n_used = int((counts > 0).sum())
-                # reference line = uniform usage level (1/K)
-                ax.axhline(1.0 / K, ls="--", lw=0.8, color="0.4")
-                mrow = df[(df.branch == branch) & (df.level == f"L{q}")].iloc[0]
-                ax.set_title(f"{branch.capitalize()} L{q}: K={K}, Used={n_used} "
-                             f"({mrow.active_fraction:.0%}), "
-                             f"Perplexity={mrow.perplexity:.1f}/{K}", fontsize=9)
-                ax.set_xlabel("Code (Sorted by Usage)")
-                ax.set_ylabel("Fraction of Cells")
-            for r in range(nrow):
-                for c in range(ncol):
-                    if (branch_order[r] if r < len(branch_order) else None, c) \
-                            not in usage_for_plot:
-                        axes[r][c].axis("off")
-            fig.suptitle("SQUINT Codebook Usage — Sorted Per-Code Assignment "
-                         "Frequency (Dashed = Uniform 1/K)", fontsize=10)
-            fig.tight_layout(rect=(0, 0, 1, 0.96))
-            # PNG for quick viewing; SVG + PDF carry editable text for Illustrator.
-            for ext in ("png", "svg", "pdf"):
-                fig.savefig(os.path.join(out_dir, f"codebook_usage.{ext}"),
-                            dpi=150, bbox_inches="tight")
-            print(f"[usage] wrote {os.path.join(out_dir, 'codebook_usage.png')} "
-                  f"(+ .svg, .pdf — editable text in Illustrator)")
-        except Exception as e:  # plotting is a nicety; never fail the report
-            print(f"[usage] plot skipped ({type(e).__name__}: {e})", file=sys.stderr)
-
+                         "continuous/non-VQ run, or an old artifact without codes?")
+    _print_interpretation(df)
     print("\n[usage] DONE")
+
+
+def _run_all_seeds(args):
+    """Per-seed codebook reports for ALL timestamp dirs under the variant, plus
+    an across-seed aggregate."""
+    import pandas as pd
+    variant_slug = args.variant.replace("/", "_").replace(" ", "_")
+    base = os.path.join(args.artifacts_root, args.dataset, variant_slug)
+    if not os.path.isdir(base):
+        raise SystemExit(f"Variant dir not found: {base}")
+    stamps = sorted(d for d in os.listdir(base)
+                    if os.path.isdir(os.path.join(base, d))
+                    and os.path.isfile(os.path.join(base, d, "predicted_adata.h5ad")))
+    if not stamps:
+        raise SystemExit(f"No <timestamp>/predicted_adata.h5ad run dirs under {base}")
+    out_dir = args.out_dir or os.path.join(base, "codebook_usage_plots")
+    os.makedirs(out_dir, exist_ok=True)
+    print(f"[usage] --all-seeds: {len(stamps)} run(s) under\n  {base}\n  out -> {out_dir}\n")
+    per_seed = []
+    for ts in stamps:
+        print(f"\n===== {ts} =====")
+        path = os.path.join(base, ts, "predicted_adata.h5ad")
+        df = _report_one(path, out_dir, args.variant,
+                         f"codebook_usage_{ts}", not args.no_plot)
+        if df is not None:
+            df = df.copy()
+            df.insert(0, "seed_run", ts)
+            per_seed.append(df)
+    if not per_seed:
+        raise SystemExit("No codebook indices found in any run.")
+    alldf = pd.concat(per_seed, ignore_index=True)
+    alldf.to_csv(os.path.join(out_dir, "codebook_usage_per_seed.csv"), index=False)
+    agg = (alldf.groupby(["branch", "level"])
+           .agg(n=("active_fraction", "size"), K=("K", "first"),
+                active_fraction_mean=("active_fraction", "mean"),
+                active_fraction_std=("active_fraction", "std"),
+                normalized_perplexity_mean=("normalized_perplexity", "mean"),
+                normalized_perplexity_std=("normalized_perplexity", "std"),
+                perplexity_mean=("perplexity", "mean"),
+                perplexity_std=("perplexity", "std"))
+           .reset_index())
+    agg.to_csv(os.path.join(out_dir, "codebook_usage_aggregate.csv"), index=False)
+    pd.set_option("display.width", 200)
+    pd.set_option("display.float_format", lambda v: f"{v:.4f}")
+    print("\n" + "=" * 78)
+    print(f"ACROSS-SEED AGGREGATE (n={alldf['seed_run'].nunique()} seeds; mean ± SD)")
+    print("=" * 78)
+    print(agg.to_string(index=False))
+    _print_interpretation(alldf)
+    if not args.no_plot:
+        _plot_aggregate(alldf, out_dir)
+    print(f"\n[usage] wrote {out_dir}/codebook_usage_per_seed.csv + "
+          f"codebook_usage_aggregate.csv")
+    print("[usage] DONE")
 
 
 if __name__ == "__main__":
