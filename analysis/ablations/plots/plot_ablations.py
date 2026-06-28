@@ -147,105 +147,124 @@ class AxisSpec:
     entries: Tuple[VariantEntry, ...]  # in plotted order, top-to-bottom
 
 
+# NOTE: repointed to the SELF-CONTAINED s57 namespace (2026-06-28). The whole
+# figure is now built from s57_v* runs only — the RED default / significance
+# baseline is the cross-batch-MNN decoupled spine (s57_v19). Mapping of the
+# aliases: v19 reference; v1-v18 component ablations; v20/v21 contrastive;
+# v22-v25 coupling. (Two-separate-models v26/v27 and continuous v28 are NOT
+# plotted here — they use `summarize_ablation_multiseed.py --set joint_vs_separate`
+# and `compare_discrete_vs_continuous.py` respectively, since their off-task /
+# code-based columns are not meaningful in this code-based figure.)
 AXES: Tuple[AxisSpec, ...] = (
     AxisSpec(
         key="axis_1_adjacency",
         title="Adjacency Reconstruction Loss",
         entries=(
-            VariantEntry("s51_v1_", "w. Adj. Recon.",  is_default=True),
-            VariantEntry("s51_v3_", "w/o Adj. Recon."),
+            VariantEntry("s57_v19_", "w. Adj. Recon.",  is_default=True),
+            VariantEntry("s57_v1_",  "w/o Adj. Recon."),
         ),
     ),
     AxisSpec(
         key="axis_2_contrastive",
         title="Contrastive Cell Loss",
-        # 3-way: within-batch contrastive (default, == s49_v23) vs none
-        # (s51_v2) vs cross-batch MNN (s55_v3 = wt_cross=10, k_cross=1).
-        # Significance is computed vs the default (within-batch).
+        # 3-way: cross-batch MNN (default, == the paper spine s57_v19) vs
+        # within-batch (s57_v20) vs none (s57_v21). Significance vs the default.
         entries=(
-            VariantEntry("s51_v1_", "Within-batch", is_default=True),
-            VariantEntry("s55_v3_", "Cross-batch MNN"),
-            VariantEntry("s51_v2_", "No contrastive"),
+            VariantEntry("s57_v20_", "Within-batch"),
+            VariantEntry("s57_v19_", "Cross-batch MNN", is_default=True),
+            VariantEntry("s57_v21_", "No contrastive"),
         ),
     ),
     AxisSpec(
         key="axis_3_decoder_cov",
         title="Decoder Covariate",
         entries=(
-            VariantEntry("s51_v1_", "w. Dec. Cov.",  is_default=True),
-            VariantEntry("s51_v4_", "w/o Dec. Cov."),
+            VariantEntry("s57_v19_", "w. Dec. Cov.",  is_default=True),
+            VariantEntry("s57_v2_",  "w/o Dec. Cov."),
         ),
     ),
     AxisSpec(
         key="axis_4_gnn_layers",
         title="GNN Depth",
         entries=(
-            VariantEntry("s51_v1_",  "1 Layer",  is_default=True),
-            VariantEntry("s51_v11_", "2 Layers"),
+            VariantEntry("s57_v19_", "1 Layer",  is_default=True),
+            VariantEntry("s57_v3_",  "2 Layers"),
         ),
     ),
     AxisSpec(
         key="axis_5_neighbors",
         title="Number of Neighbours",
-        # Ordered from sparsest to densest.
-        # NB: the user's label list mentioned "12 Neigh." / "14 Neigh."
-        # which don't correspond to any registered s51 variant — those
-        # were a typo. The actual variants are 8 / 16 / 16-with-sampler-
-        # 8 / 24 neighbours, which is what we label here.
         entries=(
-            VariantEntry("s51_v8_",  "8 Neigh."),
-            VariantEntry("s51_v9_",  "16 Neigh. (8 Sampled)"),
-            VariantEntry("s51_v1_",  "16 Neigh.", is_default=True),
-            VariantEntry("s51_v10_", "24 Neigh."),
+            VariantEntry("s57_v4_",  "8 Neigh."),
+            VariantEntry("s57_v5_",  "16 Neigh. (8 Sampled)"),
+            VariantEntry("s57_v19_", "16 Neigh.", is_default=True),
+            VariantEntry("s57_v6_",  "24 Neigh."),
         ),
     ),
     AxisSpec(
         key="axis_6_codebook_size",
         title="Cell Codebook Size",
+        # Cell RVQ L1 sweep (L0 held at 30); default (30, 90) = s57_v19.
         entries=(
-            VariantEntry("s51_v6_", "(30, 10) Codebook"),
-            VariantEntry("s51_v5_", "(30, 30) Codebook"),
-            VariantEntry("s51_v1_", "(30, 90) Codebook", is_default=True),
-            VariantEntry("s51_v7_", "(30, 300) Codebook"),
+            VariantEntry("s57_v7_",  "(30, 10) Codebook"),
+            VariantEntry("s57_v8_",  "(30, 30) Codebook"),
+            VariantEntry("s57_v19_", "(30, 90) Codebook", is_default=True),
+            VariantEntry("s57_v9_",  "(30, 300) Codebook"),
         ),
     ),
     AxisSpec(
         key="axis_7_niche_codebook_size",
         title="Niche Codebook Size",
-        # The s51_v1 default uses `+rvq-both+` which sets the NICHE RVQ
-        # to (30, 90) as well as the cell RVQ — so the same s51_v1_
-        # prefix is the default for this axis, just like axis_6.
+        # Niche RVQ L1 sweep; the s57_v19 spine sets niche (30, 90) too.
         entries=(
-            VariantEntry("s52_v1_", "(30, 10) Codebook"),
-            VariantEntry("s52_v2_", "(30, 30) Codebook"),
-            VariantEntry("s51_v1_", "(30, 90) Codebook", is_default=True),
-            VariantEntry("s52_v3_", "(30, 300) Codebook"),
+            VariantEntry("s57_v10_", "(30, 10) Codebook"),
+            VariantEntry("s57_v11_", "(30, 30) Codebook"),
+            VariantEntry("s57_v19_", "(30, 90) Codebook", is_default=True),
+            VariantEntry("s57_v12_", "(30, 300) Codebook"),
         ),
     ),
     AxisSpec(
         key="axis_8_cell_codebook_L0",
         title="Cell Codebook Size (L0)",
-        # L0 sweep: vary the FIRST RVQ level (L0) with L1 HELD AT 30. Unlike the
-        # L1 axis (axis_6), this does NOT pass through the global (30, 90)
-        # reference (which fixes L0=30, L1=90), so the axis centre is L0=30 ->
-        # cell (30, 30) = s51_v5 (red). Niche RVQ held at the default (30, 90).
+        # L0 sweep (L1 held at 30). Centre L0=30 -> cell (30, 30) = s57_v8 (red);
+        # does NOT pass through the (30, 90) global spine.
         entries=(
-            VariantEntry("s54_v1_", "(10, 30) Codebook"),
-            VariantEntry("s51_v5_", "(30, 30) Codebook", is_default=True),
-            VariantEntry("s54_v2_", "(90, 30) Codebook"),
-            VariantEntry("s54_v3_", "(300, 30) Codebook"),
+            VariantEntry("s57_v13_", "(10, 30) Codebook"),
+            VariantEntry("s57_v8_",  "(30, 30) Codebook", is_default=True),
+            VariantEntry("s57_v14_", "(90, 30) Codebook"),
+            VariantEntry("s57_v15_", "(300, 30) Codebook"),
         ),
     ),
     AxisSpec(
         key="axis_9_niche_codebook_L0",
         title="Niche Codebook Size (L0)",
-        # L0 sweep on the NICHE branch (cell RVQ held at the default (30, 90)).
-        # Centre is L0=30 -> niche (30, 30) = s52_v2 (red).
+        # L0 sweep on the NICHE branch. Centre L0=30 -> niche (30, 30) = s57_v11.
         entries=(
-            VariantEntry("s54_v4_", "(10, 30) Codebook"),
-            VariantEntry("s52_v2_", "(30, 30) Codebook", is_default=True),
-            VariantEntry("s54_v5_", "(90, 30) Codebook"),
-            VariantEntry("s54_v6_", "(300, 30) Codebook"),
+            VariantEntry("s57_v16_", "(10, 30) Codebook"),
+            VariantEntry("s57_v11_", "(30, 30) Codebook", is_default=True),
+            VariantEntry("s57_v17_", "(90, 30) Codebook"),
+            VariantEntry("s57_v18_", "(300, 30) Codebook"),
+        ),
+    ),
+    AxisSpec(
+        key="axis_10_coupling_mechanism",
+        title="Cell/Niche Coupling Mechanism",
+        # 5 conceptually-distinct couplings on the cross-batch-MNN spine:
+        # no-coupling (decoupled, the RED reference + significance baseline),
+        # hard sharing (coupled trunk), learned soft sharing (cross-stitch),
+        # parameter-efficient sharing (coupled + affine adapter), and cell->niche
+        # representation conditioning (cell-cond FiLM scale-only). FiLM scale-only
+        # should show significant gains on niche iLISI (integration) at no
+        # resolution cost.
+        # Reference (PINK) = cell-cond FiLM scale-only (s57_v19, the SQUINT
+        # coupling and the global default): the alternative couplings are
+        # compared against it. Significance vs FiLM.
+        entries=(
+            VariantEntry("s57_v19_", "Cell-cond FiLM (scale)", is_default=True),
+            VariantEntry("s57_v25_", "Decoupled"),
+            VariantEntry("s57_v22_", "Coupled (shared trunk)"),
+            VariantEntry("s57_v23_", "Cross-stitch"),
+            VariantEntry("s57_v24_", "Coupled + affine"),
         ),
     ),
 )

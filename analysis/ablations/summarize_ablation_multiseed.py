@@ -105,10 +105,17 @@ S56_SET = [
 ]
 S56_REFERENCE = "s55_v3_"
 
-# s57 — all s51/s52/s54 ablations re-run on the cross-batch-MNN spine.
-# Reference = s55_v3 (the un-ablated cross-batch spine).
+# s57 — SELF-CONTAINED PAPER SET. Everything lives under the s57 namespace so
+# you can run only `s57_v*`. Reference = s57_v19 (cross-MNN decoupled spine).
+# v19 reference; v20/v21 contrastive axis; v1-v18 component ablations;
+# v22-v25 coupling mechanisms; v26/v27 two-separate-models; v28 continuous.
+# NOTE: the continuous row (v28) has placeholder code-based NMI/ARI — for the
+# fair continuous-vs-VQ comparison use compare_discrete_vs_continuous.py
+# (embedding path) with v28 (continuous) vs v20 (discrete VQ).
 S57_SET = [
-    ("s55_v3_", "Cross-MNN spine (ref)"),
+    ("s57_v19_", "Reference: FiLM scale-only"),
+    ("s57_v20_", "Contrastive within-batch"),
+    ("s57_v21_", "Contrastive none"),
     ("s57_v1_", "No adjacency"),
     ("s57_v2_", "No decoder cov"),
     ("s57_v3_", "GNN 2 layers"),
@@ -127,8 +134,16 @@ S57_SET = [
     ("s57_v16_", "Niche RVQ 10/30"),
     ("s57_v17_", "Niche RVQ 90/30"),
     ("s57_v18_", "Niche RVQ 300/30"),
+    ("s57_v25_", "Coupling: decoupled"),
+    ("s57_v22_", "Coupling: coupled"),
+    ("s57_v23_", "Coupling: cross-stitch"),
+    ("s57_v24_", "Coupling: affine adapter"),
+    ("s57_v26_", "Two-model: cell-only"),
+    ("s57_v27_", "Two-model: niche-only"),
+    ("s57_v28_", "Continuous latent (vs v29)"),
+    ("s57_v29_", "Discrete VQ ref (continuous pair)"),
 ]
-S57_REFERENCE = "s55_v3_"
+S57_REFERENCE = "s57_v19_"
 
 # s58 — information-flow / complementarity coupling (beyond trunk-sharing).
 # Reference = s55_v3 (the decoupled baseline these variants modify).
@@ -227,6 +242,43 @@ JOINT_VS_SEPARATE_SET = [
 ]
 JOINT_VS_SEPARATE_REFERENCE = "s55_v3_"
 
+# "coupling_compare" — the 5 conceptually-distinct coupling mechanisms for the
+# paper figure (matches plot_ablations.py axis_10): decoupled (ref) vs coupled
+# vs cross-stitch vs coupled+affine vs cell-cond FiLM scale-only (the winner).
+COUPLING_COMPARE_SET = [
+    ("s57_v19_", "Cell-cond FiLM (scale)"),   # reference (the SQUINT coupling)
+    ("s57_v25_", "Decoupled"),
+    ("s57_v22_", "Coupled (shared trunk)"),
+    ("s57_v23_", "Cross-stitch"),
+    ("s57_v24_", "Coupled + affine"),
+]
+COUPLING_COMPARE_REFERENCE = "s57_v19_"
+
+# s63 — ALL ablations re-run on the NEW DEFAULT spine (cross-batch MNN + cell-cond
+# FiLM scale-only, == s62_v5). Reference = s62_v5 (the un-ablated default).
+S63_SET = [
+    ("s62_v5_", "Default: FiLM-scale (ref)"),
+    ("s63_v1_", "No adjacency"),
+    ("s63_v2_", "No decoder cov"),
+    ("s63_v3_", "GNN 2 layers"),
+    ("s63_v4_", "knn8"),
+    ("s63_v5_", "knn16/sampler8"),
+    ("s63_v6_", "knn24"),
+    ("s63_v7_", "Cell RVQ 30/10"),
+    ("s63_v8_", "Cell RVQ 30/30"),
+    ("s63_v9_", "Cell RVQ 30/300"),
+    ("s63_v10_", "Niche RVQ 30/10"),
+    ("s63_v11_", "Niche RVQ 30/30"),
+    ("s63_v12_", "Niche RVQ 30/300"),
+    ("s63_v13_", "Cell RVQ 10/30"),
+    ("s63_v14_", "Cell RVQ 90/30"),
+    ("s63_v15_", "Cell RVQ 300/30"),
+    ("s63_v16_", "Niche RVQ 10/30"),
+    ("s63_v17_", "Niche RVQ 90/30"),
+    ("s63_v18_", "Niche RVQ 300/30"),
+]
+S63_REFERENCE = "s62_v5_"
+
 NAMED_SETS = {
     "s55": (S55_SET, S55_REFERENCE),
     "s56": (S56_SET, S56_REFERENCE),
@@ -235,10 +287,12 @@ NAMED_SETS = {
     "s59": (S59_SET, S59_REFERENCE),
     "s60": (S60_SET, S60_REFERENCE),
     "s62": (S62_SET, S62_REFERENCE),
+    "s63": (S63_SET, S63_REFERENCE),
     "coupling": (COUPLING_SET, COUPLING_REFERENCE),
+    "coupling_compare": (COUPLING_COMPARE_SET, COUPLING_COMPARE_REFERENCE),
     "joint_vs_separate": (JOINT_VS_SEPARATE_SET, JOINT_VS_SEPARATE_REFERENCE),
 }
-DEFAULT_SET_NAME = "coupling"
+DEFAULT_SET_NAME = "coupling_compare"
 
 
 # ---------------------------------------------------------------------------
