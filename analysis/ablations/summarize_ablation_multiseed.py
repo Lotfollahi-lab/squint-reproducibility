@@ -174,6 +174,24 @@ S60_SET = [
 ]
 S60_REFERENCE = "s55_v3_"
 
+# s62 — follow-ups to the on-par / slightly-better threads (Y-shape specialised,
+# cell-cond FiLM, multi-head attention). Includes the s56/s60 anchors they tweak.
+S62_SET = [
+    ("s55_v3_", "Decoupled (ref)"),
+    ("s56_v4_", "s56 Y-shape 64/192 (anchor)"),
+    ("s62_v1_", "Y-shape 48/208"),
+    ("s62_v2_", "Y-shape 32/224"),
+    ("s62_v3_", "Y-shape 16/240"),
+    ("s60_v5_", "s60 cell-cond FiLM (anchor)"),
+    ("s62_v4_", "Cell-cond FiLM pre-VQ"),
+    ("s62_v5_", "Cell-cond FiLM scale-only"),
+    ("s62_v6_", "Cell-cond FiLM continuous"),
+    ("s60_v6_", "s60 niche-attends (anchor)"),
+    ("s62_v7_", "Niche-attends multi-head"),
+    ("s62_v8_", "Y-shape 64/192 + FiLM combo"),
+]
+S62_REFERENCE = "s55_v3_"
+
 # "coupling" — EVERY cell/niche coupling experiment in one table (s56 trunk-
 # sharing + s58 info-flow/complementarity + s59 soft-L2/param-efficient + s60
 # novel cross-branch), all vs the decoupled s55_v3 reference. Built from the
@@ -190,8 +208,24 @@ COUPLING_SET = (
     + _family_rows(S58_SET, "s58")
     + _family_rows(S59_SET, "s59", drop=("s56_v1_", "s56_v8_"))
     + _family_rows(S60_SET, "s60")
+    + _family_rows(S62_SET, "s62", drop=("s56_v4_", "s60_v5_", "s60_v6_"))
 )
 COUPLING_REFERENCE = "s55_v3_"
+
+# "joint_vs_separate" — the reviewer's baseline: does the JOINT model beat two
+# strong SEPARATE single-task models? Read s61_v1's CELL columns vs the joint
+# Cell columns, and s61_v2's NICHE columns vs the joint Niche columns (the
+# off-task columns of the single-task models are untrained — ignore them). The
+# shared-encoder rows (coupled / affine adapter) carry the efficiency case
+# (both tasks at ~half the encoder params). Reference = the joint SQUINT.
+JOINT_VS_SEPARATE_SET = [
+    ("s55_v3_", "SQUINT joint (decoupled)"),
+    ("s61_v1_", "Separate cell-only (CELL cols)"),
+    ("s61_v2_", "Separate niche-only (NICHE cols)"),
+    ("s56_v1_", "SQUINT shared-trunk (~50% params)"),
+    ("s59_v4_", "SQUINT shared+affine (~50% params)"),
+]
+JOINT_VS_SEPARATE_REFERENCE = "s55_v3_"
 
 NAMED_SETS = {
     "s55": (S55_SET, S55_REFERENCE),
@@ -200,7 +234,9 @@ NAMED_SETS = {
     "s58": (S58_SET, S58_REFERENCE),
     "s59": (S59_SET, S59_REFERENCE),
     "s60": (S60_SET, S60_REFERENCE),
+    "s62": (S62_SET, S62_REFERENCE),
     "coupling": (COUPLING_SET, COUPLING_REFERENCE),
+    "joint_vs_separate": (JOINT_VS_SEPARATE_SET, JOINT_VS_SEPARATE_REFERENCE),
 }
 DEFAULT_SET_NAME = "coupling"
 
