@@ -88,6 +88,14 @@ case "$DATASET_TAG" in
         SILVER_ROOT_DEFAULT="/nfs/team361/sb75/DATASETS/silver"
         SILVER_LEAF_DEFAULT="$DATASET_TAG"
         ;;
+    smb1-20b_1p)
+        # STARmap+ mouse-CNS, 20 sections, native STARmap gene panel (the
+        # STARmap-only counterpart to mmb20). Standard silver leaf on
+        # team361 (== the `*` default, made explicit so it groups with the
+        # dataset-args case below).
+        SILVER_ROOT_DEFAULT="/nfs/team361/sb75/DATASETS/silver"
+        SILVER_LEAF_DEFAULT="$DATASET_TAG"
+        ;;
     mmb0-1b_smb1-1b_1p)
         # 1 MERFISH + 1 STARmap mouse-brain silver. The on-disk leaf
         # is `<tag>_coord_aligned` (post xy-alignment pass); the
@@ -308,6 +316,29 @@ case "$DATASET_TAG" in
         # NOT in the runner defaults — pass them explicitly so NMI/ARI
         # are computed against the right columns.
         LABEL_KEY_ARGS="--cell-label-keys cell_type_annotation --niche-label-keys niche_annotation"
+        ;;
+    smb1-20b_1p)
+        # STARmap+ mouse-CNS, 20 sections, native STARmap gene panel
+        # (STARmap-only counterpart to mmb20). MOUSE -> same FM gene-ID
+        # handling as mmb0-1b_smb1-1b_1p (mouse symbols -> human-ortholog
+        # ENSG). MULTI-section (20 batches) -> iLISI/MMD batch integration
+        # IS meaningful here (unlike single-section squint_hln).
+        SPECIES="mouse"
+        # nicheformer has no STARmap-specific mean; reuse the `merfish`
+        # technology mean as the in-situ proxy — the same choice already
+        # used for the STARmap section in mmb0-1b_smb1-1b_1p.
+        NICHEFORMER_TECHNOLOGY="merfish"
+        HOLDOUT_BATCHES=""   # train/eval on all 20 sections (no holdout)
+        SCGPT_GENE_FLAGS="--map-via-human-orthologs"
+        SCGPT_SPATIAL_GENE_FLAGS="--map-via-human-orthologs"
+        GENEFORMER_GENE_FLAGS="--map-via-human-orthologs"
+        NICHEFORMER_GENE_FLAGS="--auto-map-symbols"
+        UCE_SPECIES_FLAGS="--uce-species mouse"
+        NICHECOMPASS_SPECIES="mouse"
+        # Ground-truth labels: STARmap sections carry cell_type / niche /
+        # Sub_molecular_tissue_region / ccf_region_name — ALL already in the
+        # runner defaults, so no explicit override needed (same as the mmb
+        # case). Leave LABEL_KEY_ARGS empty.
         ;;
     *)
         echo "WARNING: unknown DATASET_TAG=$DATASET_TAG; falling back to mouse defaults" >&2
