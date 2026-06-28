@@ -80,6 +80,14 @@ case "$DATASET_TAG" in
         SILVER_ROOT_DEFAULT="/lustre/scratch126/cellgen/lotfollahi/DATASETS/silver"
         SILVER_LEAF_DEFAULT="$DATASET_TAG"
         ;;
+    squint_hln)
+        # CosMx human lymph node (NanoString), single section, manual
+        # niches (spatial-niche-benchmark). Standard silver leaf on team361
+        # (== the `*` default, made explicit so it groups with the
+        # dataset-args case below).
+        SILVER_ROOT_DEFAULT="/nfs/team361/sb75/DATASETS/silver"
+        SILVER_LEAF_DEFAULT="$DATASET_TAG"
+        ;;
     mmb0-1b_smb1-1b_1p)
         # 1 MERFISH + 1 STARmap mouse-brain silver. The on-disk leaf
         # is `<tag>_coord_aligned` (post xy-alignment pass); the
@@ -221,6 +229,15 @@ fi
 # the result of auditing each foundation-model script's gene-ID code path.
 # See `submit_all_benchmarks.sh` comments at the top of each block for
 # the audit notes. Add a new CASE entry for other datasets as needed.
+#
+# LABEL_KEY_ARGS: per-dataset ground-truth label columns, appended to
+# COMMON_ARGS and forwarded to EVERY runner (all 14 accept
+# --cell-label-keys / --niche-label-keys; matched labels are
+# canonicalised to cell_type / niche downstream). Empty by default so
+# mmb / chl59 keep using the runner defaults (cell_type / niche /
+# annotation / spatial_cluster). Only datasets whose silver obs columns
+# fall outside those defaults need to set it (e.g. squint_hln).
+LABEL_KEY_ARGS=""
 case "$DATASET_TAG" in
     chl59-8b_1p)
         # CosMx Lung, human, ~946 genes, 8 batches.
@@ -266,6 +283,32 @@ case "$DATASET_TAG" in
         UCE_SPECIES_FLAGS="--uce-species mouse"
         NICHECOMPASS_SPECIES="mouse"
         ;;
+    squint_hln)
+        # CosMx human lymph node (NanoString), single section, manual
+        # niches. var_names = HGNC SYMBOLS; the silver h5ad carries NO
+        # pre-computed `ensembl_id` column (unlike chl59), so the
+        # ENSG-based foundation models map symbols -> human ENSG via
+        # mygene (`--auto-map-symbols`, species=human) — needs internet
+        # on the compute node for the first mygene call.
+        SPECIES="human"
+        NICHEFORMER_TECHNOLOGY="cosmx"
+        HOLDOUT_BATCHES=""          # single section -> no train/test holdout
+        # scGPT / scGPT-spatial: vocab is HGNC, data is HGNC -> no flags.
+        SCGPT_GENE_FLAGS=""
+        SCGPT_SPATIAL_GENE_FLAGS=""
+        # Geneformer V2 (human ENSG vocab): map HGNC symbols -> human
+        # ENSG via mygene. (--auto-map-symbols routes to species=human
+        # here, NOT the mouse->ENSMUSG path.)
+        GENEFORMER_GENE_FLAGS="--auto-map-symbols"
+        NICHEFORMER_GENE_FLAGS="--auto-map-symbols"
+        UCE_SPECIES_FLAGS="--uce-species human"
+        NICHECOMPASS_SPECIES="human"
+        # Ground-truth labels live in the manual-annotation columns of
+        # the silver h5ad (== what the SQUINT run + blob use), which are
+        # NOT in the runner defaults — pass them explicitly so NMI/ARI
+        # are computed against the right columns.
+        LABEL_KEY_ARGS="--cell-label-keys cell_type_annotation --niche-label-keys niche_annotation"
+        ;;
     *)
         echo "WARNING: unknown DATASET_TAG=$DATASET_TAG; falling back to mouse defaults" >&2
         SPECIES="mouse"
@@ -280,7 +323,7 @@ case "$DATASET_TAG" in
         ;;
 esac
 
-COMMON_ARGS="--silver-dir $SILVER_DIR --dataset-tag $DATASET_TAG --artifacts-root $ARTIFACTS_ROOT"
+COMMON_ARGS="--silver-dir $SILVER_DIR --dataset-tag $DATASET_TAG --artifacts-root $ARTIFACTS_ROOT $LABEL_KEY_ARGS"
 
 # --- Method registry ----------------------------------------------------
 # Each row: key | script | venv | resource_class | extra_args
