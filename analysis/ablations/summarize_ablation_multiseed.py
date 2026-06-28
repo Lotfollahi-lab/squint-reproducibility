@@ -319,6 +319,25 @@ def _resolve_metrics_dir(prefix, artifacts_root, dataset):
     return None
 
 
+def _effective_code_key(d, requested, branch):
+    """Resolve the code_key for THIS variant's CSV. RVQ (L>=2) exposes
+    `..._code_indices[level_0]`; single-level (L=1) VQ — the residual-depth
+    ablation (s57_v30/v31/v32) — writes the BARE 1-D key with no `[level_0]`
+    suffix. Prefer the requested level_0 key; fall back to the single-level
+    key so L=1 variants don't collapse to N/A."""
+    if "code_key" not in d.columns:
+        return None
+    keys = set(d["code_key"].astype(str).unique())
+    if requested in keys:
+        return requested
+    stem = "cell_code_ind" if branch == "cell" else "neighborhood_code_ind"
+    cands = [k for k in keys if k.startswith(stem) and not k.endswith("[composite]")]
+    if not cands:
+        return None
+    bare = [k for k in cands if "[" not in k]
+    return sorted(bare)[0] if bare else sorted(cands, key=len)[0]
+
+
 def _niche_vals(metrics_dir, code_key, branch, col):
     f = metrics_dir / "per_seed_niche_identification.csv"
     if not f.is_file():
@@ -326,6 +345,9 @@ def _niche_vals(metrics_dir, code_key, branch, col):
     d = pd.read_csv(f)
     if "split" in d.columns:
         d = d[d["split"] == "all"]
+    code_key = _effective_code_key(d, code_key, branch)
+    if code_key is None:
+        return np.array([])
     d = d[d["code_key"] == code_key]
     pref = CELL_LABELS if branch == "cell" else NICHE_LABELS
     have = set(d["label_key"].unique()) if "label_key" in d.columns else set()

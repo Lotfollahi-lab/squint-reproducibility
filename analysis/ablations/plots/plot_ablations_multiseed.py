@@ -113,6 +113,31 @@ def _multiseed_metrics_dir(prefix: str, dataset: str,
     return None
 
 
+def _effective_code_key(d: "pd.DataFrame", is_cell: bool) -> Optional[str]:
+    """Resolve which `code_key` to read NMI/ARI from for THIS variant's CSV.
+
+    Residual-VQ (L>=2) variants expose `..._code_indices[level_0]` (the coarse
+    macro partition). Single-level (L=1) VQ variants — the residual-depth
+    ablation (s57_v30/v31/v32) — have NO residual hierarchy, so their codes are
+    written under the BARE 1-D key (`..._code_index` / `..._code_indices`, with
+    no `[level_0]` suffix). Prefer level_0 for back-compat with all RVQ
+    variants; fall back to the single-level key so L=1 ablations render real
+    NMI/ARI instead of N/A.
+    """
+    if "code_key" not in d.columns:
+        return None
+    keys = set(d["code_key"].astype(str).unique())
+    preferred = CELL_CODE_KEY if is_cell else NICHE_CODE_KEY
+    if preferred in keys:
+        return preferred
+    stem = "cell_code_ind" if is_cell else "neighborhood_code_ind"
+    cands = [k for k in keys if k.startswith(stem) and not k.endswith("[composite]")]
+    if not cands:
+        return None
+    bare = [k for k in cands if "[" not in k]   # single-level key (no [..])
+    return sorted(bare)[0] if bare else sorted(cands, key=len)[0]
+
+
 def _pick_label_key(metrics_dir: Path, is_cell: bool,
                     preference: Tuple[str, ...]) -> Optional[str]:
     """First label_key in `preference` that has rows for the relevant code_key
@@ -123,8 +148,8 @@ def _pick_label_key(metrics_dir: Path, is_cell: bool,
     d = pd.read_csv(f)
     if "split" in d.columns:
         d = d[d["split"] == "all"]
-    ck = CELL_CODE_KEY if is_cell else NICHE_CODE_KEY
-    if "code_key" in d.columns:
+    ck = _effective_code_key(d, is_cell)
+    if ck is not None and "code_key" in d.columns:
         d = d[d["code_key"] == ck]
     have = set(d["label_key"].unique().tolist()) if "label_key" in d.columns else set()
     return next((lk for lk in preference if lk in have), None)
@@ -142,9 +167,9 @@ def _per_seed_values(metrics_dir: Path, metric: str,
         if "split" in d.columns:
             d = d[d["split"] == "all"]
         is_cell = metric.startswith("Cell")
-        ck = CELL_CODE_KEY if is_cell else NICHE_CODE_KEY
+        ck = _effective_code_key(d, is_cell)
         lk = cell_label if is_cell else niche_label
-        if lk is None:
+        if lk is None or ck is None:
             return np.array([])
         d = d[(d["code_key"] == ck) & (d["label_key"] == lk)]
         col = "NMI" if metric.endswith("NMI") else "ARI"
