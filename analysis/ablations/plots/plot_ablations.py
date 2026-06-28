@@ -267,6 +267,19 @@ AXES: Tuple[AxisSpec, ...] = (
             VariantEntry("s57_v24_", "Coupled + affine"),
         ),
     ),
+    AxisSpec(
+        key="axis_11_residual_vq_levels",
+        title="Residual VQ Levels",
+        # L=2 residual (30,90) = the default (s57_v19, PINK) vs L=1 single-level
+        # VQ at three sizes: capacity-matched (2700=30x90), parameter-matched
+        # (120=30+90), and drop-the-level (30 = just L0). Significance vs L=2.
+        entries=(
+            VariantEntry("s57_v19_", "L=2 residual (30,90)", is_default=True),
+            VariantEntry("s57_v30_", "L=1 VQ (K=2700)"),
+            VariantEntry("s57_v31_", "L=1 VQ (K=120)"),
+            VariantEntry("s57_v32_", "L=1 VQ (K=30)"),
+        ),
+    ),
 )
 
 

@@ -142,6 +142,9 @@ S57_SET = [
     ("s57_v27_", "Two-model: niche-only"),
     ("s57_v28_", "Continuous latent (vs v29)"),
     ("s57_v29_", "Discrete VQ ref (continuous pair)"),
+    ("s57_v30_", "L=1 VQ K=2700 (vs L=2)"),
+    ("s57_v31_", "L=1 VQ K=120 (vs L=2)"),
+    ("s57_v32_", "L=1 VQ K=30 (vs L=2)"),
 ]
 S57_REFERENCE = "s57_v19_"
 
