@@ -14,11 +14,13 @@ and summarises 8 metrics, split into the two axes of the trade-off:
     resolution : Cell NMI, Cell ARI, Niche NMI, Niche ARI   (↑ better)
     integration: Cell iLISI (↑), Cell MMD (↓), Niche iLISI (↑), Niche MMD (↓)
 
-Pick a named preset with --set: s55 (cross-batch-MNN weight sweep vs the
-s49_v23 within-batch reference), s56 (encoder cell/niche coupling methods
-vs the decoupled s55_v3 reference; the DEFAULT), or s57 (all s51/s52/s54
-ablations on the cross-batch spine vs s55_v3). Override with --variants /
---reference for an arbitrary set.
+Pick a named preset with --set. The DEFAULT is "coupling" = EVERY cell/niche
+coupling experiment in one table (s56 trunk-sharing + s58 info-flow/
+complementarity + s59 soft-L2/parameter-efficient + s60 novel cross-branch),
+all vs the decoupled s55_v3 reference. Individual presets: s55 (cross-batch-MNN
+weight sweep vs s49_v23), s56 / s58 / s59 / s60 (the coupling families), s57
+(all s51/s52/s54 ablations on the cross-batch spine vs s55_v3). Override with
+--variants / --reference for an arbitrary set.
 
 Outputs (to --out, default <artifacts>/<dataset>/_ablation_summary/):
     ablation_summary_long.csv   one row per (variant, metric): n, mean, std,
@@ -27,7 +29,9 @@ Outputs (to --out, default <artifacts>/<dataset>/_ablation_summary/):
 and prints the wide table.
 
 Usage:
-    python summarize_ablation_multiseed.py                       # s59 param-efficient (default)
+    python summarize_ablation_multiseed.py                       # ALL coupling experiments (default)
+    python summarize_ablation_multiseed.py --set s60            # novel cross-branch coupling
+    python summarize_ablation_multiseed.py --set s59            # soft-L2 + param-efficient
     python summarize_ablation_multiseed.py --set s58            # info-flow / complementarity
     python summarize_ablation_multiseed.py --set s56            # encoder coupling methods
     python summarize_ablation_multiseed.py --set s55            # cross-batch weight sweep
@@ -170,6 +174,25 @@ S60_SET = [
 ]
 S60_REFERENCE = "s55_v3_"
 
+# "coupling" — EVERY cell/niche coupling experiment in one table (s56 trunk-
+# sharing + s58 info-flow/complementarity + s59 soft-L2/param-efficient + s60
+# novel cross-branch), all vs the decoupled s55_v3 reference. Built from the
+# per-family sets (so it never drifts); family-prefixed labels; the per-family
+# reference rows are dropped and a single decoupled ref is kept at the top;
+# s59's echoes of s56_v1/s56_v8 are de-duplicated.
+def _family_rows(set_list, fam, drop=()):
+    return [(p, f"{fam}: {lbl}") for p, lbl in set_list
+            if p != "s55_v3_" and p not in drop]
+
+COUPLING_SET = (
+    [("s55_v3_", "Decoupled (ref)")]
+    + _family_rows(S56_SET, "s56")
+    + _family_rows(S58_SET, "s58")
+    + _family_rows(S59_SET, "s59", drop=("s56_v1_", "s56_v8_"))
+    + _family_rows(S60_SET, "s60")
+)
+COUPLING_REFERENCE = "s55_v3_"
+
 NAMED_SETS = {
     "s55": (S55_SET, S55_REFERENCE),
     "s56": (S56_SET, S56_REFERENCE),
@@ -177,8 +200,9 @@ NAMED_SETS = {
     "s58": (S58_SET, S58_REFERENCE),
     "s59": (S59_SET, S59_REFERENCE),
     "s60": (S60_SET, S60_REFERENCE),
+    "coupling": (COUPLING_SET, COUPLING_REFERENCE),
 }
-DEFAULT_SET_NAME = "s60"
+DEFAULT_SET_NAME = "coupling"
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +306,9 @@ def main(argv=None):
                          f"s55=cross-batch weight sweep; s56=encoder coupling methods; "
                          f"s57=all ablations on the cross-batch spine; s58=information-"
                          f"flow / complementarity coupling; s59=soft-L2 sweep + "
-                         f"parameter-efficient coupling. Ignored when --variants is given.")
+                         f"parameter-efficient coupling; s60=novel cross-branch coupling; "
+                         f"coupling=ALL coupling experiments (s56+s58+s59+s60) in one "
+                         f"table. Ignored when --variants is given.")
     ap.add_argument("--variants", nargs="+", default=None,
                     help="Variant key prefixes (e.g. s56_v1_). Overrides --set.")
     ap.add_argument("--labels", nargs="+", default=None,
