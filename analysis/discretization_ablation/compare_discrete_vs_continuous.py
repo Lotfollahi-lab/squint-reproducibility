@@ -1,56 +1,47 @@
 #!/usr/bin/env python3
 """
-4-FOLD, multi-seed comparison of a DISCRETE (dual-VQ) SQUINT model against its
-CONTINUOUS-latent twin (same architecture, VQ removed) — the
-discrete-vs-continuous ablation answering the reviewer comment "the rationale
-for discrete codebooks over continuous latents is not sufficiently supported".
+Multi-seed DISCRETE-vs-CONTINUOUS ablation, rendered in the SAME horizontal
+format as the other ablation figures (reuses plot_ablations_multiseed.render_axis
+— per-seed dots, 95% CI, pink default, significance vs default). Answers the
+reviewer comment "the rationale for discrete codebooks over continuous latents
+is not sufficiently supported".
 
-For each branch (cell, niche) it scores FOUR representations against the SAME
-ground-truth labels (cell-type for cell, niche for niche), via NMI and ARI:
+THREE conditions (bars), each scored on ALL 8 ablation metrics — resolution
+(Cell/Niche NMI & ARI) AND integration (Cell/Niche iLISI & MMD):
 
-  (1) DISCRETE CODES               — the discrete model's level-0 code
-                                     assignment, used directly (native output).
-  (2) VQ-VAE QUANTIZED EMB, CLUSTERED   — k-means of the discrete model's
-                                     QUANTIZED embedding (obsm['cell_emb'] /
-                                     ['neighborhood_emb'] = z_q).
-  (3) VQ-VAE PRE-QUANT EMB, CLUSTERED   — k-means of the discrete model's
-                                     PRE-quantization latent (obsm['cell_latent']
-                                     / ['neighborhood_latent'] = z).
-  (4) CONTINUOUS EMB, CLUSTERED    — k-means of the continuous model's embedding
-                                     (obsm['cell_emb']; z_q==z for that model).
+  - "Discrete codes"        VQ-VAE: NMI/ARI from the level-0 CODES directly;
+                            iLISI/MMD from the quantized z_q embedding.
+  - "Discrete clustered"    VQ-VAE: NMI/ARI from k-means of the PRE-VQ latent z;
+                            iLISI/MMD from the pre-VQ z embedding.
+  - "Continuous clustered"  continuous model: NMI/ARI from k-means of its emb;
+                            iLISI/MMD from its embedding.
 
-k-means k for folds (2),(3),(4) = the number of discrete codes
-(--match nominal [default] = the L0 codebook size; --match used = the #unique
-L0 codes the discrete model assigns), so all clustered folds are at matched
-granularity. k-means seed is fixed (--kmeans-seed); the VARIANCE comes from the
-5 TRAINING SEEDS (5 discrete + 5 continuous run dirs).
+So the VQ-VAE contributes both its DISCRETIZED (z_q) and its CONTINUOUS (pre-VQ
+z) embeddings, and the continuous variant its continuous embedding — exactly the
+integration comparison requested. RESOLUTION (NMI/ARI) is computed here by
+k-means at k = #discrete codes (--match nominal = L0 codebook size; --match used
+= #unique codes). INTEGRATION (iLISI/MMD) is read straight from each run's
+precomputed metrics/batch_integration_metrics.csv (emb keys cell_emb /
+neighborhood_emb = z_q ; cell_latent / neighborhood_latent = pre-VQ z) — no
+recomputation, so it matches the numbers in the other ablation plots. k-means
+seed fixed (--kmeans-seed); VARIANCE = the training seeds. Significance: each
+condition vs the "Discrete codes" default.
 
-MULTI-SEED: pass several run dirs per model (training seeds 0-4). Each path may
-be a run dir (has predicted_adata.h5ad), a multi-seed sweep dir / a
-seed_run_index.csv (auto-expanded to its per-seed run dirs), or a variant
-parent dir (all timestamp subdirs with a predicted_adata.h5ad). Identical paths
-are de-duplicated with a warning.
-
-Per branch x metric it reports mean +/- std across seeds, the individual seed
-points, and pairwise SIGNIFICANCE (folds 1-3 are paired across the discrete
-runs; any-vs-fold-4 is an independent two-sample test). Test: t-test (default)
-or Mann-Whitney (--test mannwhitney).
+MULTI-SEED: pass run dirs per model; each may be a run dir, a multiseed sweep /
+seed_run_index.csv (auto-expanded), or a variant parent dir. Default runs =
+s57_v29 (discrete) and s57_v28 (continuous).
 
 Outputs (to --out-dir, default <first continuous run>/comparison_vs_discrete/):
-  comparison_per_seed.csv     one row per (branch, condition, seed-run)
-  comparison_summary.csv      mean/std/n per (branch, condition)
-  comparison_significance.csv pairwise p-values + stars
-  comparison.json             everything machine-readable
-  comparison.png / .svg / .pdf  grouped bars + points + error bars + sig brackets
-                                (editable text in Illustrator)
+  discretization_per_seed.csv      one row per (condition, branch, metric, seed)
+  discretization_summary.csv       mean/std/n per (condition, branch, metric)
+  discretization_comparison.{svg,png,pdf}  horizontal ablation-style figure
 
 Usage:
-    python compare_discrete_vs_continuous.py \
-        --discrete-runs   <s49_v23 multiseed sweep dir | run dirs...> \
-        --continuous-runs <s53_v1 multiseed sweep dir | run dirs...>
-    python compare_discrete_vs_continuous.py --match nominal --test ttest
+    python compare_discrete_vs_continuous.py            # s57_v29 vs s57_v28
+    python compare_discrete_vs_continuous.py --test mannwhitney --error sem
 
-Requirements: anndata, numpy, pandas, scikit-learn (scipy + matplotlib optional).
+Requirements: anndata, numpy, pandas, scikit-learn, matplotlib (+ the ablation
+plotters under analysis/ablations/plots/).
 """
 from __future__ import annotations
 
@@ -318,24 +309,64 @@ def main(argv=None):
 
     import anndata as ad
     import pandas as pd
+    from pathlib import Path
+
+    # Reuse the ablation plotter so the figure is IDENTICAL in format (horizontal
+    # bars, per-seed dots, 95% CI, pink default, significance vs default).
+    import sys as _sys
+    _plots_dir = Path(__file__).resolve().parents[1] / "ablations" / "plots"
+    if str(_plots_dir) not in _sys.path:
+        _sys.path.insert(0, str(_plots_dir))
+    from plot_ablations import (METRICS, AxisSpec, VariantEntry,        # noqa: E402
+                                _apply_nature_style)
+    from plot_ablations_multiseed import render_axis                    # noqa: E402
+
+    # The 3 conditions (bars). Each maps a RESOLUTION source (codes / k-means at
+    # k=#codes) and an INTEGRATION embedding (iLISI/MMD read straight from each
+    # run's precomputed metrics/batch_integration_metrics.csv — cell_emb /
+    # neighborhood_emb = z_q; cell_latent / neighborhood_latent = pre-VQ z).
+    COND_CODES  = "Discrete codes"          # VQ-VAE discrete: NMI/ARI from codes; iLISI/MMD from z_q
+    COND_DCLUST = "Discrete clustered"      # VQ-VAE: NMI/ARI from pre-VQ z clustered; iLISI/MMD from pre-VQ z
+    COND_CONT   = "Continuous clustered"    # continuous model: NMI/ARI clustered; iLISI/MMD from its emb
+    CONDS = [COND_CODES, COND_DCLUST, COND_CONT]
+    INTEG_EMB = {
+        COND_CODES:  {"cell": "cell_emb",    "niche": "neighborhood_emb"},
+        COND_DCLUST: {"cell": "cell_latent", "niche": "neighborhood_latent"},
+        COND_CONT:   {"cell": "cell_emb",    "niche": "neighborhood_emb"},
+    }
+
+    def _read_integration(run_dir):
+        """{(emb_key, metric): score} from <run_dir>/metrics/batch_integration_metrics.csv."""
+        f = os.path.join(run_dir, "metrics", "batch_integration_metrics.csv")
+        if not os.path.isfile(f):
+            print(f"    [integration] missing {f}", file=sys.stderr)
+            return {}
+        try:
+            d = pd.read_csv(f)
+            return {(str(r["emb_key"]), str(r["metric"])): float(r["score"])
+                    for _, r in d.iterrows()}
+        except Exception as exc:  # noqa: BLE001
+            print(f"    [integration] read failed {f}: {exc}", file=sys.stderr)
+            return {}
 
     print("[compare] resolving run dirs...")
     disc_runs = _expand_runs(args.discrete_runs, "discrete")
     cont_runs = _expand_runs(args.continuous_runs, "continuous")
-    print(f"    discrete  : {len(disc_runs)} run(s)")
-    print(f"    continuous: {len(cont_runs)} run(s)")
+    print(f"    discrete  : {len(disc_runs)} run(s)\n    continuous: {len(cont_runs)} run(s)")
     if not disc_runs or not cont_runs:
         raise SystemExit("Need >=1 discrete and >=1 continuous run dir.")
     out_dir = args.out_dir or os.path.join(cont_runs[0], "comparison_vs_discrete")
     os.makedirs(out_dir, exist_ok=True)
-    dlab, clab = args.discrete_label, args.continuous_label
 
-    per_seed = []                       # tidy rows: branch, condition, model, seed_idx, run_dir, NMI, ARI, k
-    label_per_branch = {}
-    nominal_k = {}                      # branch -> L0 codebook size (from discrete)
+    # per-seed accumulators: (cond, branch, kind) -> [values over seeds]
+    res, integ = {}, {}
+    def _push(store, cond, branch, kind, v):
+        store.setdefault((cond, branch, kind), []).append(float(v))
+
+    label_per_branch, nominal_k = {}, {}
     used_counts = {"cell": [], "niche": []}
 
-    # ---- DISCRETE runs -> folds 1, 2, 3 ----
+    # ---- DISCRETE runs: codes + pre-VQ-clustered resolution + z_q/pre-VQ integ ----
     for si, rd in enumerate(disc_runs):
         p = _adata_in(rd)
         if p is None:
@@ -347,47 +378,39 @@ def main(argv=None):
             lab_key = _label_key(A, branch, args.cell_label_key if branch == "cell"
                                  else args.niche_label_key)
             codes = _codes_l0(A, branch)
-            qkey, pkey = _QUANT_KEY[branch], _PREQUANT_KEY[branch]
-            if lab_key is None or qkey not in A.obsm or codes is None:
-                print(f"    [{branch}] missing label/{qkey}/codes — skip", file=sys.stderr)
+            pkey = _PREQUANT_KEY[branch]
+            if lab_key is None or codes is None:
+                print(f"    [{branch}] missing label/codes — skip", file=sys.stderr)
                 continue
             label_per_branch[branch] = lab_key
-            nominal_k.setdefault(branch, _nominal_l0(A, branch) or
-                                 int(len(np.unique(codes))))
+            nominal_k.setdefault(branch, _nominal_l0(A, branch) or int(len(np.unique(codes))))
             mask, true_lab = _label_mask_factorize(A.obs[lab_key])
             codes_v = codes[mask]
-            k_used = int(len(np.unique(codes_v)))
-            used_counts[branch].append(k_used)
-            k = nominal_k[branch] if args.match == "nominal" else k_used
-            # fold 1: codes directly
+            used_counts[branch].append(int(len(np.unique(codes_v))))
+            k = nominal_k[branch] if args.match == "nominal" else int(len(np.unique(codes_v)))
+            # COND_CODES resolution = codes directly
             nmi, ari = _nmi_ari(true_lab, codes_v)
-            per_seed.append(dict(branch=branch, condition=C1, model=dlab, seed_idx=si,
-                                 run_dir=rd, NMI=nmi, ARI=ari, k=k_used))
-            # fold 2: quantized embedding clustered
-            nmi, ari = _nmi_ari(true_lab, _kmeans(A.obsm[qkey][mask], k, args.kmeans_seed))
-            per_seed.append(dict(branch=branch, condition=C2, model=dlab, seed_idx=si,
-                                 run_dir=rd, NMI=nmi, ARI=ari, k=k))
-            # fold 3: pre-quantization latent clustered
+            _push(res, COND_CODES, branch, "NMI", nmi); _push(res, COND_CODES, branch, "ARI", ari)
+            # COND_DCLUST resolution = pre-VQ z clustered
             if pkey in A.obsm:
                 nmi, ari = _nmi_ari(true_lab, _kmeans(A.obsm[pkey][mask], k, args.kmeans_seed))
-                per_seed.append(dict(branch=branch, condition=C3, model=dlab, seed_idx=si,
-                                     run_dir=rd, NMI=nmi, ARI=ari, k=k))
-            else:
-                print(f"    [{branch}] no pre-quant key {pkey!r}; skipping fold 3",
-                      file=sys.stderr)
+                _push(res, COND_DCLUST, branch, "NMI", nmi); _push(res, COND_DCLUST, branch, "ARI", ari)
+        ig = _read_integration(rd)
+        for cond in (COND_CODES, COND_DCLUST):
+            for branch, _bn in BRANCHES:
+                ek = INTEG_EMB[cond][branch]
+                for kind in ("iLISI", "MMD"):
+                    if (ek, kind) in ig:
+                        _push(integ, cond, branch, kind, ig[(ek, kind)])
         del A
         gc.collect()
 
-    # k for fold 4 (continuous): single value per branch from the discrete codes.
-    k_f4 = {}
-    for branch, _ in BRANCHES:
-        if branch not in nominal_k:
-            continue
-        k_f4[branch] = (nominal_k[branch] if args.match == "nominal"
-                        else int(round(np.mean(used_counts[branch]))) if used_counts[branch]
-                        else nominal_k[branch])
+    # k for the continuous fold (per branch from the discrete codes)
+    k_cont = {b: (nominal_k[b] if args.match == "nominal"
+                  else int(round(np.mean(used_counts[b]))) if used_counts[b] else nominal_k[b])
+              for b, _ in BRANCHES if b in nominal_k}
 
-    # ---- CONTINUOUS runs -> fold 4 ----
+    # ---- CONTINUOUS runs: clustered resolution + continuous-emb integ ----
     for si, rd in enumerate(cont_runs):
         p = _adata_in(rd)
         if p is None:
@@ -396,181 +419,75 @@ def main(argv=None):
         print(f"[compare] continuous seed {si}: {p}")
         A = ad.read_h5ad(p)
         for branch, _bn in BRANCHES:
-            if branch not in label_per_branch or branch not in k_f4:
+            if branch not in label_per_branch or branch not in k_cont:
                 continue
             lab_key = label_per_branch[branch]
             qkey = _QUANT_KEY[branch]
             if lab_key not in A.obs or qkey not in A.obsm:
-                print(f"    [{branch}] missing label/{qkey} in continuous run — skip",
-                      file=sys.stderr)
                 continue
             mask, true_lab = _label_mask_factorize(A.obs[lab_key])
-            nmi, ari = _nmi_ari(true_lab, _kmeans(A.obsm[qkey][mask], k_f4[branch],
+            nmi, ari = _nmi_ari(true_lab, _kmeans(A.obsm[qkey][mask], k_cont[branch],
                                                   args.kmeans_seed))
-            per_seed.append(dict(branch=branch, condition=C4, model=clab, seed_idx=si,
-                                 run_dir=rd, NMI=nmi, ARI=ari, k=k_f4[branch]))
+            _push(res, COND_CONT, branch, "NMI", nmi); _push(res, COND_CONT, branch, "ARI", ari)
+        ig = _read_integration(rd)
+        for branch, _bn in BRANCHES:
+            ek = INTEG_EMB[COND_CONT][branch]
+            for kind in ("iLISI", "MMD"):
+                if (ek, kind) in ig:
+                    _push(integ, COND_CONT, branch, kind, ig[(ek, kind)])
         del A
         gc.collect()
 
-    if not per_seed:
-        raise SystemExit("No metrics computed — check run dirs / labels / obsm keys.")
-    ps_df = pd.DataFrame(per_seed)
+    # ---- assemble per_metric_values for the 8 ablation metrics ----
+    per_metric_values = {}
+    for metric_label, _direction in METRICS:
+        branch = "cell" if metric_label.startswith("Cell") else "niche"
+        kind = metric_label.split()[-1]                     # NMI / ARI / iLISI / MMD
+        src = res if kind in ("NMI", "ARI") else integ
+        per_metric_values[metric_label] = {
+            cond: np.asarray(src.get((cond, branch, kind), []), dtype=float)
+            for cond in CONDS}
 
-    # ---- summary (mean/std/n) ----
-    summ = (ps_df.groupby(["branch", "condition", "model"])
-            .agg(NMI_mean=("NMI", "mean"), NMI_std=("NMI", "std"),
-                 ARI_mean=("ARI", "mean"), ARI_std=("ARI", "std"),
-                 n=("NMI", "size"), k=("k", "first"))
+    if all(per_metric_values[m][c].size == 0 for m, _ in METRICS for c in CONDS):
+        raise SystemExit("No metrics computed — check run dirs / labels / obsm / "
+                         "metrics/batch_integration_metrics.csv.")
+
+    # ---- per-seed + summary CSVs ----
+    rows = [dict(condition=c, branch=b, metric=k, seed_idx=i, value=v)
+            for (c, b, k), vals in {**res, **integ}.items()
+            for i, v in enumerate(vals)]
+    ps_df = pd.DataFrame(rows)
+    summ = (ps_df.groupby(["condition", "branch", "metric"])
+            .agg(mean=("value", "mean"), std=("value", "std"), n=("value", "size"))
             .reset_index())
-
-    # ---- pairwise significance per branch x metric ----
-    # The 3 bars requested for the figure: discrete codes (C1), the discrete
-    # model's latent clustered (C3, pre-VQ z — the meaningful "discrete
-    # clustered"; clustering the quantized z_q [C2] trivially ~= the codes, so
-    # C2 is computed but omitted from the plot), and the continuous model's
-    # embedding clustered (C4). All k-means at k = #discrete codes. To show the
-    # quantized-embedding fold instead/as-well, add C2 to `order`.
-    order = [C1, C3, C4]
-    model_of = {C1: dlab, C2: dlab, C3: dlab, C4: clab}
-    sig_rows = []
-    for branch, _bn in BRANCHES:
-        for metric in ("NMI", "ARI"):
-            vals = {c: ps_df[(ps_df.branch == branch) & (ps_df.condition == c)]
-                    .sort_values("seed_idx")[metric].to_numpy() for c in order}
-            for i in range(len(order)):
-                for j in range(i + 1, len(order)):
-                    ci, cj = order[i], order[j]
-                    if len(vals[ci]) == 0 or len(vals[cj]) == 0:
-                        continue
-                    paired = (model_of[ci] == model_of[cj])
-                    p = _pvalue(vals[ci], vals[cj], paired, args.test)
-                    sig_rows.append(dict(
-                        branch=branch, metric=metric, cond_a=ci, cond_b=cj,
-                        mean_a=float(np.nanmean(vals[ci])),
-                        mean_b=float(np.nanmean(vals[cj])),
-                        test=("paired-" if paired else "indep-") + args.test,
-                        p_value=p, stars=_stars(p)))
-    sig_df = pd.DataFrame(sig_rows)
-
-    # ---- write ----
-    ps_csv = os.path.join(out_dir, "comparison_per_seed.csv")
-    su_csv = os.path.join(out_dir, "comparison_summary.csv")
-    sg_csv = os.path.join(out_dir, "comparison_significance.csv")
+    ps_csv = os.path.join(out_dir, "discretization_per_seed.csv")
+    su_csv = os.path.join(out_dir, "discretization_summary.csv")
     ps_df.to_csv(ps_csv, index=False)
     summ.to_csv(su_csv, index=False)
-    sig_df.to_csv(sg_csv, index=False)
-    with open(os.path.join(out_dir, "comparison.json"), "w") as fh:
-        json.dump(dict(discrete=dict(label=dlab, runs=disc_runs),
-                       continuous=dict(label=clab, runs=cont_runs),
-                       match=args.match, k_per_branch=k_f4,
-                       per_seed=per_seed,
-                       summary=summ.to_dict(orient="records"),
-                       significance=sig_rows), fh, indent=2, default=str)
-
     pd.set_option("display.width", 200)
-    pd.set_option("display.max_columns", 40)
     pd.set_option("display.float_format", lambda v: f"{v:.4f}")
-    print("\n" + "=" * 80)
-    print(f"{len(order)}-FOLD comparison across seeds (discrete n={ps_df[ps_df.model==dlab].seed_idx.nunique()}, "
-          f"continuous n={ps_df[ps_df.model==clab].seed_idx.nunique()}); "
-          f"k=#codes [{args.match}], k-means seed={args.kmeans_seed}")
-    print("=" * 80)
+    print("\n" + "=" * 78)
+    print("DISCRETE vs CONTINUOUS — codes / clustered / continuous (mean ± std)")
+    print("=" * 78)
     print(summ.to_string(index=False))
-    print("\nPairwise significance:")
-    print(sig_df.to_string(index=False))
-    print(f"\n[compare] wrote {ps_csv}\n[compare] wrote {su_csv}\n[compare] wrote {sg_csv}")
+    print(f"\n[compare] wrote {ps_csv}\n[compare] wrote {su_csv}")
 
-    # ---- figure: 2 metrics x 2 branches, 4 bars each — same look as the
-    #      ablation figure: white-edged per-seed dots (deterministic spread),
-    #      95% CI, reference line at the continuous mean, significance stars
-    #      (each VQ-VAE fold vs the continuous baseline; no "ns" clutter) ----
+    # ---- figure: identical horizontal format to the ablation axes ----
     if not args.no_plot:
         try:
-            import matplotlib
-            matplotlib.use("Agg")
-            matplotlib.rcParams["svg.fonttype"] = "none"   # editable text in Illustrator
-            matplotlib.rcParams["pdf.fonttype"] = 42
-            matplotlib.rcParams["ps.fonttype"] = 42
-            import matplotlib.pyplot as plt
-            err_name = {"ci95": "95% CI", "sem": "SEM", "std": "SD"}[args.error]
-            fig, axes = plt.subplots(2, 2, figsize=(10, 8.5), squeeze=False)
-            for r, metric in enumerate(("NMI", "ARI")):
-                for c, (branch, bn) in enumerate(BRANCHES):
-                    ax = axes[r][c]
-                    means, errs, pts = [], [], []
-                    for cond in order:
-                        v = ps_df[(ps_df.branch == branch)
-                                  & (ps_df.condition == cond)][metric].to_numpy()
-                        v = v[np.isfinite(v)]
-                        means.append(float(v.mean()) if v.size else np.nan)
-                        errs.append(_err_halfwidth(v, args.error))
-                        pts.append(v)
-                    x = np.arange(len(order))
-                    colours = [COND_COLOURS.get(c2, "#888888") for c2 in order]
-                    # reference line at the continuous (C4) mean
-                    c4_mean = means[order.index(C4)] if C4 in order else np.nan
-                    if c4_mean == c4_mean:
-                        ax.axhline(c4_mean, color="0.6", lw=0.7, ls=(0, (3, 2)),
-                                   alpha=0.8, zorder=1)
-                    ax.bar(x, means, yerr=errs, width=0.66, color=colours,
-                           edgecolor="none", alpha=0.85, zorder=2,
-                           error_kw=dict(ecolor="0.25", elinewidth=0.9,
-                                         capsize=2.5, capthick=0.7, zorder=3))
-                    # white-edged per-seed dots, deterministic value-ordered spread
-                    for xi, v, col in zip(x, pts, colours):
-                        if v.size == 0:
-                            continue
-                        if v.size > 1:
-                            xoff = np.empty(v.size)
-                            xoff[np.argsort(v)] = np.linspace(-0.16, 0.16, v.size)
-                        else:
-                            xoff = np.zeros(1)
-                        ax.scatter(np.full(v.size, xi) + xoff, v, s=16,
-                                   facecolor=_darken(col), edgecolor="white",
-                                   linewidths=0.4, zorder=6)
-                    # significance stars: each VQ-VAE fold (C1/C2/C3) vs continuous (C4)
-                    sub = sig_df[(sig_df.branch == branch) & (sig_df.metric == metric)]
-                    tops = [(float(v.max()) if v.size else 0.0) + e
-                            for v, e in zip(pts, errs)]
-                    pad = 0.02 * (max(tops) if max(tops) > 0 else 1.0)
-                    for a_i, cond in enumerate(order):
-                        if cond == C4:
-                            continue
-                        row = sub[(sub.cond_a == cond) & (sub.cond_b == C4)]
-                        if row.empty:
-                            continue
-                        st = str(row.iloc[0]["stars"])
-                        if st in ("", "ns", "n/a"):
-                            continue
-                        ax.text(a_i, tops[a_i] + pad, st, ha="center", va="bottom",
-                                fontsize=7, fontweight="bold", color="0.3")
-                    ax.set_xticks(x)
-                    ax.set_xticklabels([SHORT[c2] for c2 in order], fontsize=7.5)
-                    ax.set_ylabel(metric)
-                    ax.set_ylim(bottom=0)
-                    ax.spines["top"].set_visible(False)
-                    ax.spines["right"].set_visible(False)
-                    ax.yaxis.grid(True, linewidth=0.3, alpha=0.25, color="0.75")
-                    ax.set_axisbelow(True)
-                    ax.set_title(f"{bn} — {metric} vs ground-truth labels",
-                                 fontsize=9, fontweight="medium")
-            fig.suptitle("Discrete Codes vs Clustered Embeddings "
-                         "(5 seeds, k = #discrete codes)",
-                         fontsize=11, fontweight="bold", y=1.0)
-            fig.text(0.5, 0.005,
-                     f"bars: mean ± {err_name}   ·   dots: per-seed   ·   "
-                     f"dashed: continuous mean   ·   "
-                     f"* p<0.05  ** p<0.01  *** p<0.001 vs continuous "
-                     f"(independent {args.test})",
-                     ha="center", va="bottom", fontsize=6, color="0.4")
-            fig.tight_layout(rect=(0, 0.03, 1, 0.97))
-            for ext in ("png", "svg", "pdf"):
-                fig.savefig(os.path.join(out_dir, f"comparison.{ext}"),
-                            dpi=150, bbox_inches="tight")
-            print(f"[compare] wrote {os.path.join(out_dir, 'comparison.png')} "
-                  f"(+ .svg, .pdf — editable text in Illustrator)")
-        except Exception as e:
-            print(f"[compare] plot skipped ({type(e).__name__}: {e})", file=sys.stderr)
+            _apply_nature_style()
+            axis = AxisSpec(
+                key="discretization",
+                title="Discretization: Discrete Codes vs Clustered Embeddings",
+                entries=(VariantEntry(COND_CODES, COND_CODES, is_default=True),
+                         VariantEntry(COND_DCLUST, COND_DCLUST),
+                         VariantEntry(COND_CONT, COND_CONT)))
+            render_axis(axis, per_metric_values, {c: c for c in CONDS}, COND_CODES,
+                        Path(out_dir) / "discretization_comparison",
+                        args.test, args.error)
+            print(f"[compare] wrote {out_dir}/discretization_comparison.{{svg,png,pdf}}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[compare] plot skipped ({type(exc).__name__}: {exc})", file=sys.stderr)
 
     print("\n[compare] DONE")
 
