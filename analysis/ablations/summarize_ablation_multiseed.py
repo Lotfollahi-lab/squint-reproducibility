@@ -155,14 +155,30 @@ S59_SET = [
 ]
 S59_REFERENCE = "s55_v3_"
 
+# s60 — novel cross-branch couplings (VQ/codebook-level, conditional, attention,
+# alignment, domain-borrowed). Reference = s55_v3 (decoupled).
+S60_SET = [
+    ("s55_v3_", "Decoupled (ref)"),
+    ("s60_v1_", "Shared token"),
+    ("s60_v2_", "Cross-branch residual VQ"),
+    ("s60_v3_", "Shared codebook"),
+    ("s60_v4_", "Cell-cond niche (bias)"),
+    ("s60_v5_", "Cell-cond niche (FiLM)"),
+    ("s60_v6_", "Niche attends cell cb"),
+    ("s60_v7_", "Mutual alignment"),
+    ("s60_v8_", "Nbr-expr augment"),
+]
+S60_REFERENCE = "s55_v3_"
+
 NAMED_SETS = {
     "s55": (S55_SET, S55_REFERENCE),
     "s56": (S56_SET, S56_REFERENCE),
     "s57": (S57_SET, S57_REFERENCE),
     "s58": (S58_SET, S58_REFERENCE),
     "s59": (S59_SET, S59_REFERENCE),
+    "s60": (S60_SET, S60_REFERENCE),
 }
-DEFAULT_SET_NAME = "s59"
+DEFAULT_SET_NAME = "s60"
 
 
 # ---------------------------------------------------------------------------
