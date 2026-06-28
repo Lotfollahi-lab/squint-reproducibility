@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """
-Multi-seed ablation figures — same axes as plot_ablations.py, but each bar is
-the MEAN across the training seeds with: the individual-seed DOTS overlaid, a
-95% CONFIDENCE INTERVAL whisker, and a SIGNIFICANCE marker for each comparator
-vs the axis default (red).
+Multi-seed ablation figures — the SINGLE entry point for ALL ablation plots.
+Each bar is the MEAN across training seeds with the individual-seed DOTS
+overlaid, a 95% CONFIDENCE INTERVAL whisker, and a SIGNIFICANCE marker for each
+comparator vs the axis default (pink).
+
+It renders, into one out-dir:
+  (a) the per-axis ablation figures (axis_1..axis_10: adjacency, contrastive,
+      decoder-cov, GNN, neighbours, cell/niche codebook L1 & L0, coupling
+      mechanism) from the per-seed CSVs, and
+  (b) the DISCRETIZATION comparison (discrete codes vs discrete/continuous
+      embedding clustered at k=#codes; s57_v28 vs s57_v29) by delegating to
+      compare_discrete_vs_continuous.py. Disable with --skip-discretization.
 
 Unlike plot_ablations.py (which reads one mean value per variant from
 summary_long.csv), this reads PER-SEED metrics directly from each variant's
@@ -372,6 +380,10 @@ def main(argv: Optional[List[str]] = None) -> None:
                    default=",".join(DEFAULT_CELL_LABEL_KEYS))
     p.add_argument("--niche-label-keys", type=str,
                    default=",".join(DEFAULT_NICHE_LABEL_KEYS))
+    p.add_argument("--skip-discretization", action="store_true",
+                   help="Skip the discrete-vs-continuous (s57_v28/v29) figure. "
+                        "By default this script ALSO renders that comparison "
+                        "(k-means clustering of embeddings) into the same out-dir.")
     args = p.parse_args(argv)
 
     out_dir = args.out_dir or (args.artifacts_root / args.dataset
@@ -416,6 +428,28 @@ def main(argv: Optional[List[str]] = None) -> None:
         render_axis(axis, per_metric_values, labels, labels[default_prefix],
                     out_dir / axis.key, args.test, args.error,
                     zoom=args.zoom)
+
+    # ---- discretization comparison (s57_v28 continuous vs s57_v29 discrete) ----
+    # The continuous-vs-VQ figure can't be a normal axis here (it needs k-means
+    # clustering of the saved embeddings, not the code->label per_seed CSVs), so
+    # we delegate to compare_discrete_vs_continuous.py and drop its figure into
+    # the SAME out-dir, making this the single entry point for ALL ablation plots.
+    if not args.skip_discretization:
+        print("\n=== discretization: discrete codes vs discrete/continuous clustered ===")
+        try:
+            import sys as _sys
+            _disc_dir = Path(__file__).resolve().parents[2] / "discretization_ablation"
+            if str(_disc_dir) not in _sys.path:
+                _sys.path.insert(0, str(_disc_dir))
+            import compare_discrete_vs_continuous as _disc
+            _disc.main([
+                "--out-dir", str(out_dir),
+                "--test", args.test,
+                "--error", args.error,
+            ])
+        except (Exception, SystemExit) as exc:  # SystemExit: compare exits if runs absent
+            print(f"  SKIP discretization figure ({type(exc).__name__}: {exc}). "
+                  f"Run s57_v28 / s57_v29 first, or pass --skip-discretization.")
 
     print(f"\n[ablations-multiseed] DONE -> {out_dir}")
 

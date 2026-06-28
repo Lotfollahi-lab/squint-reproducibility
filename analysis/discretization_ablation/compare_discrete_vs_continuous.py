@@ -64,17 +64,13 @@ import sys
 import numpy as np
 
 # --- default sweep dirs ------------------------------------------------------
-# Default to the s49_v23 (discrete) and s53_v1 (continuous) multi-seed sweep
-# PARENT dirs. `_expand_runs` auto-descends each to its latest
-# <timestamp>/seed_run_index.csv, so these stay correct across re-runs (always
-# picks the newest sweep). Override with --discrete-runs / --continuous-runs.
+# Default to the s57 self-contained paper set: s57_v29 (discrete VQ ref) and
+# s57_v28 (continuous latent) multi-seed sweep PARENT dirs. `_expand_runs`
+# auto-descends each to its latest <timestamp>/seed_run_index.csv, so these stay
+# correct across re-runs. Override with --discrete-runs / --continuous-runs.
 _ARTROOT = "/nfs/team361/sb75/squint-reproducibility/artifacts/mmb0-1b_smb1-1b_1p"
-_DISCRETE_VARIANT = ("s49_v23_dualvq+rvq-both+decoder-cov+no-batch-int+enc-deeper+"
-                     "dec-w32+knn16+sampler16+cell-w1+bs512+lr7e-4+within-sec+"
-                     "decoupled-enc+diversity-w10+contrastWB-w10-k5+mmb0-1b_smb1-1b_1p")
-_CONTINUOUS_VARIANT = ("s53_v1_continuous-latent+decoder-cov+no-batch-int+enc-deeper+"
-                       "dec-w32+knn16+sampler16+cell-w1+bs512+lr7e-4+within-sec+"
-                       "decoupled-enc+diversity-w10+contrastWB-w10-k5+mmb0-1b_smb1-1b_1p")
+_DISCRETE_VARIANT = "s57_v29_discrete-vq-ref+mmb0-1b_smb1-1b_1p"
+_CONTINUOUS_VARIANT = "s57_v28_continuous-latent+mmb0-1b_smb1-1b_1p"
 DEFAULT_DISCRETE_RUNS = [os.path.join(_ARTROOT, _DISCRETE_VARIANT + "__multiseed")]
 DEFAULT_CONTINUOUS_RUNS = [os.path.join(_ARTROOT, _CONTINUOUS_VARIANT + "__multiseed")]
 
@@ -95,7 +91,8 @@ C1, C2, C3, C4 = ("1. Discrete codes (L0)",
                   "2. VQ-VAE quant. emb, clustered",
                   "3. VQ-VAE pre-quant emb, clustered",
                   "4. Continuous emb, clustered")
-SHORT = {C1: "Codes", C2: "Quant.\nemb", C3: "Pre-quant\nemb", C4: "Continuous\nemb"}
+SHORT = {C1: "Discrete\ncodes", C2: "Quant.\nemb",
+         C3: "Discrete\nclustered", C4: "Continuous\nclustered"}
 BRANCHES = [("cell", "Cell-type"), ("niche", "Niche")]
 # Per-condition colours: the three VQ-VAE folds in the red family, the
 # continuous baseline in grey — mirrors the ablation figure's red-vs-grey.
@@ -292,7 +289,7 @@ def _pvalue(a, b, paired, test):
 # ----------------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------------
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--discrete-runs", nargs="+", default=DEFAULT_DISCRETE_RUNS,
@@ -316,7 +313,7 @@ def main():
                     help="Error-bar half-width (default 95%% CI).")
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("--no-plot", action="store_true")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
 
     import anndata as ad
@@ -427,7 +424,13 @@ def main():
             .reset_index())
 
     # ---- pairwise significance per branch x metric ----
-    order = [C1, C2, C3, C4]
+    # The 3 bars requested for the figure: discrete codes (C1), the discrete
+    # model's latent clustered (C3, pre-VQ z — the meaningful "discrete
+    # clustered"; clustering the quantized z_q [C2] trivially ~= the codes, so
+    # C2 is computed but omitted from the plot), and the continuous model's
+    # embedding clustered (C4). All k-means at k = #discrete codes. To show the
+    # quantized-embedding fold instead/as-well, add C2 to `order`.
+    order = [C1, C3, C4]
     model_of = {C1: dlab, C2: dlab, C3: dlab, C4: clab}
     sig_rows = []
     for branch, _bn in BRANCHES:
@@ -468,7 +471,7 @@ def main():
     pd.set_option("display.max_columns", 40)
     pd.set_option("display.float_format", lambda v: f"{v:.4f}")
     print("\n" + "=" * 80)
-    print(f"4-FOLD comparison across seeds (discrete n={ps_df[ps_df.model==dlab].seed_idx.nunique()}, "
+    print(f"{len(order)}-FOLD comparison across seeds (discrete n={ps_df[ps_df.model==dlab].seed_idx.nunique()}, "
           f"continuous n={ps_df[ps_df.model==clab].seed_idx.nunique()}); "
           f"k=#codes [{args.match}], k-means seed={args.kmeans_seed}")
     print("=" * 80)
