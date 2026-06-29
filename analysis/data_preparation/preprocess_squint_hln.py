@@ -5,9 +5,14 @@ THREE feature-selection scenarios used by the niche-identification benchmark
 (Wang et al., bioRxiv 2026, doi 10.64898/2026.02.27.708202), so SQUINT is
 compared apples-to-apples with NicheCompass / CellCharter / BANKSY / ...:
 
-    all   -> all detected genes        (negative controls removed + filter_genes)
+    all   -> all detected genes        (filter_genes only)
     hvg   -> top-N highly variable genes (scanpy seurat_v3 on RAW counts)
     svg   -> top-N spatially variable genes (squidpy Moran's I)
+
+Negative-control probes are removed UPSTREAM by fetch_cosmx_lymph_node.py
+(--drop-controls), which also restores raw counts into X. This script therefore
+does GENE FILTERING ONLY (filter_genes + HVG/SVG/all selection); it warns if any
+control probes are still present (i.e. the silver wasn't regenerated).
 
 The benchmark ran every method across {all genes, top-2000 HVG, top-2000 SVG,
 curated-2000 core-lineage DE} on this exact dataset. NicheCompass's own recipe
@@ -214,8 +219,6 @@ def main(argv=None):
                         "(NicheCompass default 0.0005).")
     p.add_argument("--svg-n-neighs", type=int, default=6,
                    help="kNN for the Moran's I spatial graph (squidpy default 6).")
-    p.add_argument("--control-prefixes", default=",".join(DEFAULT_CONTROL_PREFIXES),
-                   help="Comma list of negative-control name prefixes to drop.")
     p.add_argument("--out-filename", default=OUT_FILENAME)
     p.add_argument("--self-test", action="store_true",
                    help="Run a scanpy/squidpy-free sanity check and exit.")
@@ -226,7 +229,6 @@ def main(argv=None):
 
     import anndata as ad
 
-    prefixes = tuple(s for s in args.control_prefixes.split(",") if s)
     requested = [g.strip() for g in args.gene_sets.split(",") if g.strip()]
     for g in requested:
         if g not in GENE_SET_SPEC:
@@ -236,17 +238,23 @@ def main(argv=None):
     adata = ad.read_h5ad(args.input)
     n0_cells, n0_genes = adata.n_obs, adata.n_vars
     print(f"[prep] loaded {n0_cells} cells x {n0_genes} genes")
-    # 0) ensure X is RAW counts (restore from adata.raw if it's normalised)
+    # ensure X is RAW counts (no-op if the silver already has counts; restores
+    # from adata.raw if a not-yet-regenerated silver still has normalised X).
     adata, _ = restore_raw_if_needed(adata)
 
-    # 1) drop negative-control probes
-    ctrl = detect_control_genes(adata.var_names, prefixes, var=adata.var)
+    # Negative-control probes are removed UPSTREAM by fetch_cosmx_lymph_node.py
+    # (--drop-controls). We do NOT remove them here — only gene filtering. But
+    # warn loudly if any slipped through, since that means the silver wasn't
+    # regenerated and the gene sets (esp. "all") would be contaminated.
+    ctrl = detect_control_genes(adata.var_names, DEFAULT_CONTROL_PREFIXES, var=adata.var)
     n_ctrl = int(ctrl.sum())
-    print(f"[prep] dropping {n_ctrl} negative-control probes "
-          f"(e.g. {list(adata.var_names[ctrl][:5])})")
-    adata = adata[:, ~ctrl].copy()
+    if n_ctrl:
+        print(f"[prep] WARNING: {n_ctrl} control probes still present "
+              f"(e.g. {list(adata.var_names[ctrl][:5])}). These should have been "
+              f"removed by fetch_cosmx_lymph_node.py (--drop-controls) — re-run it "
+              f"and rebuild. Proceeding WITHOUT removing them.", file=sys.stderr)
 
-    # 2) filter low-coverage genes (NicheCompass: min_cells = 0.0005 * n_cells)
+    # filter low-coverage genes (NicheCompass: min_cells = 0.0005 * n_cells)
     import scanpy as sc
     min_cells = int(np.ceil(args.min_cell_gene_ratio * adata.n_obs))
     before = adata.n_vars
@@ -255,7 +263,7 @@ def main(argv=None):
           f"{before} -> {adata.n_vars} genes")
 
     detected = adata.var_names.tolist()
-    common = {"n_input_genes": int(n0_genes), "n_controls_removed": n_ctrl,
+    common = {"n_input_genes": int(n0_genes), "n_controls_present": n_ctrl,
               "min_cells": int(max(1, min_cells)),
               "n_detected_genes": int(len(detected)), "n_top": int(args.n_top),
               "input": os.path.abspath(args.input)}
