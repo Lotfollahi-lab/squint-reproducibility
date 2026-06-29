@@ -117,7 +117,16 @@ METHOD_COLOURS: Dict[str, str] = {
     "NicheCompass":    "#3D2817",   # niche-ID dark brown
     "Vanilla VQ-VAE":  "#888888",   # neutral grey — minimal-model baseline
     "SQUINT":          "#FF006E",   # accent magenta — our method
+    # Stage-2 generative imputation bar (opt-in via --imputed-variant). Same
+    # magenta family as SQUINT (it IS SQUINT) but lighter + hatched, so the
+    # reader sees it's a related-but-DIFFERENT task: codes predicted from
+    # spatial context, the cell's expression never seen.
+    "SQUINT (imputed)": "#FF7AB6",
 }
+
+# Methods drawn with a hatch overlay to flag a different task (expression
+# unseen). Populated for whatever --imputed-label is used.
+HATCH_METHODS: set = {"SQUINT (imputed)"}
 
 # Splits we render — one figure per entry.
 SPLITS = [
@@ -264,9 +273,10 @@ def _plot_panel(
         mean_val = float(vals.mean())
         colour = colour_for.get(method, "#888888")
 
+        hatch = "///" if method in HATCH_METHODS else None
         ax.barh(j, mean_val, height=BAR_HEIGHT,
                 color=colour, edgecolor=colour,
-                linewidth=0.5, alpha=0.35, zorder=2)
+                linewidth=0.5, alpha=0.35, zorder=2, hatch=hatch)
         if vals.size > 1:
             sem = float(vals.std(ddof=1) / np.sqrt(vals.size))
             ax.errorbar(mean_val, j, xerr=sem, fmt="none",
@@ -378,6 +388,18 @@ def main(argv: Optional[List[str]] = None) -> None:
                         "sweep so its `metrics/per_seed_pearson_reconstruction"
                         ".csv` is populated. Default tracks the current "
                         "best Pearson variant — see DEFAULT_SQUINT_VARIANT.")
+    p.add_argument("--imputed-variant", type=str, default=None,
+                   help="OPT-IN: directory name (under <artifacts_root>/"
+                        "<dataset_tag>/) holding the stage-2 generative "
+                        "'SQUINT (imputed)' Pearson CSV "
+                        "(per_seed_pearson_reconstruction.csv written by "
+                        "examples/stage2_decode_pearson.py). When set, an "
+                        "imputed bar is added to the CELL panel. Pair it with "
+                        "--squint-variant pointing at the SAME stage-1 run "
+                        "stage-2 trained on, so recon vs imputed is a clean "
+                        "same-model comparison.")
+    p.add_argument("--imputed-label", type=str, default="SQUINT (imputed)",
+                   help="Bar label for the --imputed-variant method.")
     args = p.parse_args(argv)
 
     if args.out_dir is None:
@@ -396,6 +418,15 @@ def main(argv: Optional[List[str]] = None) -> None:
             else:
                 new_methods[variant_dir] = label
         ROWS[row_key]["methods"] = new_methods
+
+    # Opt-in: add the stage-2 generative bar to the CELL panel. (Niche-level
+    # imputation needs neighborhood aggregation of the decoder output — a
+    # follow-up — so it's cell-only for now.)
+    if args.imputed_variant:
+        ROWS["cell"]["methods"][args.imputed_variant] = args.imputed_label
+        METHOD_COLOURS.setdefault(args.imputed_label, "#FF7AB6")
+        HATCH_METHODS.add(args.imputed_label)
+        print(f"Imputed bar:    {args.imputed_label}  <-  {args.imputed_variant}")
 
     _apply_nature_style()
 
