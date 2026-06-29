@@ -525,6 +525,13 @@ def _code_index_colors(code_universe: np.ndarray, max_categorical: int = 30) -> 
     cu = np.asarray(code_universe)
     if cu.size == 0:
         return []
+    # Only integer CODE universes get the spatial-plot palette. A LABEL
+    # universe (cell-type / niche names — strings) has no code id, so fall
+    # back to the rank-based palette (its old behaviour) rather than crashing.
+    try:
+        cu = cu.astype(int)
+    except (ValueError, TypeError):
+        return _code_palette(len(cu))
     max_code = int(cu.max())
     cmap, is_cat = _build_palette(max_code + 1, max_categorical)
     if is_cat:
@@ -549,6 +556,7 @@ def render_distribution_grid(
         cell_axis_title: str = "Cell codes",
         niche_axis_title: str = "Niche codes",
         suptitle: str = "Code distribution per section",
+        code_colored: bool = True,
     ) -> None:
     """Render the small-multiples grid (rows = sections, cols = (cell,
     niche)) and save to `<out_path_base>.{svg,png}`.
@@ -561,9 +569,15 @@ def render_distribution_grid(
     n_cell = len(code_universe_cell)
     n_niche = len(code_universe_niche)
     # Colour bars by RAW code id to match the spatial code_index_plots (a code
-    # is the same colour in both figures), not by bar rank.
-    pal_cell  = _code_index_colors(code_universe_cell)
-    pal_niche = _code_index_colors(code_universe_niche)
+    # is the same colour in both figures), not by bar rank. The labels pass
+    # (cell-type / niche label names) sets code_colored=False -> keep the old
+    # rank-based palette (labels have no code id).
+    if code_colored:
+        pal_cell  = _code_index_colors(code_universe_cell)
+        pal_niche = _code_index_colors(code_universe_niche)
+    else:
+        pal_cell  = _code_palette(n_cell)
+        pal_niche = _code_palette(n_niche)
 
     # Panel sizes. Width scales gently with code count so 30 vs 90 vs
     # composite all stay legible without overflowing a Nature column.
@@ -759,6 +773,7 @@ def render_proportions_stacked(
         cell_axis_title: str = "Cell codes",
         niche_axis_title: str = "Niche codes",
         suptitle: str = "Code proportions per section",
+        code_colored: bool = True,
     ) -> None:
     """One STACKED bar per section showing the full code-proportion
     composition (segments sum to 1), coloured by the SAME per-code palette as
@@ -769,8 +784,12 @@ def render_proportions_stacked(
     (aligned to `code_universe_*`, summing to ~1) already computed for the
     distribution grid — so this is a complementary view of the same data."""
     n_sec = len(sections)
-    pal_cell  = _code_index_colors(code_universe_cell)
-    pal_niche = _code_index_colors(code_universe_niche)
+    if code_colored:
+        pal_cell  = _code_index_colors(code_universe_cell)
+        pal_niche = _code_index_colors(code_universe_niche)
+    else:
+        pal_cell  = _code_palette(len(code_universe_cell))
+        pal_niche = _code_palette(len(code_universe_niche))
 
     # Width scales with the number of sections; height fixed.
     fig_w = float(np.clip(0.45 * n_sec + 2.4, 4.0, 16.0))
@@ -1368,6 +1387,7 @@ def _run_distribution_pass(
         query_sections: Optional[List[str]],
         skip_per_section: bool,
         progress_label: str,
+        code_colored: bool = True,
     ) -> List[Dict]:
     """Run one full analysis pass (codes or labels) on a working obs
     DataFrame containing `cell_col_internal` and `niche_col_internal`.
@@ -1424,6 +1444,7 @@ def _run_distribution_pass(
         cell_axis_title=cell_axis_title,
         niche_axis_title=niche_axis_title,
         suptitle=grid_suptitle,
+        code_colored=code_colored,
     )
 
     print(f"\n[{progress_label}] Stacked code proportions")
@@ -1437,6 +1458,7 @@ def _run_distribution_pass(
         cell_axis_title=cell_axis_title,
         niche_axis_title=niche_axis_title,
         suptitle=stacked_suptitle,
+        code_colored=code_colored,
     )
 
     print(f"\n[{progress_label}] Similarity heatmap")
@@ -1911,6 +1933,9 @@ def main(argv: Optional[List[str]] = None) -> None:
             grid_suptitle="Cell-type and niche distribution per section",
             stacked_suptitle="Cell-type and niche proportions per section",
             heatmap_suptitle="Section similarity  (cell-type & niche labels)",
+            # labels are cell-type/niche NAMES (not code ids) -> keep the
+            # rank-based palette, not the spatial code_index_plots palette.
+            code_colored=False,
             ranking_suptitle_prefix=(
                 "Sections with most similar cell-type & niche composition to"
             ),
