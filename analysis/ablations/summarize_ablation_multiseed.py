@@ -55,9 +55,12 @@ DEFAULT_DATASET = "mmb0-1b_smb1-1b_1p"
 
 CELL_CODE_KEY = "cell_code_indices[level_0]"
 NICHE_CODE_KEY = "neighborhood_code_indices[level_0]"
-CELL_LABELS = ("cell_type", "cell_types", "annotation")
-NICHE_LABELS = ("niche", "Sub_molecular_tissue_region", "ccf_region_name",
-                "spatial_cluster")
+# first present wins; new_annotation/niche_type added for xhs1000 (Xenium skin)
+# — listed FIRST so xhs (which ALSO has cell_type) resolves to new_annotation,
+# while mmb/HLN (no new_annotation) fall through to cell_type/niche.
+CELL_LABELS = ("new_annotation", "cell_type", "cell_types", "annotation")
+NICHE_LABELS = ("niche", "niche_type", "Sub_molecular_tissue_region",
+                "ccf_region_name", "spatial_cluster")
 
 # (display name, higher_is_better) for the niche_identification table
 NICHE_METRICS = [
