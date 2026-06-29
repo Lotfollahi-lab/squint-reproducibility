@@ -170,6 +170,13 @@ NICHECOMPASS_MEBOCOST_DIR="${NICHECOMPASS_MEBOCOST_DIR:-$REPO/analysis/benchmark
 # --- LSF defaults ---------------------------------------------------
 LSF_GROUP="${LSF_GROUP:-s10396}"
 LSF_QUEUE="${LSF_QUEUE:-training-parallel}"
+# CPU-only methods (cpu_small: pca-leiden, harmony, banksy, neigh-expr-pca) must
+# NOT go to the GPU queue: that queue's esub rejects jobs that don't request a
+# GPU ("you need to select a system which has gpus, eg -gpu"). Route them to a
+# CPU queue instead. (This only surfaces when running submit_all_benchmarks.sh
+# directly; the wrappers force UNIFORM_RESOURCE=gpu_high_memory so everything
+# gets a GPU.) Override if your CPU queue is named differently.
+CPU_QUEUE="${CPU_QUEUE:-normal}"
 LSF_GPU="${LSF_GPU:-mode=exclusive_process:num=1:block=yes}"
 # Default wall-time bumped 24h -> 96h (4 days). The 24h ceiling was too
 # tight for the heaviest baselines on the largest datasets — Geneformer
@@ -229,6 +236,15 @@ resource_args() {
             echo "ERROR: unknown resource class $1" >&2
             exit 1
             ;;
+    esac
+}
+
+# Queue per resource class: GPU classes go to the GPU queue (LSF_QUEUE); the
+# CPU class (cpu_small) goes to CPU_QUEUE — GPU queues reject non-GPU jobs.
+resource_queue() {
+    case "$1" in
+        cpu_small) echo "$CPU_QUEUE" ;;
+        *)         echo "$LSF_QUEUE" ;;
     esac
 }
 
@@ -540,7 +556,7 @@ for entry in "${METHODS[@]}"; do
     BSUB_CMD=(
         bsub
         -G "$LSF_GROUP"
-        -q "$LSF_QUEUE"
+        -q "$(resource_queue "$EFFECTIVE_RESOURCE")"
         -W "$LSF_WALL"
         -J "$JOB_NAME"
         -o "$LOG_OUT"

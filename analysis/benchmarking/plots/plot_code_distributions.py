@@ -107,7 +107,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import LinearSegmentedColormap, ListedColormap
 
 
 # ---------------------------------------------------------------------------
@@ -495,6 +495,45 @@ def _code_palette(n_codes: int) -> List:
 
 
 # ---------------------------------------------------------------------------
+# Per-code colours MATCHING the spatial code_index_plots
+# (squint/examples/plot_code_indices_spatial.py). The spatial scatter colours
+# each cell by its RAW code id: categorical tab20/tab20b for <=max_categorical
+# codes with colour(code k) = cmap(k % cmap.N) (so "code k -> colour k" is
+# stable across sections), else a cyclic hsv with colour(code) = hsv(code /
+# max_code). We mirror that exactly here so a given code is the SAME colour in
+# the distribution bars, the stacked-proportion bars, and the spatial plots.
+# (The functions are copied — not imported — to keep this benchmark script
+# self-contained / independent of the squint examples dir.)
+# ---------------------------------------------------------------------------
+def _build_palette(num_codes: int, max_categorical: int = 30):
+    """Mirror of plot_code_indices_spatial.py::_build_palette."""
+    if num_codes <= max_categorical:
+        if num_codes <= 20:
+            cmap = plt.get_cmap("tab20", num_codes)
+        else:
+            tab20 = plt.get_cmap("tab20").colors
+            tab20b = plt.get_cmap("tab20b").colors
+            cmap = ListedColormap((list(tab20) + list(tab20b))[:num_codes])
+        return cmap, True
+    return plt.get_cmap("hsv"), False
+
+
+def _code_index_colors(code_universe: np.ndarray, max_categorical: int = 30) -> List:
+    """Colour-per-bar list aligned to `code_universe` (the ordered unique code
+    ids drawn as bars), so bar for code k gets the SAME colour as the spatial
+    code_index_plots scatter. Categorical: cmap(k % N). Large: hsv(k/max)."""
+    cu = np.asarray(code_universe)
+    if cu.size == 0:
+        return []
+    max_code = int(cu.max())
+    cmap, is_cat = _build_palette(max_code + 1, max_categorical)
+    if is_cat:
+        return [cmap(int(c) % cmap.N) for c in cu]
+    md = max(max_code, 1)
+    return [cmap(int(c) / float(md)) for c in cu]
+
+
+# ---------------------------------------------------------------------------
 # Plot: small-multiples grid of distributions
 # ---------------------------------------------------------------------------
 
@@ -521,8 +560,10 @@ def render_distribution_grid(
     n_sec = len(sections)
     n_cell = len(code_universe_cell)
     n_niche = len(code_universe_niche)
-    pal_cell  = _code_palette(n_cell)
-    pal_niche = _code_palette(n_niche)
+    # Colour bars by RAW code id to match the spatial code_index_plots (a code
+    # is the same colour in both figures), not by bar rank.
+    pal_cell  = _code_index_colors(code_universe_cell)
+    pal_niche = _code_index_colors(code_universe_niche)
 
     # Panel sizes. Width scales gently with code count so 30 vs 90 vs
     # composite all stay legible without overflowing a Nature column.
@@ -695,6 +736,74 @@ def render_distribution_grid(
         top=1 - 0.75 / fig_h,
         bottom=0.40 / fig_h,
     )
+
+    out_path_base.parent.mkdir(parents=True, exist_ok=True)
+    for ext in ("svg", "png"):
+        out = out_path_base.with_suffix(f".{ext}")
+        fig.savefig(out, bbox_inches="tight", pad_inches=0.05)
+        print(f"  -> {out}")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Plot: stacked code-proportion bars (one stacked bar per section)
+# ---------------------------------------------------------------------------
+
+def render_proportions_stacked(
+        sections: List[str],
+        code_universe_cell: np.ndarray,
+        code_universe_niche: np.ndarray,
+        dist_cell: Dict[str, np.ndarray],
+        dist_niche: Dict[str, np.ndarray],
+        out_path_base: Path,
+        cell_axis_title: str = "Cell codes",
+        niche_axis_title: str = "Niche codes",
+        suptitle: str = "Code proportions per section",
+    ) -> None:
+    """One STACKED bar per section showing the full code-proportion
+    composition (segments sum to 1), coloured by the SAME per-code palette as
+    the spatial code_index_plots / the distribution grid. Two panels (cell,
+    niche). Saved to `<out_path_base>.{svg,png}`.
+
+    `dist_cell[sec]` / `dist_niche[sec]` are the per-section proportion vectors
+    (aligned to `code_universe_*`, summing to ~1) already computed for the
+    distribution grid — so this is a complementary view of the same data."""
+    n_sec = len(sections)
+    pal_cell  = _code_index_colors(code_universe_cell)
+    pal_niche = _code_index_colors(code_universe_niche)
+
+    # Width scales with the number of sections; height fixed.
+    fig_w = float(np.clip(0.45 * n_sec + 2.4, 4.0, 16.0))
+    fig, axes = plt.subplots(
+        1, 2, figsize=(fig_w, 4.2), gridspec_kw={"wspace": 0.2},
+    )
+    x = np.arange(n_sec)
+    for ax, universe, dist, pal, title in (
+        (axes[0], code_universe_cell,  dist_cell,  pal_cell,  cell_axis_title),
+        (axes[1], code_universe_niche, dist_niche, pal_niche, niche_axis_title),
+    ):
+        if len(universe) == 0:
+            ax.set_visible(False)
+            continue
+        # (n_sec, n_codes) proportion matrix, rows = sections.
+        mat = np.vstack([np.asarray(dist[s], dtype=float) for s in sections])
+        bottom = np.zeros(n_sec)
+        for k in range(len(universe)):
+            ax.bar(
+                x, mat[:, k], bottom=bottom, color=pal[k],
+                width=0.85, edgecolor="white", linewidth=0.1, zorder=2,
+            )
+            bottom = bottom + mat[:, k]
+        ax.set_title(title, fontsize=8)
+        ax.set_xticks(x)
+        ax.set_xticklabels(sections, rotation=90, fontsize=6)
+        ax.set_xlim(-0.6, n_sec - 0.4)
+        ax.set_ylim(0, 1.0)
+        ax.set_ylabel("code proportion", fontsize=7)
+        ax.tick_params(axis="y", labelsize=6)
+        for sp in ("top", "right"):
+            ax.spines[sp].set_visible(False)
+    fig.suptitle(suptitle, fontsize=9)
 
     out_path_base.parent.mkdir(parents=True, exist_ok=True)
     for ext in ("svg", "png"):
@@ -1244,9 +1353,11 @@ def _run_distribution_pass(
         niche_descriptor: str,
         out_dir: Path,
         grid_basename: str,
+        stacked_basename: str,
         heatmap_basename: str,
         ranking_subdirname: str,
         grid_suptitle: str,
+        stacked_suptitle: str,
         heatmap_suptitle: str,
         ranking_suptitle_prefix: str,
         cell_axis_title: str,
@@ -1313,6 +1424,19 @@ def _run_distribution_pass(
         cell_axis_title=cell_axis_title,
         niche_axis_title=niche_axis_title,
         suptitle=grid_suptitle,
+    )
+
+    print(f"\n[{progress_label}] Stacked code proportions")
+    render_proportions_stacked(
+        sections=sections,
+        code_universe_cell=code_universe_cell,
+        code_universe_niche=code_universe_niche,
+        dist_cell=dist_cell,
+        dist_niche=dist_niche,
+        out_path_base=out_dir / stacked_basename,
+        cell_axis_title=cell_axis_title,
+        niche_axis_title=niche_axis_title,
+        suptitle=stacked_suptitle,
     )
 
     print(f"\n[{progress_label}] Similarity heatmap")
@@ -1694,9 +1818,11 @@ def main(argv: Optional[List[str]] = None) -> None:
         niche_descriptor=niche_desc,
         out_dir=args.out_dir,
         grid_basename="code_distributions",
+        stacked_basename="code_proportions_stacked",
         heatmap_basename="similarity_heatmap",
         ranking_subdirname="per_section_ranking",
         grid_suptitle="Code distribution per section",
+        stacked_suptitle="Code proportions per section",
         heatmap_suptitle="Section similarity  (SQUINT codes)",
         ranking_suptitle_prefix="Sections most similar to",
         cell_axis_title="Cell codes",
@@ -1779,9 +1905,11 @@ def main(argv: Optional[List[str]] = None) -> None:
             niche_descriptor=niche_desc_labels,
             out_dir=args.out_dir,
             grid_basename="label_distributions",
+            stacked_basename="label_proportions_stacked",
             heatmap_basename="similarity_heatmap_labels",
             ranking_subdirname="per_section_ranking_labels",
             grid_suptitle="Cell-type and niche distribution per section",
+            stacked_suptitle="Cell-type and niche proportions per section",
             heatmap_suptitle="Section similarity  (cell-type & niche labels)",
             ranking_suptitle_prefix=(
                 "Sections with most similar cell-type & niche composition to"
