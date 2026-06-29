@@ -104,6 +104,13 @@ case "$DATASET_TAG" in
         SILVER_ROOT_DEFAULT="/nfs/team361/sb75/DATASETS/silver"
         SILVER_LEAF_DEFAULT="$DATASET_TAG"
         ;;
+    xhs1000-3b_1p)
+        # Xenium human skin, 3 sections (batch 11/19/32), ~4948 genes. Silver
+        # dir populated by analysis/data_preparation/prep_xhs_3b.py (stamped
+        # uns['batch'] + unique obs_names). Standard team361 silver leaf.
+        SILVER_ROOT_DEFAULT="/nfs/team361/sb75/DATASETS/silver"
+        SILVER_LEAF_DEFAULT="$DATASET_TAG"
+        ;;
     mmb0-1b_smb1-1b_1p)
         # 1 MERFISH + 1 STARmap mouse-brain silver. The on-disk leaf
         # is `<tag>_coord_aligned` (post xy-alignment pass); the
@@ -375,6 +382,26 @@ case "$DATASET_TAG" in
         # niche=spatial_cluster. Pass explicitly so the right columns are
         # scored even if a section also carries a stray `cell_type` column.
         LABEL_KEY_ARGS="--cell-label-keys annotation --niche-label-keys spatial_cluster"
+        ;;
+    xhs1000-3b_1p)
+        # Xenium human skin, 3 sections (batch 11/19/32 — DIFFERENT patients),
+        # ~4948 genes, var_names = HGNC symbols. MULTI-section -> iLISI/MMD
+        # batch integration IS meaningful. Labels (== what the SQUINT run uses):
+        # cell=new_annotation, niche=niche_type (NOT in the runner defaults, so
+        # pass explicitly — also note the silver carries a stray `cell_type`
+        # column we do NOT want scored). scGPT vocab is HGNC = data -> no flags;
+        # geneformer/nicheformer map HGNC symbols -> human ENSG via mygene
+        # (--auto-map-symbols; needs internet on the node for the first call).
+        SPECIES="human"
+        NICHEFORMER_TECHNOLOGY="xenium"
+        HOLDOUT_BATCHES=""
+        SCGPT_GENE_FLAGS=""
+        SCGPT_SPATIAL_GENE_FLAGS=""
+        GENEFORMER_GENE_FLAGS="--auto-map-symbols"
+        NICHEFORMER_GENE_FLAGS="--auto-map-symbols"
+        UCE_SPECIES_FLAGS="--uce-species human"
+        NICHECOMPASS_SPECIES="human"
+        LABEL_KEY_ARGS="--cell-label-keys new_annotation --niche-label-keys niche_type"
         ;;
     *)
         echo "WARNING: unknown DATASET_TAG=$DATASET_TAG; falling back to mouse defaults" >&2
