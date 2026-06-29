@@ -32,10 +32,10 @@ CONTROL_RE = re.compile(r"^(Negative|SystemControl|NegPrb|FalseCode|Blank)",
 MISSING_TOKENS = {"", "nan", "none", "na", "unassigned", "unknown", "unlabeled",
                   "unlabelled", "filtered", "removed"}
 # candidate obs columns (first match wins) — mirrors fetch_cosmx_lymph_node.py
-CELLTYPE_CANDIDATES = ["cell_type", "cell_type_annotation", "cellType", "celltype",
-                       "cell_types", "nb_clus", "annotation"]
-NICHE_CANDIDATES = ["niche", "niche_annotation", "manual_niche", "spatial_niche",
-                    "region", "spatial_cluster"]
+CELLTYPE_CANDIDATES = ["cell_type", "cell_type_annotation", "new_annotation",
+                       "cellType", "celltype", "cell_types", "nb_clus", "annotation"]
+NICHE_CANDIDATES = ["niche", "niche_annotation", "niche_type", "manual_niche",
+                    "spatial_niche", "region", "spatial_cluster"]
 
 
 def _dense_rows(X, n=2000):
