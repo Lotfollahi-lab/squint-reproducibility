@@ -31,6 +31,11 @@ CONTROL_RE = re.compile(r"^(Negative|SystemControl|NegPrb|FalseCode|Blank)",
                         re.IGNORECASE)
 MISSING_TOKENS = {"", "nan", "none", "na", "unassigned", "unknown", "unlabeled",
                   "unlabelled", "filtered", "removed"}
+# candidate obs columns (first match wins) — mirrors fetch_cosmx_lymph_node.py
+CELLTYPE_CANDIDATES = ["cell_type", "cell_type_annotation", "cellType", "celltype",
+                       "cell_types", "nb_clus", "annotation"]
+NICHE_CANDIDATES = ["niche", "niche_annotation", "manual_niche", "spatial_niche",
+                    "region", "spatial_cluster"]
 
 
 def _dense_rows(X, n=2000):
@@ -54,10 +59,28 @@ def _counts_report(name, X):
     return looks_counts
 
 
-def _label_report(adata, key):
-    if key not in adata.obs:
-        print(f"  LABEL '{key}': MISSING from obs  ->  cannot score this axis!")
+def _resolve_key(adata, key, candidates):
+    """Use `key` if present, else the first matching candidate column."""
+    if key in adata.obs:
+        return key
+    for c in candidates:
+        if c in adata.obs:
+            return c
+    return None
+
+
+def _label_report(adata, key, candidates):
+    resolved = _resolve_key(adata, key, candidates)
+    if resolved is None:
+        print(f"  LABEL '{key}': not found (tried {candidates}).")
+        print(f"      available obs columns: {list(adata.obs.columns)}")
+        print(f"      !! the blob's label_names must point at one of these, or "
+              f"the blob is built UNLABELED and NMI/ARI are meaningless.")
         return
+    if resolved != key:
+        print(f"  LABEL '{key}': not found, but '{resolved}' is — USE THAT in the "
+              f"blob config (label_names=...={resolved}).")
+    key = resolved
     s = adata.obs[key].astype(str).str.strip()
     n = len(s)
     miss = s.str.lower().isin(MISSING_TOKENS) | adata.obs[key].isna().to_numpy()
@@ -76,6 +99,7 @@ def _label_report(adata, key):
 
 def diagnose(adata, cell_key="cell_type_annotation", niche_key="niche_annotation"):
     print(f"\n=== squint_hln diagnosis: {adata.n_obs} cells x {adata.n_vars} genes ===")
+    print(f"  obs columns ({len(adata.obs.columns)}): {list(adata.obs.columns)}")
     if adata.n_obs > 100_000:
         print(f"  !! NOTE: {adata.n_obs} cells >> the benchmark's 19,718-cell "
               f"annotated ROI — likely the FULL CosMx file (mostly unlabeled).")
@@ -102,9 +126,9 @@ def diagnose(adata, cell_key="cell_type_annotation", niche_key="niche_annotation
     else:
         print("  controls: none detected (good).")
 
-    # labels
-    _label_report(adata, cell_key)
-    _label_report(adata, niche_key)
+    # labels (auto-resolve to the actual column if the given key is absent)
+    _label_report(adata, cell_key, CELLTYPE_CANDIDATES)
+    _label_report(adata, niche_key, NICHE_CANDIDATES)
 
     # spatial
     if "spatial" in adata.obsm:

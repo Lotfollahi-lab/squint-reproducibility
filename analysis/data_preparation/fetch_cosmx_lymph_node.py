@@ -287,11 +287,19 @@ def main():
     for bidx, (sname, sub) in enumerate(samples):
         sub = sub.copy()
         _ensure_spatial(sub)
-        # Keep the label columns under their ORIGINAL names — they're
-        # registered in the SQUINT blob via label_names (cell_types=<col> /
-        # niche_types=<col>). Only add the infra fields the blob builder
-        # requires: obs['cell_id'], obs['batch'] (graph batch_key), and the
-        # canonical per-section id uns['batch'] (int).
+        # Normalise the label columns to the CANONICAL names the SQUINT blob
+        # config registers: obs['cell_type'] / obs['niche'] (label_names=
+        # cell_types=cell_type / niche_types=niche). The released file may use
+        # 'cell_type'/'niche' or '*_annotation' etc.; we copy the auto-detected
+        # column to the canonical name so the blob always finds the labels.
+        # (The blob loader SILENTLY SKIPS missing label columns, so a name
+        # mismatch yields unlabeled cells + meaningless NMI/ARI — that bug is
+        # exactly what this guards against.) Original columns are preserved.
+        if ct_key:
+            sub.obs["cell_type"] = sub.obs[ct_key].values
+        sub.obs["niche"] = sub.obs[ni_key].values
+        # Infra fields the blob builder requires: obs['cell_id'], obs['batch']
+        # (graph batch_key), and the canonical per-section id uns['batch'].
         # SQUINT convention: uns['batch'] is a 'batchN' STRING (the blob
         # joins it as a path component AND parses it to the int section id).
         sub.obs["batch"] = f"batch{bidx}"
