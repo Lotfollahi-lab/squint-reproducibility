@@ -791,12 +791,13 @@ def render_proportions_stacked(
         pal_cell  = _code_palette(len(code_universe_cell))
         pal_niche = _code_palette(len(code_universe_niche))
 
-    # Width scales with the number of sections; height fixed.
-    fig_w = float(np.clip(0.45 * n_sec + 2.4, 4.0, 16.0))
+    # HORIZONTAL stacked bars: sections on the y-axis, code proportion on the
+    # x-axis. Height scales with the number of sections; width fixed (2 panels).
+    fig_h = float(np.clip(0.34 * n_sec + 1.4, 2.4, 16.0))
     fig, axes = plt.subplots(
-        1, 2, figsize=(fig_w, 4.2), gridspec_kw={"wspace": 0.2},
+        1, 2, figsize=(7.2, fig_h), gridspec_kw={"wspace": 0.3},
     )
-    x = np.arange(n_sec)
+    y = np.arange(n_sec)
     for ax, universe, dist, pal, title in (
         (axes[0], code_universe_cell,  dist_cell,  pal_cell,  cell_axis_title),
         (axes[1], code_universe_niche, dist_niche, pal_niche, niche_axis_title),
@@ -806,20 +807,21 @@ def render_proportions_stacked(
             continue
         # (n_sec, n_codes) proportion matrix, rows = sections.
         mat = np.vstack([np.asarray(dist[s], dtype=float) for s in sections])
-        bottom = np.zeros(n_sec)
+        left = np.zeros(n_sec)
         for k in range(len(universe)):
-            ax.bar(
-                x, mat[:, k], bottom=bottom, color=pal[k],
-                width=0.85, edgecolor="white", linewidth=0.1, zorder=2,
+            ax.barh(
+                y, mat[:, k], left=left, color=pal[k],
+                height=0.85, edgecolor="white", linewidth=0.1, zorder=2,
             )
-            bottom = bottom + mat[:, k]
+            left = left + mat[:, k]
         ax.set_title(title, fontsize=8)
-        ax.set_xticks(x)
-        ax.set_xticklabels(sections, rotation=90, fontsize=6)
-        ax.set_xlim(-0.6, n_sec - 0.4)
-        ax.set_ylim(0, 1.0)
-        ax.set_ylabel("code proportion", fontsize=7)
-        ax.tick_params(axis="y", labelsize=6)
+        ax.set_yticks(y)
+        ax.set_yticklabels(sections, fontsize=6)
+        ax.set_ylim(-0.6, n_sec - 0.4)
+        ax.invert_yaxis()                 # first section at the top
+        ax.set_xlim(0, 1.0)
+        ax.set_xlabel("code proportion", fontsize=7)
+        ax.tick_params(axis="x", labelsize=6)
         for sp in ("top", "right"):
             ax.spines[sp].set_visible(False)
     fig.suptitle(suptitle, fontsize=9)

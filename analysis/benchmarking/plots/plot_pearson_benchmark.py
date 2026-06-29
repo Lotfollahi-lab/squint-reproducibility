@@ -61,18 +61,17 @@ DEFAULT_DATASET_TAG = "mmb0-1b_smb1-1b_1p"
 
 # SQUINT region-holdout multi-seed variant DEFAULT. Shared between the
 # cell- and niche-level rows below. Overridable on the CLI via
-# `--squint-variant`. As of 2026-06-29 the default tracks the NEW SQUINT
-# reference = the s57_v19 coupling (cross-batch MNN wt=10/k=1 + cell-cond
-# niche FiLM scale-only on the s49_v23 decoupled spine) with the STANDARD
-# decoder (dec-w32) and the 25%x25% region-holdout, run multi-seed at
-# .../20260628_230209. NOTE: the previous default used a WIDER decoder
-# (dec-w128-256) which buys more NB-rate capacity (the thing this benchmark
-# measures), so SQUINT's Pearson may read lower here than in the old figure
-# — this is the standard-decoder reference, not a wide-decoder one.
+# `--squint-variant`. The default tracks the s49_v23 spine (decoupled-enc +
+# within-batch contrastive wt=10 + cell-VQ codebook-diversity wt=10) with a
+# WIDER decoder ([128, 256]) for the Pearson benchmark — wider decoder buys
+# more NB-rate capacity, which is what THIS benchmark measures, so the
+# Pearson figure deliberately uses this wide-decoder reference (NOT the
+# standard dec-w32 reference used elsewhere). Pass --squint-variant to point
+# at a different run (e.g. the FiLM-scale + cross-MNN dec-w32 reference).
 DEFAULT_SQUINT_VARIANT = (
-    "dualvq+rvq-both+decoder-cov+no-batch-int+enc-deeper+dec-w32"
+    "dualvq+rvq-both+decoder-cov+no-batch-int+enc-deeper+dec-w128-256"
     "+knn16+sampler16+cell-w1+bs512+lr7e-4+within-sec+decoupled-enc"
-    "+diversity-w10+filmscale+crossmnn-wt10-k1+region-holdout"
+    "+diversity-w10+contrastWB-w10-k5+region-holdout"
     "+mmb0-1b_smb1-1b_1p__multiseed"
 )
 # Legacy alias kept so any external import / reference doesn't break.
