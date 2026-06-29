@@ -110,6 +110,82 @@ def _sanitize(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", str(name)).strip("_") or "sample"
 
 
+# Negative-control / control-probe name prefixes for imaging panels (CosMx uses
+# Negative* and SystemControl*; the rest are kept for safety on other panels).
+CONTROL_PREFIXES = ("Negative", "SystemControl", "NegPrb", "NegPrb_",
+                    "FalseCode", "Blank", "BLANK")
+
+
+def _control_mask(var_names, prefixes):
+    import numpy as np
+    import pandas as pd
+    vn = pd.Index(var_names).astype(str)
+    mask = np.zeros(len(vn), dtype=bool)
+    for p in prefixes:
+        mask = mask | np.asarray(vn.str.startswith(p))
+    return mask
+
+
+def restore_raw_counts_and_drop_controls(
+        adata, prefixes=CONTROL_PREFIXES, norm_layer="norm",
+        restore_raw=True, drop_controls=True):
+    """Make the silver AnnData SQUINT-ready: X = RAW counts, controls removed.
+
+    The released CosMx lymph-node h5ad stores NORMALISED values in `.X` and the
+    raw counts in `.raw`. SQUINT's NB decoder (and seurat_v3 HVG) need RAW
+    COUNTS in `.X`, so we:
+
+      1. restrict to the genes present in BOTH `adata.var` and `adata.raw` (so
+         every gene has a raw-count column), keeping `adata.var` order;
+      2. stash the current (normalised) matrix in `layers[norm_layer]`;
+      3. move the raw counts into `.X`;
+      4. drop `.raw` (the silver file then carries X=counts + layers['norm'];
+         keeping `.raw` would re-introduce the controls + bloat the file);
+      5. drop negative-control / control probes (Negative*, SystemControl*, ...)
+         from `var` + `X` + layers together, so everything stays aligned.
+
+    Robust to `adata.raw` having a different / larger gene set than `adata.var`
+    (reindexes by name), unlike a raw `adata.X = adata.raw[...].X` assignment
+    which mismatches widths.
+    """
+    import numpy as np
+
+    if restore_raw:
+        if adata.raw is None:
+            print("[fetch] WARNING: --raw-to-x requested but adata.raw is None; "
+                  "leaving X unchanged (assuming it is already raw counts).",
+                  file=sys.stderr)
+        else:
+            raw_ad = adata.raw.to_adata()                 # X = raw counts, raw.var
+            raw_set = set(map(str, raw_ad.var_names))
+            present = [g for g in adata.var_names if str(g) in raw_set]
+            n_missing = adata.n_vars - len(present)
+            if n_missing:
+                print(f"[fetch] WARNING: {n_missing} adata.var genes absent from "
+                      f"adata.raw — dropping them (cannot recover raw counts).",
+                      file=sys.stderr)
+            adata = adata[:, present].copy()              # genes we have counts for
+            adata.layers[norm_layer] = adata.X.copy()     # stash normalised matrix
+            raw_sub = raw_ad[:, present]                  # raw counts, same order
+            adata.X = raw_sub.X.copy()                    # RAW counts -> X
+            adata.raw = None
+            print(f"[fetch] restored RAW counts into X for {len(present)} genes; "
+                  f"normalised matrix kept in layers['{norm_layer}'].")
+
+    if drop_controls:
+        mask = _control_mask(adata.var_names, prefixes)
+        n_ctrl = int(mask.sum())
+        if n_ctrl:
+            examples = list(map(str, adata.var_names[mask][:5]))
+            print(f"[fetch] dropping {n_ctrl} control probes (e.g. {examples}); "
+                  f"{adata.n_vars} -> {adata.n_vars - n_ctrl} genes.")
+            adata = adata[:, ~mask].copy()
+        else:
+            print("[fetch] no control probes matched the prefixes "
+                  f"{tuple(prefixes)}.")
+    return adata
+
+
 def main():
     p = argparse.ArgumentParser(
         description=__doc__,
@@ -137,6 +213,21 @@ def main():
                    help="Name for the single section when there is no "
                         "sample column.")
     p.add_argument("--keep-cache", action="store_true")
+    p.add_argument("--raw-to-x", dest="raw_to_x", action="store_true", default=True,
+                   help="Move raw counts from adata.raw into X, stashing the "
+                        "normalised matrix in layers['norm'] (default: on). "
+                        "SQUINT's NB decoder needs RAW counts in X.")
+    p.add_argument("--no-raw-to-x", dest="raw_to_x", action="store_false",
+                   help="Leave X as-is (use if X is already raw counts).")
+    p.add_argument("--drop-controls", dest="drop_controls", action="store_true",
+                   default=True,
+                   help="Drop negative-control / control probes (Negative*, "
+                        "SystemControl*, ...) (default: on).")
+    p.add_argument("--no-drop-controls", dest="drop_controls", action="store_false")
+    p.add_argument("--control-prefixes", default=",".join(CONTROL_PREFIXES),
+                   help="Comma list of control-probe name prefixes to drop.")
+    p.add_argument("--norm-layer", default="norm",
+                   help="Layer name for the stashed normalised matrix.")
     args = p.parse_args()
 
     import anndata as ad
@@ -170,6 +261,16 @@ def main():
           f"{sorted(map(str, adata.obs[ni_key].unique()))}")
     if ct_key:
         print(f"[fetch] cell types: {adata.obs[ct_key].nunique()}")
+
+    # Make X SQUINT-ready: raw counts in X (normalised -> layers['norm']) and
+    # negative-control probes removed. Done BEFORE the per-section split so the
+    # gene set + counts are consistent across any sections.
+    prefixes = tuple(s for s in args.control_prefixes.split(",") if s)
+    print(f"[fetch] genes before raw/control fix: {adata.n_vars}")
+    adata = restore_raw_counts_and_drop_controls(
+        adata, prefixes=prefixes, norm_layer=args.norm_layer,
+        restore_raw=args.raw_to_x, drop_controls=args.drop_controls)
+    print(f"[fetch] genes after  raw/control fix: {adata.n_vars}")
 
     s_key = args.sample_key or _pick(adata.obs.columns,
                                      _SAMPLE_KEY_CANDIDATES, "sample")
