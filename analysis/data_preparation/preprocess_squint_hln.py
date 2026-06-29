@@ -5,9 +5,12 @@ THREE feature-selection scenarios used by the niche-identification benchmark
 (Wang et al., bioRxiv 2026, doi 10.64898/2026.02.27.708202), so SQUINT is
 compared apples-to-apples with NicheCompass / CellCharter / BANKSY / ...:
 
-    all   -> all detected genes        (filter_genes only)
-    hvg   -> top-N highly variable genes (scanpy seurat_v3 on RAW counts)
-    svg   -> top-N spatially variable genes (squidpy Moran's I)
+    all     -> all detected genes              (filter_genes only)
+    hvg1k   -> top-1000 highly variable genes  (scanpy seurat_v3 on RAW counts)
+    hvg2k   -> top-2000 highly variable genes
+    svg1k   -> top-1000 spatially variable genes (squidpy Moran's I)
+    svg2k   -> top-2000 spatially variable genes
+    (hvg / svg are aliases for the 2000-gene sets; the benchmark used 2000.)
 
 Negative-control probes are removed UPSTREAM by fetch_cosmx_lymph_node.py
 (--drop-controls), which also restores raw counts into X. This script therefore
@@ -44,10 +47,10 @@ Requires: anndata, numpy, scipy, scanpy (HVG), squidpy (SVG).
 Run on the farm. `--self-test` runs an scanpy/squidpy-free sanity check.
 
 Usage:
-    python preprocess_squint_hln.py \
-        --input /nfs/team361/sb75/DATASETS/silver/squint_hln/cosmx_human_lymph_node.h5ad \
-        --silver-root /nfs/team361/sb75/DATASETS/silver \
-        --gene-sets all,hvg,svg --n-top 2000
+    # all five sets (default):
+    python preprocess_squint_hln.py
+    # or pick specific sets, e.g. just add the 1k ones:
+    python preprocess_squint_hln.py --gene-sets hvg1k,svg1k
 """
 from __future__ import annotations
 
@@ -66,11 +69,17 @@ DEFAULT_CONTROL_PREFIXES = (
     "Blank", "BLANK", "control_probe", "antisense",
 )
 
-# tag -> (silver dataset name, selection method)
+# tag -> (silver dataset name, selection method, n_top)
+# n_top is fixed per tag so 1k and 2k sets can be produced in one run.
 GENE_SET_SPEC = {
-    "all": ("squint_hln_allgenes", "all"),
-    "hvg": ("squint_hln_hvg2k", "hvg"),
-    "svg": ("squint_hln_svg2k", "svg"),
+    "all":   ("squint_hln_allgenes", "all", None),
+    "hvg1k": ("squint_hln_hvg1k",    "hvg", 1000),
+    "hvg2k": ("squint_hln_hvg2k",    "hvg", 2000),
+    "svg1k": ("squint_hln_svg1k",    "svg", 1000),
+    "svg2k": ("squint_hln_svg2k",    "svg", 2000),
+    # back-compat aliases (earlier runs used bare hvg/svg == the 2k sets)
+    "hvg":   ("squint_hln_hvg2k",    "hvg", 2000),
+    "svg":   ("squint_hln_svg2k",    "svg", 2000),
 }
 
 OUT_FILENAME = "cosmx_human_lymph_node.h5ad"
@@ -210,10 +219,14 @@ def main(argv=None):
     p.add_argument("--silver-root",
                    default="/nfs/team361/sb75/DATASETS/silver",
                    help="Root silver dir; outputs go to <root>/<dataset_name>/.")
-    p.add_argument("--gene-sets", default="all,hvg,svg",
-                   help="Comma list of {all,hvg,svg}.")
+    p.add_argument("--gene-sets", default="all,hvg1k,hvg2k,svg1k,svg2k",
+                   help="Comma list of {all, hvg1k, hvg2k, svg1k, svg2k} "
+                        "(hvg/svg are aliases for the 2k sets). Gene count is "
+                        "fixed per tag.")
     p.add_argument("--n-top", type=int, default=2000,
-                   help="N for HVG/SVG (benchmark used 2000).")
+                   help="DEPRECATED / ignored — the gene count is now fixed per "
+                        "gene-set tag (hvg1k=1000, hvg2k=2000, ...). Kept so "
+                        "older commands don't error.")
     p.add_argument("--min-cell-gene-ratio", type=float, default=0.0005,
                    help="filter_genes min_cells = ceil(ratio * n_cells) "
                         "(NicheCompass default 0.0005).")
@@ -265,29 +278,29 @@ def main(argv=None):
     detected = adata.var_names.tolist()
     common = {"n_input_genes": int(n0_genes), "n_controls_present": n_ctrl,
               "min_cells": int(max(1, min_cells)),
-              "n_detected_genes": int(len(detected)), "n_top": int(args.n_top),
+              "n_detected_genes": int(len(detected)),
               "input": os.path.abspath(args.input)}
 
     # 3) per-scenario selection + write
     for tag in requested:
-        dataset_name, method = GENE_SET_SPEC[tag]
+        dataset_name, method, n_top = GENE_SET_SPEC[tag]
         out_dir = os.path.join(args.silver_root, dataset_name)
         if method == "all":
             genes = detected
         elif method == "hvg":
-            print(f"[prep] selecting top-{args.n_top} HVGs (seurat_v3)...")
-            genes = select_hvg(adata, args.n_top)
+            print(f"[prep] selecting top-{n_top} HVGs (seurat_v3)...")
+            genes = select_hvg(adata, n_top)
         elif method == "svg":
-            print(f"[prep] selecting top-{args.n_top} SVGs (Moran's I, "
+            print(f"[prep] selecting top-{n_top} SVGs (Moran's I, "
                   f"n_neighs={args.svg_n_neighs})...")
-            genes = select_svg(adata, args.n_top, args.svg_n_neighs)
+            genes = select_svg(adata, n_top, args.svg_n_neighs)
         else:
             raise AssertionError(method)
         out_path = write_geneset(
             adata, genes, out_dir, fname=args.out_filename,
             manifest_extra={**common, "gene_set": tag, "method": method,
-                            "dataset_name": dataset_name})
-        print(f"[prep] {tag:>3} -> {out_path}  ({len(genes)} genes)")
+                            "n_top": n_top, "dataset_name": dataset_name})
+        print(f"[prep] {tag:>5} -> {out_path}  ({len(genes)} genes)")
 
     print("[prep] DONE. Next: build the blobs + run the reference variant, e.g.\n"
           "       bash analysis/data_preparation/submit_squint_hln_genesets.sh")

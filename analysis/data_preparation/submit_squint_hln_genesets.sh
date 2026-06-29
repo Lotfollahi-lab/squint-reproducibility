@@ -20,7 +20,8 @@
 #
 # Usage:
 #   bash submit_squint_hln_genesets.sh [GENE_SETS] [SEEDS] [--preprocess] [--skip-train] [--skip-build]
-#     GENE_SETS  comma list of {all,hvg,svg}     (default: all,hvg,svg)
+#     GENE_SETS  comma list of {all,hvg1k,hvg2k,svg1k,svg2k} (hvg/svg = 2k aliases)
+#                (default: all,hvg1k,hvg2k,svg1k,svg2k)
 #     SEEDS      comma list for the multiseed sweep (default: 0,1,2,3,4)
 #     --preprocess  also run the preprocessing job first (chained before builds)
 #     --skip-build  assume blobs already built; only submit training
@@ -39,7 +40,7 @@
 # -----------------------------------------------------------------------------
 set -euo pipefail
 
-GENE_SETS="all,hvg,svg"
+GENE_SETS="all,hvg1k,hvg2k,svg1k,svg2k"
 SEEDS="0,1,2,3,4"
 DO_PREPROCESS=0
 SKIP_BUILD=0
@@ -76,10 +77,12 @@ REF_PREFIX="dualvq+rvq-both+decoder-cov+no-batch-int+enc-deeper+dec-w32+knn16+sa
 # gene-set tag -> silver dataset name (case, not assoc array, for bash 3.2 compat)
 dataset_of() {
     case "$1" in
-        all) echo "squint_hln_allgenes" ;;
-        hvg) echo "squint_hln_hvg2k" ;;
-        svg) echo "squint_hln_svg2k" ;;
-        *)   echo "" ;;
+        all)   echo "squint_hln_allgenes" ;;
+        hvg1k) echo "squint_hln_hvg1k" ;;
+        svg1k) echo "squint_hln_svg1k" ;;
+        hvg2k|hvg) echo "squint_hln_hvg2k" ;;
+        svg2k|svg) echo "squint_hln_svg2k" ;;
+        *)     echo "" ;;
     esac
 }
 
