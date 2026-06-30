@@ -117,16 +117,19 @@ METHOD_COLOURS: Dict[str, str] = {
     "NicheCompass":    "#3D2817",   # niche-ID dark brown
     "Vanilla VQ-VAE":  "#888888",   # neutral grey — minimal-model baseline
     "SQUINT":          "#FF006E",   # accent magenta — our method
-    # Stage-2 generative imputation bar (opt-in via --imputed-variant). Same
-    # magenta family as SQUINT (it IS SQUINT) but lighter + hatched, so the
-    # reader sees it's a related-but-DIFFERENT task: codes predicted from
-    # spatial context, the cell's expression never seen.
+    # Generative spatial-imputation bars (opt-in via --imputed). Hatched to flag
+    # a DIFFERENT task than the reconstruction bars: expression is never seen,
+    # only predicted from spatial context.
+    #   - SQUINT (imputed): same magenta family as SQUINT (it IS SQUINT, lighter).
+    #   - GeST (imputed): a distinct method (Hao et al. MLCB 2025 reimplementation)
+    #     -> its own teal so it doesn't read as a SQUINT variant.
     "SQUINT (imputed)": "#FF7AB6",
+    "GeST (imputed)":   "#2A9D8F",
 }
 
 # Methods drawn with a hatch overlay to flag a different task (expression
-# unseen). Populated for whatever --imputed-label is used.
-HATCH_METHODS: set = {"SQUINT (imputed)"}
+# unseen). Extended for whatever --imputed labels are used.
+HATCH_METHODS: set = {"SQUINT (imputed)", "GeST (imputed)"}
 
 # Splits we render — one figure per entry.
 SPLITS = [
@@ -400,6 +403,12 @@ def main(argv: Optional[List[str]] = None) -> None:
                         "same-model comparison.")
     p.add_argument("--imputed-label", type=str, default="SQUINT (imputed)",
                    help="Bar label for the --imputed-variant method.")
+    p.add_argument("--imputed", action="append", nargs=2, default=[],
+                   metavar=("VARIANT", "LABEL"),
+                   help="Repeatable: add a generative-imputation bar to the CELL "
+                        "panel from <artifacts_root>/<dataset_tag>/VARIANT, "
+                        "labelled LABEL (e.g. --imputed gest-imputed+region-holdout "
+                        "'GeST (imputed)'). Use once per method (SQUINT, GeST, ...).")
     args = p.parse_args(argv)
 
     if args.out_dir is None:
@@ -419,14 +428,21 @@ def main(argv: Optional[List[str]] = None) -> None:
                 new_methods[variant_dir] = label
         ROWS[row_key]["methods"] = new_methods
 
-    # Opt-in: add the stage-2 generative bar to the CELL panel. (Niche-level
+    # Opt-in: add generative-imputation bars to the CELL panel. (Niche-level
     # imputation needs neighborhood aggregation of the decoder output — a
-    # follow-up — so it's cell-only for now.)
+    # follow-up — so these are cell-only for now.) Accumulate the single
+    # --imputed-variant/--imputed-label pair (back-compat) plus any repeatable
+    # --imputed VARIANT LABEL entries.
+    _imputed_pairs = list(args.imputed)
     if args.imputed_variant:
-        ROWS["cell"]["methods"][args.imputed_variant] = args.imputed_label
-        METHOD_COLOURS.setdefault(args.imputed_label, "#FF7AB6")
-        HATCH_METHODS.add(args.imputed_label)
-        print(f"Imputed bar:    {args.imputed_label}  <-  {args.imputed_variant}")
+        _imputed_pairs.insert(0, (args.imputed_variant, args.imputed_label))
+    _default_imputed_colours = ["#FF7AB6", "#2A9D8F", "#E9C46A", "#9B5DE5"]
+    for j, (variant, label) in enumerate(_imputed_pairs):
+        ROWS["cell"]["methods"][variant] = label
+        METHOD_COLOURS.setdefault(
+            label, _default_imputed_colours[j % len(_default_imputed_colours)])
+        HATCH_METHODS.add(label)
+        print(f"Imputed bar:    {label}  <-  {variant}")
 
     _apply_nature_style()
 
