@@ -343,6 +343,7 @@ def _embed_with_scgpt(
         max_length: int,
         device: Optional[str],
         latent_key: str,
+        use_fast_transformer: bool = True,
     ) -> np.ndarray:
     """Zero-shot embedding via the scGPT public API.
 
@@ -412,8 +413,22 @@ def _embed_with_scgpt(
         embed_kwargs["max_length"] = int(max_length)
     if device is not None:
         embed_kwargs["device"] = device
+    # Disable the flash-attn "fast transformer" so the model runs on stock torch
+    # attention — required on H200 (sm_90) where flash-attn ≤sm_86 has no kernel.
+    # Pass the kwarg only when disabling; fall back if an older scgpt rejects it.
+    if not use_fast_transformer:
+        embed_kwargs["use_fast_transformer"] = False
 
-    out = embed_data(**embed_kwargs)
+    try:
+        out = embed_data(**embed_kwargs)
+    except TypeError as exc:
+        if "use_fast_transformer" in str(exc):
+            embed_kwargs.pop("use_fast_transformer", None)
+            print("  (this scgpt's embed_data has no use_fast_transformer kwarg; "
+                  "the model's own default applies)")
+            out = embed_data(**embed_kwargs)
+        else:
+            raise
     # `embed_data` returns a NEW AnnData with the latent on `.X`
     # (since `return_new_adata=True`). The latent matrix has shape
     # (n_obs, embed_dim).
@@ -463,6 +478,11 @@ def main() -> None:
     p.add_argument("--scgpt-device", type=str, default=None,
                    help="Override device. Default lets scGPT pick "
                         "(typically cuda if available, else cpu).")
+    p.add_argument("--no-fast-transformer", action="store_true",
+                   help="Disable scGPT's flash-attn fast transformer (use stock "
+                        "torch attention). REQUIRED on H200/sm_90, where flash-attn "
+                        "built for <=sm_86 has no kernel. Matches scGPT-spatial's "
+                        "default (it already runs the slow path).")
     p.add_argument("--map-via-human-orthologs", action="store_true",
                    help="Map mouse gene symbols to human HGNC symbols "
                         "via the shared 4-step ortholog pipeline "
@@ -582,6 +602,7 @@ def main() -> None:
         max_length=args.scgpt_max_length,
         device=args.scgpt_device,
         latent_key=DEFAULT_LATENT_KEY,
+        use_fast_transformer=not args.no_fast_transformer,
     )
 
     # 2d. Defensive valid-mask: scGPT's L2-normalisation step
