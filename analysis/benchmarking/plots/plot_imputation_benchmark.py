@@ -87,16 +87,17 @@ def _resolve_metrics_csv(locator: str, artifacts_root: Path, dataset_tag: str):
 
 
 def _load_csv_filtered(csv_path: Path, axis: str, transform: str,
-                       gene_subset: str, value_col: str = "pearson_mean"):
-    """branch='cell' slice as (seed, split, value) reading `value_col` (returns
-    empty if that column is absent — e.g. an OLD CSV that predates the panel
-    metrics)."""
+                       gene_subset: str, value_col: str = "pearson_mean",
+                       branch: str = "cell"):
+    """`branch` slice ('cell' = per-cell recon; 'niche' = neighborhood-level)
+    as (seed, split, value) reading `value_col` (empty if that column/branch is
+    absent — e.g. an OLD CSV, or a method with no neighborhood branch)."""
     df = pd.read_csv(csv_path)
     if value_col not in df.columns:
         return pd.DataFrame()
     if "seed" not in df.columns:
         df = df.copy(); df["seed"] = 0
-    df = df[df["branch"] == "cell"]
+    df = df[df["branch"] == branch]
     for col, val in (("axis", axis), ("transform", transform)):
         if col in df.columns:
             df = df[df[col] == val]
@@ -177,7 +178,7 @@ _PANEL_SPECS = {
 
 
 def render_metric_grid(resolved, grid_rows, split, fig_base, long_csv_path,
-                       suptitle, colours):
+                       suptitle, colours, branch="cell"):
     """Render a metric GRID (rows × cols) comparing methods, and write the long
     CSV. Reusable across tasks (imputation / reconstruction).
 
@@ -200,7 +201,8 @@ def render_metric_grid(resolved, grid_rows, split, fig_base, long_csv_path,
         for label, csv in resolved.items():
             if csv is None:
                 continue
-            df = _load_csv_filtered(csv, axis, transform, gene_subset, value_col)
+            df = _load_csv_filtered(csv, axis, transform, gene_subset, value_col,
+                                    branch=branch)
             if df.empty:
                 continue
             sub = df[df["split"] == split]
@@ -212,7 +214,7 @@ def render_metric_grid(resolved, grid_rows, split, fig_base, long_csv_path,
                 long_rows.append({
                     "metric": value_col, "panel": suffix, "axis": axis,
                     "transform": transform, "gene_subset": gene_subset,
-                    "branch": "cell", "method": label, "split": split,
+                    "branch": branch, "method": label, "split": split,
                     "seed": int(sd), "value": float(vv),
                 })
         per_panel_values[suffix] = vals
@@ -274,6 +276,11 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("--out-prefix", type=str, default="imputation_benchmark")
     p.add_argument("--split", type=str, default="test",
                    help="Pearson split to plot (held-out region = 'test').")
+    p.add_argument("--branch", type=str, default="cell", choices=["cell", "niche"],
+                   help="'cell' = per-cell reconstruction; 'niche' = "
+                        "neighborhood-level (X_hat_nbr vs X_nbr). For methods with "
+                        "no native neighborhood branch the runner aggregates the "
+                        "cell prediction over the spatial graph.")
     p.add_argument("--metric", type=str, default="panel",
                    choices=["panel", *_PANEL_SPECS],
                    help="Which figure to render. 'panel' (default) = the full "
@@ -315,13 +322,14 @@ def main(argv: Optional[List[str]] = None) -> None:
         print(f"  {label:<18s} <- {csv if csv else f'MISSING (from {locator!r})'}")
 
     grid_rows = _GRID_ROWS if args.metric == "panel" else [_PANEL_SPECS[args.metric]]
+    blabel = {"cell": "cell-level", "niche": "neighborhood-level"}[args.branch]
     suptitle = (f"Spatial imputation — held-out region (expression unseen)  "
-                f"[{args.split}]")
+                f"[{blabel}, {args.split}]")
     render_metric_grid(
         resolved, grid_rows, args.split,
-        fig_base=args.out_dir / f"{args.out_prefix}_{args.metric}_{args.split}",
-        long_csv_path=args.out_dir / f"{args.out_prefix}_{args.metric}.csv",
-        suptitle=suptitle, colours=COLOURS)
+        fig_base=args.out_dir / f"{args.out_prefix}_{args.metric}_{args.branch}_{args.split}",
+        long_csv_path=args.out_dir / f"{args.out_prefix}_{args.metric}_{args.branch}.csv",
+        suptitle=suptitle, colours=COLOURS, branch=args.branch)
 
 
 if __name__ == "__main__":

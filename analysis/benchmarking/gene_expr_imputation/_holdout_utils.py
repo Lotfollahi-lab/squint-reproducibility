@@ -42,6 +42,7 @@ Output convention used by every method script:
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -272,6 +273,60 @@ def compute_X_nbr(
     print(f"  computed X_nbr ({normalize}-aggregated, density="
           f"{nnz / (adata.n_obs * adata.n_vars):.3f}); stored at "
           "adata.layers['X_nbr']")
+    return adata
+
+
+# ---------------------------------------------------------------------------
+# Neighborhood aggregation of a cell-level prediction, so methods WITHOUT a
+# native neighborhood branch (GeST, scVI, vanilla-VQ-cell, SQUINT-imputed) can
+# still be scored at the neighborhood level: X_hat_nbr = spatial-graph mean of
+# X_hat, compared against X_nbr (the same aggregation of the TRUE X). Use the
+# SAME n_neighs as the native-niche runners (default 10) so the X_nbr targets —
+# and hence the niche-level Pearson — are comparable across all methods.
+# ---------------------------------------------------------------------------
+
+def _neighbor_mean(A, M, normalize: str = "mean") -> np.ndarray:
+    """Spatial-neighborhood aggregation `A @ M` (dense), optionally divided by
+    each cell's neighbor count (`normalize='mean'` — matches compute_X_nbr)."""
+    M = _to_dense_2d(M)
+    nbr = np.asarray(A @ M, dtype=np.float32)
+    if normalize == "mean":
+        rs = np.asarray(A.sum(axis=1)).ravel()
+        rs = np.where(rs > 0, rs, 1.0)
+        nbr = nbr / rs[:, None]
+    return nbr
+
+
+def add_neighborhood_layers(
+        adata: ad.AnnData,
+        *,
+        batch_key: str = "adata_batch_id",
+        n_neighs: int = 10,
+        normalize: str = "mean",
+    ) -> ad.AnnData:
+    """Ensure the niche-branch layers exist so `build_pearson_dataframe` scores
+    the 'niche' branch for ANY method. Builds the per-section spatial kNN graph
+    if absent, sets `layers['X_nbr']` (target = nbr-agg of TRUE X) and — when the
+    method only produced a cell-level `layers['X_hat']` and has no native
+    `layers['X_hat_nbr']` — sets `layers['X_hat_nbr']` = nbr-agg of X_hat. A
+    native X_hat_nbr (SQUINT / NicheCompass) is left untouched. No-op (warns)
+    if obsm['spatial'] is missing."""
+    if "X_hat_nbr" in adata.layers and "X_nbr" in adata.layers:
+        return adata
+    if "spatial_connectivities" not in adata.obsp:
+        if "spatial" not in adata.obsm:
+            print("  [nbr] obsm['spatial'] missing — cannot build neighborhood "
+                  "layers; niche branch will be skipped.", file=sys.stderr)
+            return adata
+        spatial_knn_per_batch(adata, n_neighs=n_neighs, batch_key=batch_key)
+    if "X_nbr" not in adata.layers:
+        compute_X_nbr(adata, normalize=normalize)
+    if "X_hat" in adata.layers and "X_hat_nbr" not in adata.layers:
+        A = adata.obsp["spatial_connectivities"].astype(np.float32)
+        adata.layers["X_hat_nbr"] = _neighbor_mean(A, adata.layers["X_hat"], normalize)
+        print(f"  [nbr] X_hat_nbr = neighborhood-aggregated X_hat "
+              f"({normalize}, n_neighs={n_neighs}); "
+              f"shape={adata.layers['X_hat_nbr'].shape}")
     return adata
 
 

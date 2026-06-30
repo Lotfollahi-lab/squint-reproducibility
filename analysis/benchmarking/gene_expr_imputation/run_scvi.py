@@ -44,6 +44,7 @@ from _holdout_utils import (  # noqa: E402
     DEFAULT_DATASET_TAG,
     DEFAULT_HOLDOUT_REGIONS,
     DEFAULT_SILVER_DIR,
+    add_neighborhood_layers,
     apply_holdout_regions,
     build_pearson_dataframe,
     load_silver_concat,
@@ -217,6 +218,7 @@ def main() -> None:
             n_latent=args.scvi_n_latent,
             accelerator=args.accelerator,
         )
+        add_neighborhood_layers(adata_s, batch_key=args.batch_key)
         df = build_pearson_dataframe(adata_s, seed=seed, log1p=True, n_hvg=50)
         per_seed_frames.append(df)
         if s_idx == 0:

@@ -46,9 +46,15 @@ from plot_pearson_benchmark import (  # noqa: E402  (shared style + recon defaul
 
 # label -> variant/dir/CSV (resolved by _resolve_metrics_csv). Mirrors the
 # cell-level row of plot_pearson_benchmark.ROWS so the same runs are read.
-DEFAULT_SCVI = "baseline-scvi+region-holdout"
+# Mirrors plot_pearson_benchmark.ROWS — the original 4-method reconstruction
+# figure. scVI + Vanilla VQ-VAE used SEPARATE cell vs neighborhood models, so
+# their defaults are branch-aware; NicheCompass + SQUINT have a native niche
+# branch (same run for both).
+DEFAULT_SCVI_CELL = "baseline-scvi+region-holdout"
+DEFAULT_SCVI_NICHE = "baseline-scvi-nbr+region-holdout"
 DEFAULT_NICHECOMPASS = "baseline-nichecompass+region-holdout"
-DEFAULT_VANILLA = "vanilla-vq-cell+region-holdout"
+DEFAULT_VANILLA_CELL = "vanilla-vq-cell+region-holdout"
+DEFAULT_VANILLA_NICHE = "vanilla-vq-nbr+region-holdout"
 # extra (non-default-coloured) method shades
 _EXTRA_SHADES = ["#FF7AB6", "#B5179E", "#7209B7", "#F72585"]
 
@@ -62,19 +68,28 @@ def main(argv=None) -> None:
     p.add_argument("--out-prefix", type=str, default="reconstruction_benchmark")
     p.add_argument("--split", type=str, default="all",
                    help="Pearson split to plot. Default 'all' (full reconstruction).")
+    p.add_argument("--branch", type=str, default="cell", choices=["cell", "niche"],
+                   help="'cell' = per-cell reconstruction; 'niche' = "
+                        "neighborhood-level (X_hat_nbr vs X_nbr; aggregated over the "
+                        "spatial graph for methods with no native niche branch).")
     p.add_argument("--metric", type=str, default="panel",
                    choices=["panel", *_PANEL_SPECS],
                    help="'panel' (default) = full multi-metric grid; else the "
                         "single-metric breakdown.")
-    p.add_argument("--scvi-path", type=str, default=DEFAULT_SCVI,
-                   help="scVI variant / run dir / CSV.")
+    p.add_argument("--scvi-path", type=str, default=None,
+                   help="scVI variant / run dir / CSV. Default branch-aware: "
+                        "baseline-scvi (cell) / baseline-scvi-nbr (niche).")
     p.add_argument("--nichecompass-path", type=str, default=DEFAULT_NICHECOMPASS,
-                   help="NicheCompass variant / run dir / CSV.")
+                   help="NicheCompass variant / run dir / CSV (native niche branch).")
+    p.add_argument("--vanilla-path", type=str, default=None,
+                   help="Vanilla VQ-VAE variant / run dir / CSV. Default branch-aware: "
+                        "vanilla-vq-cell (cell) / vanilla-vq-nbr (niche).")
     p.add_argument("--squint-path", type=str, default=DEFAULT_SQUINT_VARIANT,
                    help="SQUINT variant / run dir / CSV (default: the wide-decoder "
                         "reconstruction reference).")
-    p.add_argument("--include-vanilla", action="store_true",
-                   help="Also add a Vanilla VQ-VAE bar (vanilla-vq-cell+region-holdout).")
+    p.add_argument("--no-vanilla", action="store_true",
+                   help="Drop the Vanilla VQ-VAE bar (included by default — the "
+                        "original reconstruction figure had it).")
     p.add_argument("--extra-variant", nargs=2, action="append",
                    metavar=("VARIANT", "LABEL"), default=None,
                    help="Add an EXTRA method bar (VARIANT = __multiseed dir / run / "
@@ -85,14 +100,19 @@ def main(argv=None) -> None:
         args.out_dir = args.artifacts_root / "benchmarking" / "figures"
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Method -> locator, in plot order. scVI / NicheCompass / SQUINT by default.
-    methods: Dict[str, str] = {
-        "scVI": args.scvi_path,
-        "NicheCompass": args.nichecompass_path,
-        "SQUINT": args.squint_path,
-    }
-    if args.include_vanilla:
-        methods["Vanilla VQ-VAE"] = DEFAULT_VANILLA
+    # Branch-aware defaults so scVI / Vanilla use their cell vs neighborhood
+    # model (the original figure trained separate _nbr models). NicheCompass +
+    # SQUINT have a native niche branch (same run for both).
+    scvi = args.scvi_path or (DEFAULT_SCVI_NICHE if args.branch == "niche"
+                              else DEFAULT_SCVI_CELL)
+    vanilla = args.vanilla_path or (DEFAULT_VANILLA_NICHE if args.branch == "niche"
+                                    else DEFAULT_VANILLA_CELL)
+    # Method -> locator, in the original plot order (scVI, NicheCompass,
+    # Vanilla VQ-VAE, SQUINT).
+    methods: Dict[str, str] = {"scVI": scvi, "NicheCompass": args.nichecompass_path}
+    if not args.no_vanilla:
+        methods["Vanilla VQ-VAE"] = vanilla
+    methods["SQUINT"] = args.squint_path
     colours = dict(METHOD_COLOURS)
     for i, (variant, label) in enumerate(args.extra_variant or []):
         methods[label] = variant
@@ -108,12 +128,13 @@ def main(argv=None) -> None:
         print(f"  {label:<16s} <- {csv if csv else f'MISSING (from {locator!r})'}")
 
     grid_rows = _GRID_ROWS if args.metric == "panel" else [_PANEL_SPECS[args.metric]]
-    suptitle = f"Gene-expression reconstruction  [{args.split}]"
+    blabel = {"cell": "cell-level", "niche": "neighborhood-level"}[args.branch]
+    suptitle = f"Gene-expression reconstruction  [{blabel}, {args.split}]"
     render_metric_grid(
         resolved, grid_rows, args.split,
-        fig_base=args.out_dir / f"{args.out_prefix}_{args.metric}_{args.split}",
-        long_csv_path=args.out_dir / f"{args.out_prefix}_{args.metric}.csv",
-        suptitle=suptitle, colours=colours)
+        fig_base=args.out_dir / f"{args.out_prefix}_{args.metric}_{args.branch}_{args.split}",
+        long_csv_path=args.out_dir / f"{args.out_prefix}_{args.metric}_{args.branch}.csv",
+        suptitle=suptitle, colours=colours, branch=args.branch)
 
 
 if __name__ == "__main__":

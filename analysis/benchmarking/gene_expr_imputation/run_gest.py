@@ -36,8 +36,9 @@ if str(_THIS) not in sys.path:
     sys.path.insert(0, str(_THIS))
 from _holdout_utils import (  # noqa: E402
     DEFAULT_ARTIFACTS_ROOT, DEFAULT_DATASET_TAG, DEFAULT_HOLDOUT_REGIONS,
-    DEFAULT_SILVER_DIR, apply_holdout_regions, build_pearson_dataframe,
-    load_silver_concat, write_pearson_outputs, _to_dense_2d,
+    DEFAULT_SILVER_DIR, add_neighborhood_layers, apply_holdout_regions,
+    build_pearson_dataframe, load_silver_concat, write_pearson_outputs,
+    _to_dense_2d,
 )
 from gest import MetaCellVocab                              # noqa: E402
 from gest.model import GeST, GeSTConfig                     # noqa: E402
@@ -181,6 +182,7 @@ def main() -> None:
         print("\n" + "=" * 78 + f"\nSEED {seed}  ({s_idx+1}/{len(seeds)})\n" + "=" * 78)
         adata_s = adata.copy()
         train_one_seed(adata_s, seed=seed, batch_key=args.batch_key, args=args)
+        add_neighborhood_layers(adata_s, batch_key=args.batch_key)
         df = build_pearson_dataframe(adata_s, seed=seed, log1p=True, n_hvg=50)
         per_seed_frames.append(df)
         if s_idx == 0:

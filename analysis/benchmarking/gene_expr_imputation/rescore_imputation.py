@@ -38,7 +38,9 @@ import pandas as pd
 _THIS = Path(__file__).resolve().parent
 if str(_THIS) not in sys.path:
     sys.path.insert(0, str(_THIS))
-from _holdout_utils import build_pearson_dataframe, write_pearson_outputs  # noqa: E402
+from _holdout_utils import (  # noqa: E402
+    add_neighborhood_layers, build_pearson_dataframe, write_pearson_outputs,
+)
 
 
 def _resolve_seed(out_dir: Path, cli_seed):
@@ -78,6 +80,10 @@ def main(argv=None) -> int:
     p.add_argument("--n-hvg", type=int, default=50)
     p.add_argument("--cell-type-key", type=str, default=None,
                    help="obs column for the marker subset (default: auto-detect).")
+    p.add_argument("--batch-key", type=str, default="adata_batch_id",
+                   help="obs batch/section column for the spatial graph.")
+    p.add_argument("--no-nbr", action="store_true",
+                   help="Skip adding the neighborhood branch (X_hat_nbr/X_nbr).")
     args = p.parse_args(argv)
 
     if args.adata is not None:
@@ -105,6 +111,8 @@ def main(argv=None) -> int:
         print(f"  WARNING: {warn}", file=sys.stderr)
     print(f"  scoring as seed={seed}  (n_obs={adata.n_obs}, n_vars={adata.n_vars})")
 
+    if not args.no_nbr:
+        add_neighborhood_layers(adata, batch_key=args.batch_key)
     per_seed = build_pearson_dataframe(
         adata, seed=seed, log1p=True, n_hvg=args.n_hvg,
         cell_type_key=args.cell_type_key, verbose=True)
