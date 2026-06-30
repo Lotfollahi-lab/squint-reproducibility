@@ -32,7 +32,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -86,18 +86,51 @@ def _resolve_metrics_csv(locator: str, artifacts_root: Path, dataset_tag: str):
     return None
 
 
-def _load_csv_filtered(csv_path: Path, axis: str, transform: str, gene_subset: str):
-    """branch='cell' slice as (seed, split, value), like load_method_pearson."""
+def _load_csv_filtered(csv_path: Path, axis: str, transform: str,
+                       gene_subset: str, value_col: str = "pearson_mean"):
+    """branch='cell' slice as (seed, split, value) reading `value_col` (returns
+    empty if that column is absent — e.g. an OLD CSV that predates the panel
+    metrics)."""
     df = pd.read_csv(csv_path)
+    if value_col not in df.columns:
+        return pd.DataFrame()
     if "seed" not in df.columns:
         df = df.copy(); df["seed"] = 0
     df = df[df["branch"] == "cell"]
     for col, val in (("axis", axis), ("transform", transform), ("gene_subset", gene_subset)):
         if col in df.columns:
             df = df[df[col] == val]
+    df = df[df[value_col].notna()]
     if df.empty:
         return pd.DataFrame()
-    return df[["seed", "split", "pearson_mean"]].rename(columns={"pearson_mean": "value"})
+    return df[["seed", "split", value_col]].rename(columns={value_col: "value"})
+
+
+# Panel specs per --metric. Each entry: (suffix, axis, transform, gene_subset,
+# value_col, title, higher_is_better). "panel" is the reviewer figure: one
+# representative bar-group per complementary metric.
+_PANEL_SPECS = {
+    "panel": [
+        ("pearson",      "gene_wise", "log1p",  "all",     "pearson_mean",  "Pearson (log1p) ↑",     True),
+        ("spearman",     "gene_wise", "log1p",  "all",     "spearman_mean", "Spearman ↑",            True),
+        ("rmse_log1p",   "gene_wise", "log1p",  "all",     "rmse_mean",     "RMSE (log1p) ↓",        False),
+        ("rmse_counts",  "gene_wise", "raw",    "all",     "rmse_mean",     "RMSE (counts) ↓",       False),
+        ("zero_nonzero", "entrywise", "counts", "all",     "auroc_zero",    "Zero/nonzero AUROC ↑",  True),
+        ("markers",      "gene_wise", "log1p",  "markers", "pearson_mean",  "Marker Pearson ↑",      True),
+    ],
+    "pearson":  [(s, ax, tr, gs, "pearson_mean",  lbl + " ↑", True)
+                 for s, ax, tr, gs, lbl in METRIC_VARIANTS],
+    "spearman": [(s, ax, tr, gs, "spearman_mean", lbl + " ↑", True)
+                 for s, ax, tr, gs, lbl in METRIC_VARIANTS],
+    "mse":      [(s, ax, tr, gs, "mse_mean",      lbl + " ↓", False)
+                 for s, ax, tr, gs, lbl in METRIC_VARIANTS],
+    "rmse":     [(s, ax, tr, gs, "rmse_mean",     lbl + " ↓", False)
+                 for s, ax, tr, gs, lbl in METRIC_VARIANTS],
+    "zero_nonzero": [
+        ("zero_nonzero_all",     "entrywise", "counts", "all",     "auroc_zero", "Zero/nonzero AUROC (all) ↑",     True),
+        ("zero_nonzero_markers", "entrywise", "counts", "markers", "auroc_zero", "Zero/nonzero AUROC (markers) ↑", True),
+    ],
+}
 
 
 def main(argv: Optional[List[str]] = None) -> None:
@@ -109,6 +142,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("--out-prefix", type=str, default="imputation_benchmark")
     p.add_argument("--split", type=str, default="test",
                    help="Pearson split to plot (held-out region = 'test').")
+    p.add_argument("--metric", type=str, default="panel", choices=list(_PANEL_SPECS),
+                   help="Which metric figure to render. 'panel' (default) = one "
+                        "bar-group per complementary metric (Pearson / Spearman / "
+                        "RMSE log1p+counts / zero-nonzero AUROC / marker Pearson) — "
+                        "the reviewer panel. Others render the per-variant breakdown "
+                        "for a single metric. Needs CSVs rebuilt with the new columns.")
     p.add_argument("--squint-imputed-path", type=str, default=DEFAULT_SQUINT_IMPUTED,
                    help="CSV / run dir / variant for SQUINT (imputed).")
     p.add_argument("--gest-imputed-path", type=str, default=DEFAULT_GEST_IMPUTED,
@@ -141,36 +180,43 @@ def main(argv: Optional[List[str]] = None) -> None:
         resolved[label] = csv
         print(f"  {label:<18s} <- {csv if csv else f'MISSING (from {locator!r})'}")
 
+    panels = _PANEL_SPECS[args.metric]
     long_rows: List[dict] = []
-    per_variant_values: Dict[str, Dict[str, np.ndarray]] = {}
-    for suffix, axis, transform, gene_subset, _label in METRIC_VARIANTS:
+    per_panel_values: Dict[str, Dict[str, np.ndarray]] = {}
+    per_panel_meta: Dict[str, Tuple[str, bool]] = {}
+    for suffix, axis, transform, gene_subset, value_col, title, hib in panels:
         vals: Dict[str, np.ndarray] = {}
         for label, csv in resolved.items():
             if csv is None:
                 continue
-            df = _load_csv_filtered(csv, axis, transform, gene_subset)
+            df = _load_csv_filtered(csv, axis, transform, gene_subset, value_col)
             if df.empty:
                 continue
-            v = df[df["split"] == args.split]["value"].astype(float).to_numpy()
+            sub = df[df["split"] == args.split]
+            v = sub["value"].astype(float).to_numpy()
             if v.size == 0:
                 continue
             vals[label] = v
-            for vv, sd in zip(v, df[df["split"] == args.split]["seed"].astype(int)):
+            for vv, sd in zip(v, sub["seed"].astype(int)):
                 long_rows.append({
-                    "metric_variant": suffix, "axis": axis, "transform": transform,
-                    "gene_subset": gene_subset, "branch": "cell", "method": label,
-                    "split": args.split, "seed": int(sd), "pearson_mean": float(vv),
+                    "metric": value_col, "panel": suffix, "axis": axis,
+                    "transform": transform, "gene_subset": gene_subset,
+                    "branch": "cell", "method": label, "split": args.split,
+                    "seed": int(sd), "value": float(vv),
                 })
-        per_variant_values[suffix] = vals
+        per_panel_values[suffix] = vals
+        per_panel_meta[suffix] = (title, hib)
 
-    n = len(METRIC_VARIANTS)
+    n = len(panels)
     fig, axes = plt.subplots(1, n, figsize=(1.9 * n + 0.6,
                                             max(1.35, 0.30 * len(methods) + 0.6)))
     if n == 1:
         axes = [axes]
-    for ax, (suffix, _ax, _tr, _gs, mlabel) in zip(axes, METRIC_VARIANTS):
-        vals = per_variant_values.get(suffix, {})
-        order = sorted(vals.keys(), key=lambda m: -float(np.nanmean(vals.get(m, [np.nan]))))
+    for ax, (suffix, _ax, _tr, _gs, _vc, mlabel, hib) in zip(axes, panels):
+        vals = per_panel_values.get(suffix, {})
+        # rank best-first: descending for higher-is-better, ascending otherwise.
+        sign = -1.0 if hib else 1.0
+        order = sorted(vals.keys(), key=lambda m: sign * float(np.nanmean(vals.get(m, [np.nan]))))
         _plot_panel(ax=ax, method_order=order, per_method_values=vals,
                     colour_for=COLOURS, title=mlabel)
     fig.suptitle(f"Spatial imputation — held-out region (expression unseen)  "
@@ -178,7 +224,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     plt.tight_layout()
     plt.subplots_adjust(wspace=0.55)
 
-    base = args.out_dir / f"{args.out_prefix}_{args.split}"
+    base = args.out_dir / f"{args.out_prefix}_{args.metric}_{args.split}"
     for ext in ("svg", "png"):
         out = base.with_suffix(f".{ext}")
         fig.savefig(out, bbox_inches="tight", pad_inches=0.05)
@@ -186,7 +232,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     plt.close(fig)
 
     if long_rows:
-        csv_out = args.out_dir / f"{args.out_prefix}.csv"
+        csv_out = args.out_dir / f"{args.out_prefix}_{args.metric}.csv"
         pd.DataFrame(long_rows).to_csv(csv_out, index=False)
         print(f"  -> {csv_out}")
 

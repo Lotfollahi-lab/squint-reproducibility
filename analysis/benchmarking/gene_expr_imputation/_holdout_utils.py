@@ -331,6 +331,98 @@ def _select_hvg_indices(
     return hvg_idx
 
 
+# ---------------------------------------------------------------------------
+# Extra metrics beyond Pearson (reviewer panel): rank correlation (Spearman),
+# magnitude error (MSE/RMSE), zero/nonzero recovery (AUROC/AUPRC), and a
+# marker-gene subset. Each row of the long CSV keeps `pearson_mean` (so the
+# existing plots are untouched) and gains `spearman_*` / `mse_*` / `rmse_mean`;
+# zero/nonzero rows are emitted separately with axis="entrywise".
+# ---------------------------------------------------------------------------
+
+def _rankdata_axis(x: np.ndarray, axis: int) -> np.ndarray:
+    """Average-rank `x` along `axis` (ties -> mean rank — matters for the many
+    tied zeros in sparse SRT). Uses scipy; falls back to per-slice if the
+    installed scipy lacks the `axis` kwarg."""
+    from scipy.stats import rankdata
+    try:
+        return rankdata(x, axis=axis).astype(float)
+    except TypeError:                       # scipy < 1.10 has no axis= kwarg
+        return np.apply_along_axis(rankdata, axis, x).astype(float)
+
+
+def _spearman_pairwise(a: np.ndarray, b: np.ndarray, axis: int) -> np.ndarray:
+    """Spearman == Pearson on average-ranks. Rank-based -> invariant to the
+    log1p transform (raw and log1p rows get identical values)."""
+    return _pearson_pairwise(_rankdata_axis(a, axis), _rankdata_axis(b, axis), axis)
+
+
+def _mse_pairwise(pred: np.ndarray, target: np.ndarray, axis: int) -> np.ndarray:
+    """Per-vector mean squared error along `axis` (per-gene for axis=0,
+    per-cell for axis=1). mean(over vectors) == overall MSE; the median is a
+    robust complement."""
+    return ((pred - target) ** 2).mean(axis=axis)
+
+
+def _zero_nonzero_scores(pred_raw: np.ndarray, target_raw: np.ndarray):
+    """Pooled AUROC / AUPRC for recovering nonzero entries (y = target>0,
+    score = predicted magnitude) over all (cell, gene) entries. Returns
+    (nan, nan) if degenerate (all-zero / all-nonzero) or sklearn missing."""
+    y = (target_raw.ravel() > 0).astype(np.int8)
+    if y.min() == y.max():                  # no positives or no negatives
+        return float("nan"), float("nan")
+    s = pred_raw.ravel().astype(float)
+    if not np.isfinite(s).all():
+        ok = np.isfinite(s)
+        y, s = y[ok], s[ok]
+        if y.size == 0 or y.min() == y.max():
+            return float("nan"), float("nan")
+    try:
+        from sklearn.metrics import roc_auc_score, average_precision_score
+        return float(roc_auc_score(y, s)), float(average_precision_score(y, s))
+    except Exception:                       # noqa: BLE001  (sklearn missing / degenerate)
+        return float("nan"), float("nan")
+
+
+def _select_marker_indices(
+        target_log1p: np.ndarray,
+        labels: np.ndarray,
+        n_per_label: int = 10,
+        max_total: int = 100,
+    ) -> np.ndarray:
+    """Union of the top `n_per_label` one-vs-rest marker genes per label, scored
+    by (in-label mean - out-of-label mean) on the log1p TARGET (numpy-only,
+    scanpy-free). Markers are derived from the truth so the gene identity is
+    fixed across methods. Returns [] if <2 usable labels."""
+    labels = np.asarray(labels)
+    uniq = [u for u in pd.unique(labels) if u == u and str(u) != "nan"]
+    if len(uniq) < 2 or target_log1p.shape[1] == 0:
+        return np.array([], dtype=int)
+    n_genes = target_log1p.shape[1]
+    n_per_label = min(int(n_per_label), n_genes)
+    grand = target_log1p.mean(axis=0)
+    picked: set = set()
+    for u in uniq:
+        m = labels == u
+        if m.sum() == 0:
+            continue
+        score = target_log1p[m].mean(axis=0) - grand          # log-FC-like vs rest
+        top = np.argpartition(-score, n_per_label - 1)[:n_per_label]
+        picked.update(int(i) for i in top)
+    idx = np.array(sorted(picked), dtype=int)
+    if idx.size > max_total:                                  # cap by global score
+        order = np.argsort(-(target_log1p[:, idx].var(axis=0)))
+        idx = np.sort(idx[order[:max_total]])
+    return idx
+
+
+def _finite_mean_median(vec: np.ndarray) -> Tuple[float, float]:
+    """(mean, median) over finite entries; (nan, nan) if none."""
+    v = vec[np.isfinite(vec)]
+    if v.size == 0:
+        return float("nan"), float("nan")
+    return float(v.mean()), float(np.median(v))
+
+
 def _branch_pearson_rows(
         branch: str,
         target_full: np.ndarray,
@@ -339,21 +431,19 @@ def _branch_pearson_rows(
         split_label: str,
         log1p: bool,
         n_hvg: int,
+        marker_idx: Optional[np.ndarray] = None,
     ) -> List[dict]:
-    """Emit the 6 Pearson variant rows for ONE branch × ONE split:
+    """Emit the per-(axis, transform, gene_subset) metric rows for ONE branch ×
+    ONE split. Each correlation row carries Pearson AND the reviewer-panel
+    metrics (Spearman rank-correlation, MSE/RMSE) so the magnitude / rank views
+    sit next to the linear correlation. Gene subsets: all, hvg{N}, and (when
+    `marker_idx` is given) markers — markers/hvg are gene_wise only (per-cell
+    correlation over a small gene set is statistically noisy; same convention
+    as SQUINT). `log1p=False` skips the log1p transform.
 
-       gene_wise × raw       × all
-       gene_wise × raw       × hvg{N}
-       gene_wise × log1p     × all
-       gene_wise × log1p     × hvg{N}
-       cell_wise × raw       × all
-       cell_wise × log1p     × all
-
-    `cell_wise × hvg{N}` is intentionally skipped — Pearson per cell
-    over only N genes is statistically noisy. Same convention as SQUINT.
-
-    `log1p=False` flips the loop to skip log1p variants entirely (3
-    rows: gene_wise × raw × {all, hvg}, cell_wise × raw × all).
+    Two extra rows per branch × split (axis="entrywise", transform="counts")
+    carry the zero/nonzero recovery scores (AUROC/AUPRC on raw counts) for
+    gene_subset in {all, markers}; their correlation columns are NaN.
     """
     target = target_full[cell_mask]
     pred   = pred_full[cell_mask]
@@ -364,6 +454,8 @@ def _branch_pearson_rows(
     # HVG indices computed once per branch × split on the log1p target.
     target_log_for_hvg = np.log1p(np.clip(target, 0, None))
     hvg_idx = _select_hvg_indices(target_log_for_hvg, n_hvg)
+    mk_idx = (marker_idx if marker_idx is not None and marker_idx.size > 0
+              else None)
 
     transforms: List[str] = []
     if log1p:
@@ -380,34 +472,76 @@ def _branch_pearson_rows(
 
         for axis_name, axis in (("gene_wise", 0), ("cell_wise", 1)):
             gene_subsets = ["all"]
-            if axis_name == "gene_wise" and hvg_idx.size > 0:
-                gene_subsets.append(f"hvg{hvg_idx.size}")
+            if axis_name == "gene_wise":
+                if hvg_idx.size > 0:
+                    gene_subsets.append(f"hvg{hvg_idx.size}")
+                if mk_idx is not None:
+                    gene_subsets.append("markers")
 
             for gene_subset in gene_subsets:
                 if gene_subset == "all":
                     t_sub, p_sub = t_full, p_full
                     n_genes_sub = n_genes
+                elif gene_subset == "markers":
+                    t_sub, p_sub = t_full[:, mk_idx], p_full[:, mk_idx]
+                    n_genes_sub = int(mk_idx.size)
                 else:
-                    t_sub = t_full[:, hvg_idx]
-                    p_sub = p_full[:, hvg_idx]
+                    t_sub, p_sub = t_full[:, hvg_idx], p_full[:, hvg_idx]
                     n_genes_sub = int(hvg_idx.size)
 
-                vec = _pearson_pairwise(p_sub, t_sub, axis=axis)
-                vec = vec[np.isfinite(vec)]
-                if vec.size == 0:
+                pvec = _pearson_pairwise(p_sub, t_sub, axis=axis)
+                if pvec[np.isfinite(pvec)].size == 0:
                     continue
+                p_mean, p_med = _finite_mean_median(pvec)
+                s_mean, s_med = _finite_mean_median(
+                    _spearman_pairwise(p_sub, t_sub, axis=axis))
+                m_mean, m_med = _finite_mean_median(
+                    _mse_pairwise(p_sub, t_sub, axis=axis))
                 rows.append({
                     "split":          split_label,
                     "branch":         branch,
                     "axis":           axis_name,
                     "transform":      transform,
                     "gene_subset":    gene_subset,
-                    "pearson_mean":   float(vec.mean()),
-                    "pearson_median": float(np.median(vec)),
+                    "pearson_mean":   p_mean,
+                    "pearson_median": p_med,
+                    "spearman_mean":  s_mean,
+                    "spearman_median": s_med,
+                    "mse_mean":       m_mean,
+                    "mse_median":     m_med,
+                    "rmse_mean":      float(np.sqrt(m_mean)) if m_mean == m_mean else float("nan"),
                     "n_cells":        int(n_cells),
                     "n_genes":        n_genes_sub,
                 })
+
+    # ---- zero/nonzero recovery (raw counts; transform-independent) ----------
+    zsubsets = [("all", None)]
+    if mk_idx is not None:
+        zsubsets.append(("markers", mk_idx))
+    for gs, idx in zsubsets:
+        t_z = target if idx is None else target[:, idx]
+        p_z = pred   if idx is None else pred[:, idx]
+        auroc, auprc = _zero_nonzero_scores(p_z, t_z)
+        if auroc != auroc and auprc != auprc:        # both NaN -> skip
+            continue
+        rows.append({
+            "split":       split_label,
+            "branch":      branch,
+            "axis":        "entrywise",
+            "transform":   "counts",
+            "gene_subset": gs,
+            "auroc_zero":  auroc,
+            "auprc_zero":  auprc,
+            "n_cells":     int(n_cells),
+            "n_genes":     int(t_z.shape[1]),
+        })
     return rows
+
+
+# Cell-type label columns to auto-detect for the marker-gene subset (first
+# present wins). Mirrors the niche/cell-type benchmark label preference.
+_MARKER_LABEL_KEYS = ("cell_type", "cell_types", "new_annotation", "annotation",
+                      "celltype", "CellType")
 
 
 def build_pearson_dataframe(
@@ -416,6 +550,7 @@ def build_pearson_dataframe(
         log1p: bool = True,
         n_hvg: int = 50,
         verbose: bool = False,
+        cell_type_key: Optional[str] = None,
     ) -> pd.DataFrame:
     """Build per-seed Pearson DataFrame matching SQUINT's
     `compute_pearson_metrics` schema EXACTLY.
@@ -470,6 +605,26 @@ def build_pearson_dataframe(
         )
 
     n_obs = adata.n_obs
+
+    # --- marker-gene subset: top one-vs-rest DE genes per cell type, derived
+    #     from the TRUTH (expression + labels) on the TRAIN cells only (so the
+    #     held-out region never informs the gene selection). Gene-level, so the
+    #     same indices apply to both branches. Skipped if no label column.
+    marker_idx: Optional[np.ndarray] = None
+    lab_key = cell_type_key or next(
+        (k for k in _MARKER_LABEL_KEYS if k in adata.obs.columns), None)
+    if lab_key is not None and lab_key in adata.obs.columns:
+        labels_all = adata.obs[lab_key].to_numpy()
+        train_mask = split_col != "test"
+        if train_mask.sum() == 0:
+            train_mask = np.ones(n_obs, dtype=bool)
+        Xcell = _to_dense_2d(adata.X)
+        tl = np.log1p(np.clip(Xcell[train_mask], 0, None))
+        marker_idx = _select_marker_indices(tl, labels_all[train_mask])
+        if verbose:
+            print(f"  markers: {0 if marker_idx is None else marker_idx.size} genes "
+                  f"from label '{lab_key}' (train cells)")
+
     rows: List[dict] = []
     for branch, target, pred in branches:
         for split_label in ("all", "train", "test"):
@@ -487,27 +642,45 @@ def build_pearson_dataframe(
                 split_label=split_label,
                 log1p=log1p,
                 n_hvg=n_hvg,
+                marker_idx=marker_idx,
             )
             for r in split_rows:
                 r["seed"] = int(seed)
                 rows.append(r)
                 if verbose:
-                    print(
-                        f"  [{r['split']:<5s}] {r['branch']:<5s} "
-                        f"{r['axis']:<9s} {r['transform']:<5s} "
-                        f"{r['gene_subset']:<7s} "
-                        f"mean={r['pearson_mean']:.4f}  "
-                        f"median={r['pearson_median']:.4f}  "
-                        f"(n_cells={r['n_cells']}, n_genes={r['n_genes']})"
-                    )
+                    if r["axis"] == "entrywise":   # zero/nonzero recovery row
+                        print(
+                            f"  [{r['split']:<5s}] {r['branch']:<5s} "
+                            f"zero/nonzero {r['gene_subset']:<7s} "
+                            f"AUROC={r.get('auroc_zero', float('nan')):.4f}  "
+                            f"AUPRC={r.get('auprc_zero', float('nan')):.4f}"
+                        )
+                    else:
+                        print(
+                            f"  [{r['split']:<5s}] {r['branch']:<5s} "
+                            f"{r['axis']:<9s} {r['transform']:<5s} "
+                            f"{r['gene_subset']:<8s} "
+                            f"r={r.get('pearson_mean', float('nan')):.4f}  "
+                            f"rho={r.get('spearman_mean', float('nan')):.4f}  "
+                            f"mse={r.get('mse_mean', float('nan')):.4f}  "
+                            f"(n_cells={r['n_cells']}, n_genes={r['n_genes']})"
+                        )
 
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
-    # Re-order columns: seed first, then SQUINT-canonical order.
-    cols = ["seed", "branch", "split", "axis", "transform", "gene_subset",
-            "pearson_mean", "pearson_median", "n_cells", "n_genes"]
-    return df[cols]
+    # Re-order columns: seed first, then the SQUINT-canonical Pearson columns
+    # (so existing readers/plots are byte-compatible), then the reviewer-panel
+    # metrics, then any zero/nonzero columns that were emitted.
+    lead = ["seed", "branch", "split", "axis", "transform", "gene_subset",
+            "pearson_mean", "pearson_median"]
+    panel = ["spearman_mean", "spearman_median", "mse_mean", "mse_median",
+             "rmse_mean", "auroc_zero", "auprc_zero"]
+    tail = ["n_cells", "n_genes"]
+    ordered = lead + [c for c in panel if c in df.columns] + tail
+    # keep any unexpected extra columns at the end rather than dropping them
+    ordered += [c for c in df.columns if c not in ordered]
+    return df[ordered]
 
 
 # ---------------------------------------------------------------------------
@@ -515,24 +688,22 @@ def build_pearson_dataframe(
 # ---------------------------------------------------------------------------
 
 def aggregate_pearson_across_seeds(per_seed: pd.DataFrame) -> pd.DataFrame:
-    """Mean of pearson_{mean,median} across seeds, grouped by
-    (branch, split, axis, transform, gene_subset)."""
+    """Mean across seeds of every metric column, grouped by
+    (branch, split, axis, transform, gene_subset). New panel columns
+    (spearman/mse/rmse/auroc_zero/auprc_zero) are averaged when present;
+    NaNs (e.g. Pearson cols on the entrywise zero/nonzero rows) are skipped."""
     if per_seed.empty:
         return per_seed
     groupcols = ["branch", "split", "axis", "transform", "gene_subset"]
-    agg = (
-        per_seed
-        .groupby(groupcols, sort=False)
-        .agg(
-            pearson_mean=("pearson_mean", "mean"),
-            pearson_median=("pearson_median", "mean"),
-            n_cells=("n_cells", "mean"),
-            n_genes=("n_genes", "first"),
-            n_seeds=("seed", "nunique"),
-        )
-        .reset_index()
-    )
-    return agg
+    metric_cols = [c for c in ("pearson_mean", "pearson_median",
+                               "spearman_mean", "spearman_median",
+                               "mse_mean", "mse_median", "rmse_mean",
+                               "auroc_zero", "auprc_zero", "n_cells")
+                   if c in per_seed.columns]
+    agg_spec = {c: (c, "mean") for c in metric_cols}
+    agg_spec["n_genes"] = ("n_genes", "first")
+    agg_spec["n_seeds"] = ("seed", "nunique")
+    return (per_seed.groupby(groupcols, sort=False).agg(**agg_spec).reset_index())
 
 
 def write_pearson_outputs(
