@@ -305,7 +305,8 @@ def _warn_duplicate_seed_values(df: pd.DataFrame, method_label: str) -> None:
                   file=sys.stderr)
 
 
-def load_method_metrics(variant_dir: Path, method_label: str) -> pd.DataFrame:
+def load_method_metrics(variant_dir: Path, method_label: str,
+                         niche_label_key: str = "niche") -> pd.DataFrame:
     """Return tidy DataFrame: columns = (method, seed, metric, value).
 
     Reads ONLY the per-seed CSVs:
@@ -333,7 +334,7 @@ def load_method_metrics(variant_dir: Path, method_label: str) -> pd.DataFrame:
         df_n = pd.read_csv(per_seed_niche)
         if "split" in df_n.columns:
             df_n = df_n[df_n["split"] == "all"]
-        df_n = df_n[df_n["label_key"] == "niche"]
+        df_n = df_n[df_n["label_key"] == niche_label_key]
         if not df_n.empty and "code_key" in df_n.columns:
             ck = _pick_niche_code_key(sorted(df_n["code_key"].unique().tolist()))
             if ck is not None:
@@ -456,6 +457,58 @@ def _plot_panel(
                  fontsize=7, fontweight="medium", pad=4)
 
 
+def _write_summary_tables(df: pd.DataFrame, method_order: List[str],
+                          out_path_base: Path) -> None:
+    """Write paper-ready metric tables (mirrors the ablation report style):
+      <base>_summary.csv  long: method, metric, n_seeds, mean, std, sem, ci95
+      <base>_wide.csv     method x metric, cells = 'mean ± ci95' (figure order)
+    Methods in `method_order` (figure ranking), metrics in METRICS order."""
+    def _ci95(v):
+        v = np.asarray(v, float); v = v[np.isfinite(v)]
+        n = v.size
+        if n < 2:
+            return 0.0
+        sem = v.std(ddof=1) / np.sqrt(n)
+        try:
+            from scipy import stats
+            t = float(stats.t.ppf(0.975, n - 1))
+        except Exception:  # noqa: BLE001
+            t = 1.96
+        return float(t * sem)
+
+    rows = []
+    for (method, metric), grp in df.groupby(["method", "metric"], sort=False):
+        v = pd.to_numeric(grp["value"], errors="coerce").dropna().to_numpy()
+        n = int(v.size)
+        std = float(v.std(ddof=1)) if n > 1 else 0.0
+        rows.append({
+            "method": method, "metric": metric, "n_seeds": n,
+            "mean": float(v.mean()) if n else float("nan"),
+            "std": std, "sem": float(std / np.sqrt(n)) if n > 1 else 0.0,
+            "ci95": _ci95(v),
+        })
+    summary = pd.DataFrame(rows)
+    metric_order = [m for m, _ in METRICS]
+    summary["_mi"] = summary["metric"].map({m: i for i, m in enumerate(metric_order)}).fillna(99)
+    summary["_oi"] = summary["method"].map({m: i for i, m in enumerate(method_order)}).fillna(99)
+    summary = summary.sort_values(["_oi", "_mi"]).drop(columns=["_mi", "_oi"])
+    summary_csv = out_path_base.parent / f"{out_path_base.name}_summary.csv"
+    summary.to_csv(summary_csv, index=False)
+    print(f"  -> {summary_csv}")
+
+    summary["cell"] = summary.apply(
+        lambda r: (f"{r['mean']:.3f}±{r['ci95']:.3f}"
+                   if r["mean"] == r["mean"] else ""), axis=1)
+    present_metrics = [m for m in metric_order if m in set(summary["metric"])]
+    wide = (summary.pivot(index="method", columns="metric", values="cell")
+            .reindex(index=[m for m in method_order if m in set(summary["method"])],
+                     columns=present_metrics))
+    wide.columns.name = None
+    wide_csv = out_path_base.parent / f"{out_path_base.name}_wide.csv"
+    wide.to_csv(wide_csv)
+    print(f"  -> {wide_csv}")
+
+
 def make_figure(
         df: pd.DataFrame,
         out_path_base: Path,
@@ -539,6 +592,9 @@ def make_figure(
     pivot.to_csv(csv_out)
     print(f"  -> {csv_out}")
 
+    # Paper-ready summary (mean/std/sem/ci95) + wide table, ablation-style.
+    _write_summary_tables(df, method_order, out_path_base)
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -564,6 +620,11 @@ def main(argv: Optional[List[str]] = None) -> None:
                    default="niche_identification_benchmark",
                    help="Output basename (no extension). Default: "
                         "'niche_identification_benchmark'.")
+    p.add_argument("--niche-label-key", type=str, default="niche",
+                   help="obs label_key the niche metrics were scored against. "
+                        "Default 'niche' (mmb/chl59). Use 'niche_type' for xhs1000, "
+                        "'spatial_cluster' for spatch, etc. — must match what the "
+                        "SQUINT run + baselines wrote into per_seed_niche_identification.csv.")
     args = p.parse_args(argv)
 
     if args.out_dir is None:
@@ -589,7 +650,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     frames: List[pd.DataFrame] = []
     for variant, label in methods.items():
         variant_dir = args.artifacts_root / args.dataset_tag / variant
-        df = load_method_metrics(variant_dir, label)
+        df = load_method_metrics(variant_dir, label,
+                                 niche_label_key=args.niche_label_key)
         n_seeds = df["seed"].nunique() if not df.empty else 0
         n_metrics = df["metric"].nunique() if not df.empty else 0
         status = (f"{n_seeds} seed(s), {n_metrics} metric(s)"
