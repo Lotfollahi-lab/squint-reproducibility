@@ -21,8 +21,10 @@ set -euo pipefail
 
 VENV="${VENV:-/nfs/team361/sb75/.venvs/scgpt-h200}"
 PYTHON="${PYTHON:-python3.10}"
-CUDA="${CUDA:-cu121}"                 # cu121 (CUDA 12.1) covers H200/sm_90; cu118 also works
-TORCH="${TORCH:-2.3.1}"
+CUDA="${CUDA:-cu121}"                 # cu121 covers H200/sm_90 AND has a torchtext match
+TORCH="${TORCH:-2.3.0}"               # CEILING for scGPT: torchtext's last release (0.18.0)
+TORCHVISION="${TORCHVISION:-0.18.0}"  # is built for torch 2.3.0 — there is NO torchtext for
+TORCHTEXT="${TORCHTEXT:-0.18.0}"      # torch>=2.4, and scGPT imports torchtext.vocab.
 # scGPT-spatial is usually a LOCAL clone (the runner auto-detects the repo near
 # the model dir). Point SCGPT_SPATIAL_REPO at that clone to install it editable;
 # otherwise only stock scGPT (PyPI) is installed.
@@ -51,8 +53,16 @@ pip install "scanpy" "anndata" "numpy<2" "pandas" "scikit-learn"
 
 # 2. ...then FORCE the sm_90 torch LAST, so scGPT's torch pin (historically
 #    torch<2.1, which has NO Hopper kernel) cannot downgrade it. This is THE fix.
-pip install --force-reinstall --no-deps "torch==${TORCH}" \
+#    NOTE 1: do NOT pass --no-deps on torch — its CUDA runtime ships as separate
+#      nvidia-*-cu12 wheels (cudnn/cublas/...); --no-deps skips them and torch then
+#      fails to import with "libcudnn.so.8: cannot open shared object file".
+#    NOTE 2: torch/torchvision come from the cuXXX index (matched build); torchtext
+#      is installed --no-deps so it can't drag a CPU torch over the cu build. All
+#      three MUST be the same minor (2.3.0 / 0.18.0 / 0.18.0) or the C-extension
+#      ABI breaks ("undefined symbol: _ZN2at4_ops5zeros...").
+pip install --force-reinstall "torch==${TORCH}" "torchvision==${TORCHVISION}" \
     --index-url "https://download.pytorch.org/whl/${CUDA}"
+pip install --force-reinstall --no-deps "torchtext==${TORCHTEXT}"
 
 # 3. Deliberately NO flash-attn: the slow (stock-torch attention) path is used on
 #    H200. (flash-attn>=2.x does support sm_90 but needs a long Hopper compile and
