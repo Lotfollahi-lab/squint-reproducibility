@@ -76,7 +76,9 @@ fi
 # standard leaf dirname (e.g. `_coord_aligned`) under the silver root.
 # Override SILVER_DIR directly to point anywhere.
 case "$DATASET_TAG" in
-    chl59-8b_1p)
+    chl59-8b_1p|chl59-2b_1p)
+        # CosMx Lung (NanoString). Both the 8-batch set and the 2-sample
+        # subset live on lustre under the same silver root, leaf == tag.
         SILVER_ROOT_DEFAULT="/lustre/scratch126/cellgen/lotfollahi/DATASETS/silver"
         SILVER_LEAF_DEFAULT="$DATASET_TAG"
         ;;
@@ -278,22 +280,25 @@ fi
 # fall outside those defaults need to set it (e.g. squint_hln).
 LABEL_KEY_ARGS=""
 case "$DATASET_TAG" in
-    chl59-8b_1p)
-        # CosMx Lung, human, ~946 genes, 8 batches.
-        # Confirmed layout (from the user's adata inspection):
+    chl59-8b_1p|chl59-2b_1p)
+        # CosMx Lung, human, ~946 genes. Confirmed layout:
         #   - var_names = HGNC SYMBOLS  (e.g. AATK, ABL1, ...)
         #   - var has a pre-computed `ensembl_id` column (ENSG...)
         #     so Geneformer/Nicheformer can SKIP the mygene lookup
         #     and read Ensembl IDs straight from var
-        # Train/test split: Lung13 + Lung5_Rep3 are held out — their
-        # h5ad files are SKIPPED by _load_concat (via SQUINT_EXCLUDE_BATCHES
-        # below) so neither training nor metrics see them.
+        # 8b: 8 batches, Lung13 + Lung5_Rep3 held out (SKIPPED by
+        # _load_concat via the env var below). 2b: 2-sample subset,
+        # trained/evaluated on ALL sections (no per-section holdout —
+        # matches its SQUINT reference, which trains on all sections).
         SPECIES="human"
         NICHEFORMER_TECHNOLOGY="cosmx"
-        # Held-out batches, propagated to _load_concat via env var.
-        # Multiple tokens are comma-separated. Matched as substring
-        # against the filename (e.g. `Lung13+SMI+Flat+data.tar.h5ad`).
-        HOLDOUT_BATCHES="Lung13,Lung5_Rep3"
+        # Held-out batches, propagated to _load_concat via env var
+        # (comma-separated; matched as substring against the filename).
+        if [[ "$DATASET_TAG" == "chl59-2b_1p" ]]; then
+            HOLDOUT_BATCHES=""               # 2-sample subset: use both sections
+        else
+            HOLDOUT_BATCHES="Lung13,Lung5_Rep3"
+        fi
         # scGPT / scGPT-spatial: vocab is HGNC; data is HGNC → no flags.
         SCGPT_GENE_FLAGS=""
         SCGPT_SPATIAL_GENE_FLAGS=""
