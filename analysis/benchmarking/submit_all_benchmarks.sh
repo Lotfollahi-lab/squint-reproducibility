@@ -33,6 +33,9 @@
 #   LSF_QUEUE         — bsub -q            (default: training-parallel)
 #   LSF_WALL          — bsub -W            (default: 24:00)
 #   LSF_GPU           — bsub -gpu spec     (default: mode=exclusive_process:num=1:block=yes)
+#   LSF_EXTRA         — extra raw bsub flags appended verbatim, e.g.
+#                       "-U lotfollahi-training-parallel" (advance reservation)
+#                       or "-m <hostgroup>". Word-split, so multiple flags work.
 #   ONLY              — comma-separated subset of method keys to submit
 #                       (e.g. ONLY="scvi,pca-leiden" submits just those two)
 #   EXCLUDE           — comma-separated keys to skip
@@ -585,6 +588,13 @@ for entry in "${METHODS[@]}"; do
     )
     # shellcheck disable=SC2206
     BSUB_CMD+=( $RES )
+
+    # Extra raw bsub flags, word-split so multiple flags work. Use for an
+    # advance reservation (e.g. LSF_EXTRA="-U lotfollahi-training-parallel" to
+    # reach the lotfollahi A100s inside training-parallel) or host selection
+    # (-m <hostgroup>). Combine with GPU_MODEL=<a100-token> to also pin the card.
+    # shellcheck disable=SC2206
+    [[ -n "${LSF_EXTRA:-}" ]] && BSUB_CMD+=( ${LSF_EXTRA} )
 
     # Env vars to propagate into the LSF job. `--env KEY=VAL` slots are
     # parsed by `_run_one_benchmark.sh` before the `--` separator and
