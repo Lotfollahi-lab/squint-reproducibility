@@ -625,6 +625,13 @@ def main(argv: Optional[List[str]] = None) -> None:
                         "Default 'niche' (mmb/chl59). Use 'niche_type' for xhs1000, "
                         "'spatial_cluster' for spatch, etc. — must match what the "
                         "SQUINT run + baselines wrote into per_seed_niche_identification.csv.")
+    p.add_argument("--extra-variant", nargs=2, action="append",
+                   metavar=("VARIANT", "LABEL"), default=None,
+                   help="Add an EXTRA method bar. VARIANT = a __multiseed dir name "
+                        "under <artifacts>/<dataset>/ (no timestamp); LABEL = its "
+                        "display name. Repeatable — use to show additional SQUINT "
+                        "configs (e.g. a custom-codebook variant) alongside the "
+                        "default SQUINT bar.")
     args = p.parse_args(argv)
 
     if args.out_dir is None:
@@ -639,6 +646,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     # determined by mean Niche NMI in `make_figure`.
     methods: Dict[str, str] = dict(DEFAULT_BASELINES)
     methods[args.squint_variant] = SQUINT_LABEL
+    # Extra method bars (e.g. additional SQUINT codebook configs). Each gets a
+    # distinct SQUINT-family shade so it reads as "ours" but separable.
+    _extra_shades = ["#FF7AB6", "#B5179E", "#7209B7", "#F72585"]
+    for i, (variant, label) in enumerate(args.extra_variant or []):
+        methods[variant] = label
+        METHOD_COLOURS.setdefault(label, _extra_shades[i % len(_extra_shades)])
 
     print(f"Artifacts root: {args.artifacts_root}")
     print(f"Dataset tag:    {args.dataset_tag}")
