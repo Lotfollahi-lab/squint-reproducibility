@@ -4,20 +4,24 @@ Spatial-IMPUTATION benchmark figure — a separate task from the reconstruction
 benchmark (`plot_pearson_benchmark.py`), so it gets its own figure.
 
 Task: predict a held-out region's per-cell expression from spatial context, with
-the held-out cells' expression NEVER seen (not in training, not at inference).
-Distinct from reconstruction, where each method encodes the cell's own measured
-expression. Hence a dedicated plot rather than mixing the bars.
+the held-out cells' expression NEVER seen. Distinct from reconstruction (where
+each method encodes the cell's own measured expression), hence a dedicated plot.
 
-Bars (cell-level only; both imputation methods are cell-branch):
-  - SQUINT (recon)    the SAME dec-w32 model's reconstruction on the held-out
-                      cells (expression SEEN) — the within-task ceiling/reference.
+Bars (cell-level only; both methods are cell-branch):
   - SQUINT (imputed)  codes predicted from spatial context (expression unseen).
-  - GeST (imputed)    reimplemented GeST baseline (Hao et al. MLCB 2025), same task.
+  - GeST (imputed)    reimplemented GeST baseline (Hao et al. MLCB 2025).
+  (- SQUINT (recon) is shown in the reconstruction figure, not here.)
 
-Pearson is computed by the SAME util as the reconstruction benchmark, read from
-each variant's metrics CSV, on the TEST split (the held-out region). Reuses
-`plot_pearson_benchmark`'s loader / panel renderer / palette so the numbers and
-styling stay identical.
+Each method's metrics are located flexibly via `--*-path`, which accepts:
+  * a direct per_seed_pearson_reconstruction.csv / pearson_reconstruction_metrics.csv,
+  * a run dir (searched, incl. a `metrics/` subdir and `<TS>/metrics/`),
+  * or a variant name under <artifacts_root>/<dataset_tag>/.
+This handles the SQUINT-imputed CSV living under the stage-1 run's
+`.../<TS>/stage2/<TS2>/metrics/` rather than a top-level variant dir.
+
+Pearson is computed by the SAME util as the reconstruction benchmark (read from
+the CSV), on the TEST split (held-out region). Reuses plot_pearson_benchmark's
+panel renderer / style.
 
 Outputs (to --out-dir, default <artifacts>/benchmarking/figures/):
   <out_prefix>_<split>.{svg,png}     one figure, 1 x len(METRIC_VARIANTS) panels
@@ -39,27 +43,54 @@ if str(_THIS) not in sys.path:
     sys.path.insert(0, str(_THIS))
 from plot_pearson_benchmark import (  # noqa: E402  (reuse the tested machinery)
     DEFAULT_ARTIFACTS_ROOT, DEFAULT_DATASET_TAG, METRIC_VARIANTS,
-    load_method_pearson, _plot_panel, _apply_nature_style,
+    _plot_panel, _apply_nature_style,
 )
 
-# Same dec-w32 FiLM-scale region-holdout run that SQUINT (imputed) was decoded
-# from, so recon vs imputed is a clean SAME-MODEL comparison (not the wide-decoder
-# headline reference used in the reconstruction figure).
-DEFAULT_SQUINT_RECON = (
-    "dualvq+rvq-both+decoder-cov+no-batch-int+enc-deeper+dec-w32"
-    "+knn16+sampler16+cell-w1+bs512+lr7e-4+within-sec+decoupled-enc"
-    "+diversity-w10+filmscale+crossmnn-wt10-k1+region-holdout+mmb0-1b_smb1-1b_1p"
-)
-DEFAULT_SQUINT_IMPUTED = "squint-imputed+region-holdout"
+DEFAULT_SQUINT_IMPUTED = "squint-imputed+region-holdout"   # variant OR a path
 DEFAULT_GEST_IMPUTED = "gest-imputed+region-holdout"
 
-# magenta family for SQUINT (recon solid / imputed lighter+hatched), teal for GeST.
-COLOURS = {
-    "SQUINT (recon)":   "#FF006E",
-    "SQUINT (imputed)": "#FF7AB6",
-    "GeST (imputed)":   "#2A9D8F",
-}
-HATCH = {"SQUINT (imputed)", "GeST (imputed)"}     # imputation bars hatched
+COLOURS = {"SQUINT (imputed)": "#FF7AB6", "GeST (imputed)": "#2A9D8F",
+           "SQUINT (recon)": "#FF006E"}
+_CSV_NAMES = ("per_seed_pearson_reconstruction.csv", "pearson_reconstruction_metrics.csv")
+
+
+def _resolve_metrics_csv(locator: str, artifacts_root: Path, dataset_tag: str):
+    """Find a Pearson CSV from a file path, a run/metrics dir, or a variant name."""
+    p = Path(locator)
+    if p.is_file():
+        return p
+    search: List[Path] = []
+    if p.is_dir():
+        search += [p, p / "metrics"]
+        # newest <TS>/metrics/ and <TS>/ underneath (handles stage2/<TS>/metrics)
+        search += sorted([d / "metrics" for d in p.glob("*") if (d / "metrics").is_dir()],
+                         reverse=True)
+        search += sorted([d for d in p.glob("*") if d.is_dir()], reverse=True)
+    else:
+        vdir = artifacts_root / dataset_tag / locator      # variant under artifacts
+        if vdir.is_dir():
+            search += sorted([d / "metrics" for d in vdir.glob("*") if (d / "metrics").is_dir()],
+                             reverse=True)
+            search += [vdir / "metrics", vdir]
+    for d in search:
+        for n in _CSV_NAMES:
+            if (d / n).is_file():
+                return d / n
+    return None
+
+
+def _load_csv_filtered(csv_path: Path, axis: str, transform: str, gene_subset: str):
+    """branch='cell' slice as (seed, split, value), like load_method_pearson."""
+    df = pd.read_csv(csv_path)
+    if "seed" not in df.columns:
+        df = df.copy(); df["seed"] = 0
+    df = df[df["branch"] == "cell"]
+    for col, val in (("axis", axis), ("transform", transform), ("gene_subset", gene_subset)):
+        if col in df.columns:
+            df = df[df[col] == val]
+    if df.empty:
+        return pd.DataFrame()
+    return df[["seed", "split", "pearson_mean"]].rename(columns={"pearson_mean": "value"})
 
 
 def main(argv: Optional[List[str]] = None) -> None:
@@ -71,50 +102,51 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("--out-prefix", type=str, default="imputation_benchmark")
     p.add_argument("--split", type=str, default="test",
                    help="Pearson split to plot (held-out region = 'test').")
-    p.add_argument("--squint-recon-variant", type=str, default=DEFAULT_SQUINT_RECON)
-    p.add_argument("--squint-imputed-variant", type=str, default=DEFAULT_SQUINT_IMPUTED)
-    p.add_argument("--gest-imputed-variant", type=str, default=DEFAULT_GEST_IMPUTED)
-    p.add_argument("--no-recon", action="store_true",
-                   help="Drop the SQUINT (recon) ceiling bar.")
+    p.add_argument("--squint-imputed-path", type=str, default=DEFAULT_SQUINT_IMPUTED,
+                   help="CSV / run dir / variant for SQUINT (imputed).")
+    p.add_argument("--gest-imputed-path", type=str, default=DEFAULT_GEST_IMPUTED,
+                   help="CSV / run dir / variant for GeST (imputed).")
+    p.add_argument("--squint-recon-path", type=str, default=None,
+                   help="Optional: add a SQUINT (recon) ceiling bar from this "
+                        "CSV/dir/variant (off by default — it's in the recon figure).")
     args = p.parse_args(argv)
 
     if args.out_dir is None:
         args.out_dir = args.artifacts_root / "benchmarking" / "figures"
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    # method label -> variant dir (order = top-to-bottom intent; panels re-sort
-    # by value like the reconstruction figure).
-    methods: Dict[str, str] = {}
-    if not args.no_recon:
-        methods["SQUINT (recon)"] = args.squint_recon_variant
-    methods["SQUINT (imputed)"] = args.squint_imputed_variant
-    methods["GeST (imputed)"] = args.gest_imputed_variant
+    methods: Dict[str, str] = {
+        "SQUINT (imputed)": args.squint_imputed_path,
+        "GeST (imputed)": args.gest_imputed_path,
+    }
+    if args.squint_recon_path:
+        methods = {"SQUINT (recon)": args.squint_recon_path, **methods}
 
     _apply_nature_style()
-    # _plot_panel reads HATCH_METHODS from plot_pearson_benchmark's module; make
-    # sure our labels hatch there too (idempotent).
     import plot_pearson_benchmark as ppb
-    ppb.HATCH_METHODS |= HATCH
+    ppb.HATCH_METHODS |= {"SQUINT (imputed)", "GeST (imputed)"}   # recon stays solid
 
-    print(f"Artifacts root: {args.artifacts_root}")
-    print(f"Dataset tag:    {args.dataset_tag}")
-    print(f"Split:          {args.split}")
-    for label, variant in methods.items():
-        print(f"  {label:<18s} <- {variant}")
+    # resolve each method's CSV once
+    resolved: Dict[str, Optional[Path]] = {}
+    print(f"Artifacts root: {args.artifacts_root}\nDataset: {args.dataset_tag}\nSplit: {args.split}")
+    for label, locator in methods.items():
+        csv = _resolve_metrics_csv(locator, args.artifacts_root, args.dataset_tag)
+        resolved[label] = csv
+        print(f"  {label:<18s} <- {csv if csv else f'MISSING (from {locator!r})'}")
 
-    # collect values: per metric-variant -> {label: per-seed array} on the split
     long_rows: List[dict] = []
     per_variant_values: Dict[str, Dict[str, np.ndarray]] = {}
     for suffix, axis, transform, gene_subset, _label in METRIC_VARIANTS:
         vals: Dict[str, np.ndarray] = {}
-        for label, variant in methods.items():
-            df = load_method_pearson(
-                args.artifacts_root / args.dataset_tag / variant,
-                branch="cell", axis=axis, transform=transform, gene_subset=gene_subset)
+        for label, csv in resolved.items():
+            if csv is None:
+                continue
+            df = _load_csv_filtered(csv, axis, transform, gene_subset)
             if df.empty:
-                print(f"  [{_label:<22s}] [{label:<16s}] MISSING")
                 continue
             v = df[df["split"] == args.split]["value"].astype(float).to_numpy()
+            if v.size == 0:
+                continue
             vals[label] = v
             for vv, sd in zip(v, df[df["split"] == args.split]["seed"].astype(int)):
                 long_rows.append({
@@ -124,14 +156,12 @@ def main(argv: Optional[List[str]] = None) -> None:
                 })
         per_variant_values[suffix] = vals
 
-    # --- render: 1 row x N metric-variant panels --------------------------
-    variants = METRIC_VARIANTS
-    n = len(variants)
+    n = len(METRIC_VARIANTS)
     fig, axes = plt.subplots(1, n, figsize=(1.9 * n + 0.6,
                                             max(1.35, 0.30 * len(methods) + 0.6)))
     if n == 1:
         axes = [axes]
-    for ax, (suffix, _ax, _tr, _gs, mlabel) in zip(axes, variants):
+    for ax, (suffix, _ax, _tr, _gs, mlabel) in zip(axes, METRIC_VARIANTS):
         vals = per_variant_values.get(suffix, {})
         order = sorted(vals.keys(), key=lambda m: -float(np.nanmean(vals.get(m, [np.nan]))))
         _plot_panel(ax=ax, method_order=order, per_method_values=vals,
