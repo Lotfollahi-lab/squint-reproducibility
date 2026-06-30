@@ -46,7 +46,14 @@ from plot_pearson_benchmark import (  # noqa: E402  (reuse the tested machinery)
     _plot_panel, _apply_nature_style,
 )
 
-DEFAULT_SQUINT_IMPUTED = "squint-imputed+region-holdout"   # variant OR a path
+# SQUINT (imputed) = the GeST-architecture transformer trained on SQUINT's
+# discrete codes (best of the stage-2 imputation variants on held-out regions),
+# decoded back to expression through the frozen SQUINT decoder. Using the SAME
+# (GeST) architecture for both bars isolates the REPRESENTATION being imputed —
+# SQUINT codes vs GeST meta-cell tokens — rather than confounding it with the
+# stage-2 architecture. Override with --squint-imputed-path (variant / dir / CSV);
+# the native MaskGIT stage-2 lives at "squint-imputed+region-holdout".
+DEFAULT_SQUINT_IMPUTED = "squint-gestarch+region-holdout"   # variant OR a path
 DEFAULT_GEST_IMPUTED = "gest-imputed+region-holdout"
 
 COLOURS = {"SQUINT (imputed)": "#FF7AB6", "GeST (imputed)": "#2A9D8F",
