@@ -109,26 +109,49 @@ def _load_csv_filtered(csv_path: Path, axis: str, transform: str,
 # Panel specs per --metric. Each entry: (suffix, axis, transform, gene_subset,
 # value_col, title, higher_is_better). "panel" is the reviewer figure: one
 # representative bar-group per complementary metric.
-_PANEL_SPECS = {
-    "panel": [
-        ("pearson",      "gene_wise", "log1p",  "all",     "pearson_mean",  "Pearson (log1p) ↑",     True),
-        ("spearman",     "gene_wise", "log1p",  "all",     "spearman_mean", "Spearman ↑",            True),
-        ("rmse_log1p",   "gene_wise", "log1p",  "all",     "rmse_mean",     "RMSE (log1p) ↓",        False),
-        ("rmse_counts",  "gene_wise", "raw",    "all",     "rmse_mean",     "RMSE (counts) ↓",       False),
-        ("zero_nonzero", "entrywise", "counts", "all",     "auroc_zero",    "Zero/nonzero AUROC ↑",  True),
-        ("markers",      "gene_wise", "log1p",  "markers", "pearson_mean",  "Marker Pearson ↑",      True),
+# "panel" = the full multi-metric GRID. Rows = metric family; columns = view.
+# Covers BOTH gene-wise and cell-wise for the axis-based metrics, plus the
+# entry-wise zero/nonzero recovery (no gene/cell axis). Each tuple:
+# (suffix, axis, transform, gene_subset, value_col, title, higher_is_better).
+# Suffixes must be unique (they key per_panel_values / the long CSV).
+_GRID_ROWS = [
+    [  # Pearson
+        ("pe_gw_log", "gene_wise", "log1p", "all",     "pearson_mean", "Pearson · gene-wise (log1p)", True),
+        ("pe_cw_log", "cell_wise", "log1p", "all",     "pearson_mean", "Pearson · cell-wise (log1p)", True),
+        ("pe_mk_log", "gene_wise", "log1p", "markers", "pearson_mean", "Pearson · markers (log1p)",   True),
     ],
-    "pearson":  [(s, ax, tr, gs, "pearson_mean",  lbl + " ↑", True)
+    [  # Spearman (rank-based -> transform-invariant)
+        ("sp_gw", "gene_wise", "log1p", "all", "spearman_mean", "Spearman · gene-wise", True),
+        ("sp_cw", "cell_wise", "log1p", "all", "spearman_mean", "Spearman · cell-wise", True),
+    ],
+    [  # RMSE on the log1p (analysis) scale
+        ("rm_gw_log", "gene_wise", "log1p", "all", "rmse_mean", "RMSE · gene-wise (log1p)", False),
+        ("rm_cw_log", "cell_wise", "log1p", "all", "rmse_mean", "RMSE · cell-wise (log1p)", False),
+    ],
+    [  # RMSE on the raw count scale (calibration)
+        ("rm_gw_raw", "gene_wise", "raw", "all", "rmse_mean", "RMSE · gene-wise (counts)", False),
+        ("rm_cw_raw", "cell_wise", "raw", "all", "rmse_mean", "RMSE · cell-wise (counts)", False),
+    ],
+    [  # zero/nonzero recovery (entry-wise; no gene/cell axis)
+        ("zn_all", "entrywise", "counts", "all",     "auroc_zero", "Zero/nonzero AUROC",           True),
+        ("zn_mk",  "entrywise", "counts", "markers", "auroc_zero", "Zero/nonzero AUROC (markers)", True),
+    ],
+]
+
+# Single-metric breakdowns (--metric pearson/spearman/mse/rmse/zero_nonzero):
+# one row of per-(axis,transform,gene_subset) panels. Tuple shape as above.
+_PANEL_SPECS = {
+    "pearson":  [(s, ax, tr, gs, "pearson_mean",  lbl, True)
                  for s, ax, tr, gs, lbl in METRIC_VARIANTS],
-    "spearman": [(s, ax, tr, gs, "spearman_mean", lbl + " ↑", True)
+    "spearman": [(s, ax, tr, gs, "spearman_mean", lbl, True)
                  for s, ax, tr, gs, lbl in METRIC_VARIANTS],
-    "mse":      [(s, ax, tr, gs, "mse_mean",      lbl + " ↓", False)
+    "mse":      [(s, ax, tr, gs, "mse_mean",      lbl, False)
                  for s, ax, tr, gs, lbl in METRIC_VARIANTS],
-    "rmse":     [(s, ax, tr, gs, "rmse_mean",     lbl + " ↓", False)
+    "rmse":     [(s, ax, tr, gs, "rmse_mean",     lbl, False)
                  for s, ax, tr, gs, lbl in METRIC_VARIANTS],
     "zero_nonzero": [
-        ("zero_nonzero_all",     "entrywise", "counts", "all",     "auroc_zero", "Zero/nonzero AUROC (all) ↑",     True),
-        ("zero_nonzero_markers", "entrywise", "counts", "markers", "auroc_zero", "Zero/nonzero AUROC (markers) ↑", True),
+        ("zero_nonzero_all",     "entrywise", "counts", "all",     "auroc_zero", "Zero/nonzero AUROC (all)",     True),
+        ("zero_nonzero_markers", "entrywise", "counts", "markers", "auroc_zero", "Zero/nonzero AUROC (markers)", True),
     ],
 }
 
@@ -142,12 +165,14 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("--out-prefix", type=str, default="imputation_benchmark")
     p.add_argument("--split", type=str, default="test",
                    help="Pearson split to plot (held-out region = 'test').")
-    p.add_argument("--metric", type=str, default="panel", choices=list(_PANEL_SPECS),
-                   help="Which metric figure to render. 'panel' (default) = one "
-                        "bar-group per complementary metric (Pearson / Spearman / "
-                        "RMSE log1p+counts / zero-nonzero AUROC / marker Pearson) — "
-                        "the reviewer panel. Others render the per-variant breakdown "
-                        "for a single metric. Needs CSVs rebuilt with the new columns.")
+    p.add_argument("--metric", type=str, default="panel",
+                   choices=["panel", *_PANEL_SPECS],
+                   help="Which figure to render. 'panel' (default) = the full "
+                        "multi-metric GRID: Pearson / Spearman / RMSE (log1p+counts) "
+                        "each gene-wise AND cell-wise, + marker Pearson + zero-nonzero "
+                        "AUROC. Others render the per-(axis,transform,subset) "
+                        "breakdown for a single metric. Needs CSVs rebuilt with the "
+                        "new columns.")
     p.add_argument("--squint-imputed-path", type=str, default=DEFAULT_SQUINT_IMPUTED,
                    help="CSV / run dir / variant for SQUINT (imputed).")
     p.add_argument("--gest-imputed-path", type=str, default=DEFAULT_GEST_IMPUTED,
@@ -180,7 +205,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         resolved[label] = csv
         print(f"  {label:<18s} <- {csv if csv else f'MISSING (from {locator!r})'}")
 
-    panels = _PANEL_SPECS[args.metric]
+    grid_rows = _GRID_ROWS if args.metric == "panel" else [_PANEL_SPECS[args.metric]]
+    panels = [p for row in grid_rows for p in row]
     long_rows: List[dict] = []
     per_panel_values: Dict[str, Dict[str, np.ndarray]] = {}
     per_panel_meta: Dict[str, Tuple[str, bool]] = {}
@@ -207,22 +233,44 @@ def main(argv: Optional[List[str]] = None) -> None:
         per_panel_values[suffix] = vals
         per_panel_meta[suffix] = (title, hib)
 
-    n = len(panels)
-    fig, axes = plt.subplots(1, n, figsize=(1.9 * n + 0.6,
-                                            max(1.35, 0.30 * len(methods) + 0.6)))
-    if n == 1:
-        axes = [axes]
-    for ax, (suffix, _ax, _tr, _gs, _vc, mlabel, hib) in zip(axes, panels):
-        vals = per_panel_values.get(suffix, {})
-        # rank best-first: descending for higher-is-better, ascending otherwise.
-        sign = -1.0 if hib else 1.0
-        order = sorted(vals.keys(), key=lambda m: sign * float(np.nanmean(vals.get(m, [np.nan]))))
-        _plot_panel(ax=ax, method_order=order, per_method_values=vals,
-                    colour_for=COLOURS, title=mlabel)
+    # ONE fixed method order across the whole grid (so a method sits on the same
+    # row in every panel and y-labels need only appear on column 0). Rank by the
+    # first panel's metric where available, else first-seen order.
+    seen: List[str] = []
+    for row in grid_rows:
+        for (suffix, *_rest) in row:
+            for m in per_panel_values.get(suffix, {}):
+                if m not in seen:
+                    seen.append(m)
+    fv = per_panel_values.get(panels[0][0], {})
+    method_order = sorted(
+        seen, key=lambda m: -float(np.nanmean(fv.get(m, [np.nan]))) if m in fv else 0.0)
+
+    nrows = len(grid_rows)
+    ncols = max(len(r) for r in grid_rows)
+    fig, axes = plt.subplots(
+        nrows, ncols, squeeze=False,
+        figsize=(1.9 * ncols + 1.0,
+                 nrows * max(1.05, 0.28 * max(1, len(method_order)) + 0.45)))
+    for r, row in enumerate(grid_rows):
+        for c in range(ncols):
+            ax = axes[r][c]
+            if c >= len(row):
+                ax.set_visible(False)
+                continue
+            suffix, _axn, _tr, _gs, _vc, mlabel, _hib = row[c]
+            vals = per_panel_values.get(suffix, {})
+            _plot_panel(ax=ax, method_order=method_order, per_method_values=vals,
+                        colour_for=COLOURS, title=mlabel)
+            # _plot_panel hard-appends " (↑)" (wrong for the ↓ RMSE panels, and
+            # redundant) — override with the clean, arrow-free title.
+            ax.set_title(mlabel, fontsize=7, fontweight="medium", pad=4)
+            if c > 0:                      # method names only on the left column
+                ax.tick_params(axis="y", labelleft=False)
     fig.suptitle(f"Spatial imputation — held-out region (expression unseen)  "
-                 f"[{args.split}]", fontsize=7, fontweight="medium", y=1.03)
+                 f"[{args.split}]", fontsize=8, fontweight="medium", y=1.005)
     plt.tight_layout()
-    plt.subplots_adjust(wspace=0.55)
+    plt.subplots_adjust(wspace=0.18, hspace=0.55)
 
     base = args.out_dir / f"{args.out_prefix}_{args.metric}_{args.split}"
     for ext in ("svg", "png"):
