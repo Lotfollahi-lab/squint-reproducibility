@@ -156,6 +156,95 @@ _PANEL_SPECS = {
 }
 
 
+def render_metric_grid(resolved, grid_rows, split, fig_base, long_csv_path,
+                       suptitle, colours):
+    """Render a metric GRID (rows × cols) comparing methods, and write the long
+    CSV. Reusable across tasks (imputation / reconstruction).
+
+    resolved      {label: per_seed CSV Path or None}
+    grid_rows     list of rows; each row a list of 7-tuples
+                  (suffix, axis, transform, gene_subset, value_col, title, hib)
+    split         which `split` column value to plot (e.g. 'test' or 'all')
+    fig_base      output Path WITHOUT extension (.svg/.png appended)
+    long_csv_path output Path for the tidy long CSV
+    suptitle      figure suptitle
+    colours       {method_label: hex}
+    One FIXED method order across the grid (y-labels on column 0 only); each
+    panel title carries one direction arrow (↑ higher-better / ↓ lower-better).
+    """
+    panels = [p for row in grid_rows for p in row]
+    long_rows: List[dict] = []
+    per_panel_values: Dict[str, Dict[str, np.ndarray]] = {}
+    for suffix, axis, transform, gene_subset, value_col, _title, _hib in panels:
+        vals: Dict[str, np.ndarray] = {}
+        for label, csv in resolved.items():
+            if csv is None:
+                continue
+            df = _load_csv_filtered(csv, axis, transform, gene_subset, value_col)
+            if df.empty:
+                continue
+            sub = df[df["split"] == split]
+            v = sub["value"].astype(float).to_numpy()
+            if v.size == 0:
+                continue
+            vals[label] = v
+            for vv, sd in zip(v, sub["seed"].astype(int)):
+                long_rows.append({
+                    "metric": value_col, "panel": suffix, "axis": axis,
+                    "transform": transform, "gene_subset": gene_subset,
+                    "branch": "cell", "method": label, "split": split,
+                    "seed": int(sd), "value": float(vv),
+                })
+        per_panel_values[suffix] = vals
+
+    seen: List[str] = []
+    for row in grid_rows:
+        for (suffix, *_rest) in row:
+            for m in per_panel_values.get(suffix, {}):
+                if m not in seen:
+                    seen.append(m)
+    fv = per_panel_values.get(panels[0][0], {})
+    method_order = sorted(
+        seen, key=lambda m: -float(np.nanmean(fv.get(m, [np.nan]))) if m in fv else 0.0)
+
+    nrows = len(grid_rows)
+    ncols = max(len(r) for r in grid_rows)
+    fig, axes = plt.subplots(
+        nrows, ncols, squeeze=False,
+        figsize=(1.9 * ncols + 1.0,
+                 nrows * max(1.05, 0.28 * max(1, len(method_order)) + 0.45)))
+    for r, row in enumerate(grid_rows):
+        for c in range(ncols):
+            ax = axes[r][c]
+            if c >= len(row):
+                ax.set_visible(False)
+                continue
+            suffix, _axn, _tr, _gs, _vc, mlabel, hib = row[c]
+            vals = per_panel_values.get(suffix, {})
+            _plot_panel(ax=ax, method_order=method_order, per_method_values=vals,
+                        colour_for=colours, title=mlabel)
+            # _plot_panel hard-appends " (↑)"; override with the CORRECT single
+            # direction arrow (↑ higher-better / ↓ lower-better).
+            ax.set_title(f"{mlabel} ({'↑' if hib else '↓'})",
+                         fontsize=7, fontweight="medium", pad=4)
+            if c > 0:                      # method names only on the left column
+                ax.tick_params(axis="y", labelleft=False)
+    fig.suptitle(suptitle, fontsize=8, fontweight="medium", y=1.005)
+    plt.tight_layout()
+    plt.subplots_adjust(wspace=0.18, hspace=0.55)
+
+    fig_base.parent.mkdir(parents=True, exist_ok=True)
+    for ext in ("svg", "png"):
+        out = fig_base.with_suffix(f".{ext}")
+        fig.savefig(out, bbox_inches="tight", pad_inches=0.05)
+        print(f"  -> {out}")
+    plt.close(fig)
+    if long_rows:
+        pd.DataFrame(long_rows).to_csv(long_csv_path, index=False)
+        print(f"  -> {long_csv_path}")
+    return pd.DataFrame(long_rows)
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -206,84 +295,13 @@ def main(argv: Optional[List[str]] = None) -> None:
         print(f"  {label:<18s} <- {csv if csv else f'MISSING (from {locator!r})'}")
 
     grid_rows = _GRID_ROWS if args.metric == "panel" else [_PANEL_SPECS[args.metric]]
-    panels = [p for row in grid_rows for p in row]
-    long_rows: List[dict] = []
-    per_panel_values: Dict[str, Dict[str, np.ndarray]] = {}
-    per_panel_meta: Dict[str, Tuple[str, bool]] = {}
-    for suffix, axis, transform, gene_subset, value_col, title, hib in panels:
-        vals: Dict[str, np.ndarray] = {}
-        for label, csv in resolved.items():
-            if csv is None:
-                continue
-            df = _load_csv_filtered(csv, axis, transform, gene_subset, value_col)
-            if df.empty:
-                continue
-            sub = df[df["split"] == args.split]
-            v = sub["value"].astype(float).to_numpy()
-            if v.size == 0:
-                continue
-            vals[label] = v
-            for vv, sd in zip(v, sub["seed"].astype(int)):
-                long_rows.append({
-                    "metric": value_col, "panel": suffix, "axis": axis,
-                    "transform": transform, "gene_subset": gene_subset,
-                    "branch": "cell", "method": label, "split": args.split,
-                    "seed": int(sd), "value": float(vv),
-                })
-        per_panel_values[suffix] = vals
-        per_panel_meta[suffix] = (title, hib)
-
-    # ONE fixed method order across the whole grid (so a method sits on the same
-    # row in every panel and y-labels need only appear on column 0). Rank by the
-    # first panel's metric where available, else first-seen order.
-    seen: List[str] = []
-    for row in grid_rows:
-        for (suffix, *_rest) in row:
-            for m in per_panel_values.get(suffix, {}):
-                if m not in seen:
-                    seen.append(m)
-    fv = per_panel_values.get(panels[0][0], {})
-    method_order = sorted(
-        seen, key=lambda m: -float(np.nanmean(fv.get(m, [np.nan]))) if m in fv else 0.0)
-
-    nrows = len(grid_rows)
-    ncols = max(len(r) for r in grid_rows)
-    fig, axes = plt.subplots(
-        nrows, ncols, squeeze=False,
-        figsize=(1.9 * ncols + 1.0,
-                 nrows * max(1.05, 0.28 * max(1, len(method_order)) + 0.45)))
-    for r, row in enumerate(grid_rows):
-        for c in range(ncols):
-            ax = axes[r][c]
-            if c >= len(row):
-                ax.set_visible(False)
-                continue
-            suffix, _axn, _tr, _gs, _vc, mlabel, hib = row[c]
-            vals = per_panel_values.get(suffix, {})
-            _plot_panel(ax=ax, method_order=method_order, per_method_values=vals,
-                        colour_for=COLOURS, title=mlabel)
-            # _plot_panel hard-appends " (↑)" (always up) — override with the
-            # CORRECT single direction arrow (↑ higher-better / ↓ lower-better).
-            ax.set_title(f"{mlabel} ({'↑' if hib else '↓'})",
-                         fontsize=7, fontweight="medium", pad=4)
-            if c > 0:                      # method names only on the left column
-                ax.tick_params(axis="y", labelleft=False)
-    fig.suptitle(f"Spatial imputation — held-out region (expression unseen)  "
-                 f"[{args.split}]", fontsize=8, fontweight="medium", y=1.005)
-    plt.tight_layout()
-    plt.subplots_adjust(wspace=0.18, hspace=0.55)
-
-    base = args.out_dir / f"{args.out_prefix}_{args.metric}_{args.split}"
-    for ext in ("svg", "png"):
-        out = base.with_suffix(f".{ext}")
-        fig.savefig(out, bbox_inches="tight", pad_inches=0.05)
-        print(f"  -> {out}")
-    plt.close(fig)
-
-    if long_rows:
-        csv_out = args.out_dir / f"{args.out_prefix}_{args.metric}.csv"
-        pd.DataFrame(long_rows).to_csv(csv_out, index=False)
-        print(f"  -> {csv_out}")
+    suptitle = (f"Spatial imputation — held-out region (expression unseen)  "
+                f"[{args.split}]")
+    render_metric_grid(
+        resolved, grid_rows, args.split,
+        fig_base=args.out_dir / f"{args.out_prefix}_{args.metric}_{args.split}",
+        long_csv_path=args.out_dir / f"{args.out_prefix}_{args.metric}.csv",
+        suptitle=suptitle, colours=COLOURS)
 
 
 if __name__ == "__main__":
