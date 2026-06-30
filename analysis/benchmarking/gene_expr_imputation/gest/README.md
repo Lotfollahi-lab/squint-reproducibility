@@ -39,6 +39,22 @@ Deliberate, documented simplifications:
 - Cell branch only (the figure's cell panel). Niche-level imputation needs
   neighborhood aggregation of the decoder output — a follow-up.
 
+Stabilizations vs the literal paper (added after an adversarial code re-read;
+each documented in-code):
+- `log1p` the neighbor meta-profiles before the gene-embedding Linear (raw
+  counts have huge dynamic range and destabilise it). Token identity unchanged.
+- `1/sqrt(T)` temperature on the meta-cell logits `z = yhat·C_expr^T` (C_expr is
+  raw counts, so unscaled z saturates the softmax at init). Decode units intact.
+- Cap the diagonal-serialization input to `2*seq_n` cells per crop. The
+  serializer is an O(n^2) python loop and a dense square window can hold
+  thousands of cells (would hang training); we only keep the first `seq_n`
+  anyway. Same connected-patch semantics, bounded cost.
+
+Fairness note: GeST predicts an (un-depth-scaled) meta-cell profile, while
+scVI / SQUINT-imputed predict depth-scaled NB means. Pearson is largely
+invariant to a per-cell scale factor (entirely so for cell-wise), so this is
+fine for the Pearson figure — it would matter for RMSE (the paper's metric).
+
 ## Validation
 
 - **numpy core** (`tests/test_numpy_core.py`): tokenizer blob recovery (meta

@@ -98,6 +98,7 @@ def train_gest(
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     model.train()
 
+    cap = 2 * seq_n                                        # serialize-input cap
     def _one_crop():
         for _ in range(30):
             s = int(sec_pool[rng.integers(len(sec_pool))])
@@ -106,6 +107,15 @@ def train_gest(
             if local is None or local.size < seq_n:
                 continue
             g = pool[local]                                # global idx of crop
+            # A dense square can hold hundreds-thousands of cells; the diagonal
+            # serializer is an O(n^2) python loop, so cap its input to the `cap`
+            # cells nearest a random seed in the crop before ordering. We only
+            # keep the first seq_n of the order anyway -> bounded cost, same
+            # connected-patch semantics.
+            if g.size > cap:
+                seed = int(rng.integers(g.size))
+                d2 = ((ncoords[g] - ncoords[g][seed]) ** 2).sum(1)
+                g = g[np.argpartition(d2, cap - 1)[:cap]]
             order = diagonal_serialize(ncoords[g], rng)[:seq_n]
             return g[order]                                # (seq_n,) global, ordered
         return None

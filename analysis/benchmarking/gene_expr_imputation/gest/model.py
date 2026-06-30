@@ -133,7 +133,12 @@ class GeST(nn.Module):
     ) -> torch.Tensor:
         B, Lc, _ = content_gene.shape
         Lt = target_pos.shape[1]
-        content = (self.gene_embed(content_gene) + self._spe(content_pos)
+        # log1p the raw-count neighbor profiles before the embedding Linear:
+        # raw counts have a huge dynamic range and destabilise the embedding.
+        # The token identity is still the meta-cell profile C_expr[i]; only its
+        # numeric scale into the network changes (decode is unaffected).
+        content = (self.gene_embed(torch.log1p(content_gene.clamp_min(0)))
+                   + self._spe(content_pos)
                    + self.type_embed.weight[0][None, None, :])
         target = self._spe(target_pos) + self.type_embed.weight[1][None, None, :]
         x = torch.cat([content, target], dim=1)            # (B, S, D)
@@ -150,8 +155,15 @@ class GeST(nn.Module):
 
     # ---- loss + decode -------------------------------------------------------
     def meta_probs(self, yhat: torch.Tensor) -> torch.Tensor:
-        """p(c) = softmax(yhat @ C_expr^T) over the K meta cells. (B, Lt, K)."""
-        z = yhat @ self.C_expr.t()
+        """p(c) = softmax(yhat @ C_expr^T) over the K meta cells (Eq. 8). (B, Lt, K).
+
+        z is divided by sqrt(T) as a fixed temperature: C_expr holds RAW mean
+        counts, so the un-scaled dot product over T genes has std ~tens at init
+        -> near-one-hot softmax + vanishing gradients. The 1/sqrt(T) scale
+        (attention-style) keeps logits O(1) without changing the ranking. Decode
+        uses the RAW C_expr unchanged, so predicted-expression units are intact.
+        """
+        z = (yhat @ self.C_expr.t()) / (self.n_genes ** 0.5)
         return z.softmax(dim=-1)
 
     def hierarchical_loss(self, yhat: torch.Tensor,
