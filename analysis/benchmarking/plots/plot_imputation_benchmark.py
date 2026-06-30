@@ -258,13 +258,14 @@ def main(argv: Optional[List[str]] = None) -> None:
             if c >= len(row):
                 ax.set_visible(False)
                 continue
-            suffix, _axn, _tr, _gs, _vc, mlabel, _hib = row[c]
+            suffix, _axn, _tr, _gs, _vc, mlabel, hib = row[c]
             vals = per_panel_values.get(suffix, {})
             _plot_panel(ax=ax, method_order=method_order, per_method_values=vals,
                         colour_for=COLOURS, title=mlabel)
-            # _plot_panel hard-appends " (↑)" (wrong for the ↓ RMSE panels, and
-            # redundant) — override with the clean, arrow-free title.
-            ax.set_title(mlabel, fontsize=7, fontweight="medium", pad=4)
+            # _plot_panel hard-appends " (↑)" (always up) — override with the
+            # CORRECT single direction arrow (↑ higher-better / ↓ lower-better).
+            ax.set_title(f"{mlabel} ({'↑' if hib else '↓'})",
+                         fontsize=7, fontweight="medium", pad=4)
             if c > 0:                      # method names only on the left column
                 ax.tick_params(axis="y", labelleft=False)
     fig.suptitle(f"Spatial imputation — held-out region (expression unseen)  "
