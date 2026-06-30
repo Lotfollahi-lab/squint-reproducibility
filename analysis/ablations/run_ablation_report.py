@@ -160,6 +160,87 @@ def _metric_array(df, full_variant, metric, cell_label_key, niche_label_key):
 
 
 # ---------------------------------------------------------------------------
+# Discretization (discrete-codes vs clustered-embeddings) pseudo-axis. The
+# producer (analysis/discretization_ablation/compare_discrete_vs_continuous.py)
+# writes BOTH a per-seed file (richer: lets us recompute sem/CI/significance in
+# the SAME unified schema as the real axes) and a pre-aggregated summary. Prefer
+# the per-seed file; fall back to the summary.
+# ---------------------------------------------------------------------------
+DISC_DEFAULT_CONDITION = "discrete codes"   # COND_CODES, the significance baseline
+
+
+def _resolve_discretization(out_dir: Path, explicit):
+    """Locate a discretization CSV. Prefers `discretization_per_seed.csv` over
+    `discretization_summary.csv`, and checks the ablations dir itself (the new
+    location) before the original `*/comparison_vs_discrete/` dirs."""
+    if explicit:
+        p = Path(explicit)
+        return p if p.is_file() else None
+    names = ("discretization_per_seed.csv", "discretization_summary.csv")
+    for nm in names:                                   # 1. directly in out_dir
+        if (out_dir / nm).is_file():
+            return out_dir / nm
+    cands = []                                         # 2. comparison_vs_discrete dirs
+    for root in (out_dir.parent, out_dir.parent.parent):
+        if root.is_dir():
+            for nm in names:
+                cands += list(root.glob(f"*/*/comparison_vs_discrete/{nm}"))
+                cands += list(root.glob(f"*/comparison_vs_discrete/{nm}"))
+    cands = list(dict.fromkeys(cands))
+    per_seed = [c for c in cands if c.name == "discretization_per_seed.csv"]
+    pool = per_seed or cands
+    return max(pool, key=lambda p: p.stat().st_mtime) if pool else None
+
+
+def _load_discretization(path: Path) -> pd.DataFrame:
+    """Load a discretization CSV into the unified combined-metrics schema
+    (axis/variant/label/is_default/metric/value + n/mean/std/sem/ci95/
+    p_vs_default/stars). Per-seed input -> full stats + significance vs the
+    "Discrete codes" default; summary input -> value/std/n only (no per-seed
+    array to test). `metric` is normalised to "Cell NMI" / "Niche iLISI" / ..."""
+    d = pd.read_csv(path)
+    cols = set(d.columns)
+    is_per_seed = {"condition", "branch", "metric", "value"}.issubset(cols) \
+        and "seed_idx" in cols and "mean" not in cols
+    if not is_per_seed:
+        # pre-aggregated summary: defer to the (already-validated) aggregate loader.
+        return agg._load_discretization(path)
+
+    d = d.copy()
+    d["branch"] = d["branch"].astype(str).str.strip().str.capitalize()  # cell->Cell
+    d["metric_full"] = d["branch"] + " " + d["metric"].astype(str).str.strip()
+    conds = list(dict.fromkeys(d["condition"].astype(str)))
+    default_cond = next(
+        (c for c in conds if c.strip().lower() == DISC_DEFAULT_CONDITION), conds[0])
+    metric_fulls = list(dict.fromkeys(d["metric_full"]))
+
+    def _arr(cond, mf):
+        sub = d[(d["condition"].astype(str) == cond) & (d["metric_full"] == mf)]
+        return pd.to_numeric(sub["value"], errors="coerce").dropna().to_numpy()
+
+    rows = []
+    for cond in conds:
+        is_def = (cond == default_cond)
+        for mf in metric_fulls:
+            a = _arr(cond, mf)
+            if a.size == 0:
+                continue
+            n = int(a.size)
+            std = float(a.std(ddof=1)) if n > 1 else 0.0
+            sem = float(std / np.sqrt(n)) if n > 1 else 0.0
+            pval = (float("nan") if is_def
+                    else sm._pvalue(_arr(default_cond, mf), a, "ttest"))
+            rows.append({
+                "axis": agg.DISCRETIZATION_AXIS, "prefix": "", "variant": cond,
+                "label": cond, "is_default": is_def, "metric": mf,
+                "value": float(a.mean()), "n": n, "mean": float(a.mean()),
+                "std": std, "sem": sem, "ci95": sm._ci95(a),
+                "p_vs_default": pval, "stars": "" if is_def else sm._stars(pval),
+            })
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -276,17 +357,17 @@ def main(argv=None) -> int:
     # --- combined long CSV (+ discretization pseudo-axis) -------------------
     long_out = pd.DataFrame(combined_records)
     if not args.no_discretization:
-        disc = agg._find_discretization(out_dir, args.discretization_summary)
+        disc = _resolve_discretization(out_dir, args.discretization_summary)
         if disc is not None:
             try:
-                long_out = pd.concat([long_out, agg._load_discretization(disc)],
+                long_out = pd.concat([long_out, _load_discretization(disc)],
                                      ignore_index=True, sort=False)
-                print(f"  + discretization: {disc}")
+                print(f"  + discretization: {disc.name}  ({disc})")
             except Exception as exc:  # noqa: BLE001
                 print(f"  ! discretization skipped ({disc}): {exc}", file=sys.stderr)
         else:
-            print("  ! no discretization_summary.csv found "
-                  "(pass --discretization-summary or --no-discretization).",
+            print("  ! no discretization_per_seed.csv / discretization_summary.csv "
+                  "found (pass --discretization-summary or --no-discretization).",
                   file=sys.stderr)
 
     long_out["_axis_num"] = long_out["axis"].map(agg._axis_num)
