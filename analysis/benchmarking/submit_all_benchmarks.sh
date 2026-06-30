@@ -397,8 +397,8 @@ case "$DATASET_TAG" in
         # AND CosMx (var_names = HGNC symbols). The geneformer/nicheformer
         # flag below is ROBUST to both: `_ensure_ensembl_ids` auto-detects
         # ENSG var_names BEFORE falling back to mygene symbol->ENSG mapping.
-        # nicheformer technology defaults to the common Xenium case; switch
-        # to `cosmx` (or another) per subset if needed.
+        # Xenium IS in Nicheformer's vocab (assay token 9). The spatch
+        # extraction can also be CosMx per subset -> switch to `cosmx` then.
         NICHEFORMER_TECHNOLOGY="xenium"
         HOLDOUT_BATCHES=""
         # scGPT vocab is HGNC SYMBOLS. If a subset's var_names are ENSG
@@ -429,6 +429,7 @@ case "$DATASET_TAG" in
         # tokenizer then drops every cell -> empty dataset -> IndexError). Same
         # cached-column setup as chl59-8b_1p. REQUIRES add_ensembl_ids.py first.
         SPECIES="human"
+        # Xenium IS in Nicheformer's vocab (assay token 9) — pass it directly.
         NICHEFORMER_TECHNOLOGY="xenium"
         HOLDOUT_BATCHES=""
         SCGPT_GENE_FLAGS=""

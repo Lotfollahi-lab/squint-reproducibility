@@ -90,13 +90,20 @@ SPECIES_TOKENS: Dict[str, int] = {
     "mouse": 6,
 }
 
+# Assay -> auxiliary token. Verified against the official theislab/nicheformer
+# tokenization notebook `technology_dict` (notebooks/tokenization/*.ipynb).
+# NOTE: token 9 is XENIUM, not Visium — Nicheformer's SpatialCorpus has NO
+# Visium assay token. A previous "visium": 9 entry was WRONG (it collided with
+# the real Xenium slot); Visium is intentionally absent so a Visium dataset
+# errors out rather than silently masquerading as Xenium.
 TECHNOLOGY_TOKENS: Dict[str, int] = {
     "merfish": 7,
     "MERFISH": 7,
     "cosmx": 8,
     "CosMx": 8,
-    "visium": 9,
-    "Visium": 9,
+    "NanoString digital spatial profiling": 8,   # official cosmx alias
+    "xenium": 9,
+    "Xenium": 9,
     "10x 5' v2": 10,
     "10x 3' v3": 11,
     "10x 3' v2": 12,
