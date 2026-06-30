@@ -97,9 +97,14 @@ def _load_csv_filtered(csv_path: Path, axis: str, transform: str,
     if "seed" not in df.columns:
         df = df.copy(); df["seed"] = 0
     df = df[df["branch"] == "cell"]
-    for col, val in (("axis", axis), ("transform", transform), ("gene_subset", gene_subset)):
+    for col, val in (("axis", axis), ("transform", transform)):
         if col in df.columns:
             df = df[df[col] == val]
+    if "gene_subset" in df.columns:
+        if gene_subset == "hvg":          # match any hvg{N} (N varies w/ panel size)
+            df = df[df["gene_subset"].astype(str).str.startswith("hvg")]
+        else:
+            df = df[df["gene_subset"] == gene_subset]
     df = df[df[value_col].notna()]
     if df.empty:
         return pd.DataFrame()
@@ -115,26 +120,41 @@ def _load_csv_filtered(csv_path: Path, axis: str, transform: str,
 # (suffix, axis, transform, gene_subset, value_col, title, higher_is_better).
 # Suffixes must be unique (they key per_panel_values / the long CSV).
 _GRID_ROWS = [
-    [  # Pearson
+    [  # Pearson (log1p)
         ("pe_gw_log", "gene_wise", "log1p", "all",     "pearson_mean", "Pearson · gene-wise (log1p)", True),
         ("pe_cw_log", "cell_wise", "log1p", "all",     "pearson_mean", "Pearson · cell-wise (log1p)", True),
+        ("pe_hv_log", "gene_wise", "log1p", "hvg",     "pearson_mean", "Pearson · HVG (log1p)",       True),
         ("pe_mk_log", "gene_wise", "log1p", "markers", "pearson_mean", "Pearson · markers (log1p)",   True),
     ],
-    [  # Spearman (rank-based -> transform-invariant)
-        ("sp_gw", "gene_wise", "log1p", "all", "spearman_mean", "Spearman · gene-wise", True),
-        ("sp_cw", "cell_wise", "log1p", "all", "spearman_mean", "Spearman · cell-wise", True),
+    [  # Pearson (raw counts)
+        ("pe_gw_raw", "gene_wise", "raw", "all",     "pearson_mean", "Pearson · gene-wise (counts)", True),
+        ("pe_cw_raw", "cell_wise", "raw", "all",     "pearson_mean", "Pearson · cell-wise (counts)", True),
+        ("pe_hv_raw", "gene_wise", "raw", "hvg",     "pearson_mean", "Pearson · HVG (counts)",       True),
+        ("pe_mk_raw", "gene_wise", "raw", "markers", "pearson_mean", "Pearson · markers (counts)",   True),
     ],
-    [  # RMSE on the log1p (analysis) scale
-        ("rm_gw_log", "gene_wise", "log1p", "all", "rmse_mean", "RMSE · gene-wise (log1p)", False),
-        ("rm_cw_log", "cell_wise", "log1p", "all", "rmse_mean", "RMSE · cell-wise (log1p)", False),
+    [  # Spearman (rank-based -> transform-invariant; log1p rows)
+        ("sp_gw", "gene_wise", "log1p", "all",     "spearman_mean", "Spearman · gene-wise", True),
+        ("sp_cw", "cell_wise", "log1p", "all",     "spearman_mean", "Spearman · cell-wise", True),
+        ("sp_hv", "gene_wise", "log1p", "hvg",     "spearman_mean", "Spearman · HVG",       True),
+        ("sp_mk", "gene_wise", "log1p", "markers", "spearman_mean", "Spearman · markers",   True),
     ],
-    [  # RMSE on the raw count scale (calibration)
-        ("rm_gw_raw", "gene_wise", "raw", "all", "rmse_mean", "RMSE · gene-wise (counts)", False),
-        ("rm_cw_raw", "cell_wise", "raw", "all", "rmse_mean", "RMSE · cell-wise (counts)", False),
+    [  # RMSE (log1p)
+        ("rm_gw_log", "gene_wise", "log1p", "all",     "rmse_mean", "RMSE · gene-wise (log1p)", False),
+        ("rm_cw_log", "cell_wise", "log1p", "all",     "rmse_mean", "RMSE · cell-wise (log1p)", False),
+        ("rm_hv_log", "gene_wise", "log1p", "hvg",     "rmse_mean", "RMSE · HVG (log1p)",       False),
+        ("rm_mk_log", "gene_wise", "log1p", "markers", "rmse_mean", "RMSE · markers (log1p)",   False),
+    ],
+    [  # RMSE (raw counts; calibration)
+        ("rm_gw_raw", "gene_wise", "raw", "all",     "rmse_mean", "RMSE · gene-wise (counts)", False),
+        ("rm_cw_raw", "cell_wise", "raw", "all",     "rmse_mean", "RMSE · cell-wise (counts)", False),
+        ("rm_hv_raw", "gene_wise", "raw", "hvg",     "rmse_mean", "RMSE · HVG (counts)",       False),
+        ("rm_mk_raw", "gene_wise", "raw", "markers", "rmse_mean", "RMSE · markers (counts)",   False),
     ],
     [  # zero/nonzero recovery (entry-wise; no gene/cell axis)
-        ("zn_all", "entrywise", "counts", "all",     "auroc_zero", "Zero/nonzero AUROC",           True),
-        ("zn_mk",  "entrywise", "counts", "markers", "auroc_zero", "Zero/nonzero AUROC (markers)", True),
+        ("zn_au_all", "entrywise", "counts", "all",     "auroc_zero", "Zero/nonzero AUROC",           True),
+        ("zn_au_mk",  "entrywise", "counts", "markers", "auroc_zero", "Zero/nonzero AUROC (markers)", True),
+        ("zn_ap_all", "entrywise", "counts", "all",     "auprc_zero", "Zero/nonzero AUPRC",           True),
+        ("zn_ap_mk",  "entrywise", "counts", "markers", "auprc_zero", "Zero/nonzero AUPRC (markers)", True),
     ],
 ]
 
