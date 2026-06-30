@@ -235,8 +235,12 @@ def _load_concat(silver_dir: Path, batch_key: str) -> ad.AnnData:
         )
     if len(pieces) == 1:
         return pieces[0]
+    # merge="same" PRESERVES var columns that are identical across batches
+    # (e.g. var['ensembl_id'] from add_ensembl_ids.py — same gene -> same ENSG).
+    # Without it, ad.concat(axis=0) defaults to merge=None and DROPS every var
+    # column, so the cached `--gene-col ensembl_id` path sees an empty var.
     return ad.concat(pieces, axis=0, join="outer", index_unique="-",
-                     uns_merge="first")
+                     uns_merge="first", merge="same")
 
 
 def _preprocess(adata: ad.AnnData, n_pcs: int) -> ad.AnnData:
