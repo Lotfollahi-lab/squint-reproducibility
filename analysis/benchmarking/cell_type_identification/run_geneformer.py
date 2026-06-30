@@ -334,6 +334,17 @@ def _ensure_ensembl_ids(
             for s in ens_array
         ))
         print(f"  Mapped {n_mapped}/{len(symbols)} symbols to Ensembl IDs.")
+        if n_mapped == 0:
+            raise SystemExit(
+                "Zero symbols mapped to Ensembl IDs via mygene. The compute "
+                "node almost certainly has NO INTERNET for the mygene query "
+                "that --auto-map-symbols depends on (or the symbols are "
+                "unrecognised). Geneformer's vocab is Ensembl-only, so this "
+                "would drop every cell at tokenization and produce an EMPTY "
+                "dataset. Fix: pre-compute adata.var['ensembl_id'] once on an "
+                "internet-enabled node and pass --ensembl-id-col ensembl_id "
+                "(as chl59 does), or run this job on a node with internet."
+            )
         return adata
 
     raise SystemExit(
@@ -433,6 +444,24 @@ def _embed_with_geneformer(
             "should have populated it. This is a script bug."
         )
 
+    # Fail loudly NOW if essentially no IDs are Ensembl (ENSG/ENSMUSG):
+    # Geneformer's vocab is Ensembl-only, so 0 matches -> the tokenizer drops
+    # EVERY cell and the dataset comes out empty, which only surfaces later as
+    # a cryptic `IndexError: list index out of range` in load_from_disk ->
+    # concat_tables([]). Catch it here with an actionable message.
+    _ens = adata.var["ensembl_id"].astype(str)
+    n_ens = int((_ens.str.startswith("ENSG") | _ens.str.startswith("ENSMUSG")).sum())
+    if n_ens == 0:
+        raise SystemExit(
+            "adata.var['ensembl_id'] contains NO Ensembl IDs (0 start with "
+            "ENSG/ENSMUSG) -- gene-ID mapping produced raw symbols. "
+            "Geneformer's vocab is Ensembl-only, so tokenization would drop "
+            "every cell and produce an EMPTY dataset. Check the gene-ID flags "
+            "(--auto-map-symbols needs node internet; prefer a cached "
+            "--ensembl-id-col)."
+        )
+    print(f"  ensembl_id sanity: {n_ens}/{adata.n_vars} look like Ensembl IDs.")
+
     # CRITICAL: Geneformer's `extract_embs` returns a DataFrame with a
     # default RangeIndex (0..N-1) over POST-FILTER, POST-DOWNSAMPLE
     # cells — it does NOT preserve adata.obs_names order. The tokenizer
@@ -497,6 +526,25 @@ def _embed_with_geneformer(
                 f"tokenized output not found at {token_dataset}. "
                 f"Files in {out_dir}: {[p.name for p in candidates]}"
             )
+        # The `.dataset` dir can EXIST but be empty if the tokenizer dropped
+        # every cell (0 in-vocab genes). load_from_disk on an empty dataset
+        # raises a cryptic `IndexError: list index out of range` downstream
+        # (concat_tables([])); check the row count here with a clear message.
+        try:
+            from datasets import load_from_disk as _load_from_disk
+            _n_tok = len(_load_from_disk(str(token_dataset)))
+        except Exception:
+            _n_tok = None
+        if _n_tok == 0:
+            raise RuntimeError(
+                f"tokenized dataset at {token_dataset} is EMPTY -- 0 cells "
+                "survived Geneformer's gene-vocab filtering, i.e. none of "
+                "adata.var['ensembl_id'] matched its Ensembl token vocab. "
+                "Check the gene-ID mapping for this dataset (for xhs1000: the "
+                "on-node mygene --auto-map-symbols call likely returned nothing)."
+            )
+        print(f"  tokenized {_n_tok} cells." if _n_tok is not None
+              else "  tokenized (row count unavailable).")
 
         # Step 2: extract embeddings.
         print(f"  extracting embeddings (model_dir={model_dir}, "

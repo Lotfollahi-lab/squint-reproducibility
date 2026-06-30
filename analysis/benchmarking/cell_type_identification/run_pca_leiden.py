@@ -1448,13 +1448,14 @@ def _sanitize_for_h5ad(adata: ad.AnnData) -> ad.AnnData:
 
     for df_name in ("obs", "var"):
         df = getattr(adata, df_name)
-        # Index — always rewrite if dtype looks like a string/Arrow type,
-        # OR if its underlying values array is from pandas.arrays.
-        idx = df.index
-        idx_dtype_str = str(getattr(idx, "dtype", "object"))
-        if (_is_arrow_string_dtype(idx_dtype_str)
-                or "Arrow" in type(getattr(idx, "values", idx)).__name__):
-            df.index = _force_object_index(idx)
+        # Index — ALWAYS rewrite to a plain object array. Detection by dtype is
+        # unreliable: on some pandas/anndata combos (e.g. novae's env, with the
+        # obs_names prep_xhs_3b.py produced) an index reports dtype 'object' yet
+        # is still ArrowStringArray-backed, slips past the check, and crashes
+        # the H5AD writer on key '_index'. obs_names/var_names are always
+        # strings, so forcing them to object is cheap and safe — do it
+        # unconditionally rather than rely on dtype sniffing.
+        df.index = _force_object_index(df.index)
         # Columns — same logic per column.
         for col in df.columns:
             s = df[col]

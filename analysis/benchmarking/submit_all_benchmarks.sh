@@ -180,6 +180,17 @@ LSF_QUEUE="${LSF_QUEUE:-training-parallel}"
 # gets a GPU.) Override if your CPU queue is named differently.
 CPU_QUEUE="${CPU_QUEUE:-normal}"
 LSF_GPU="${LSF_GPU:-mode=exclusive_process:num=1:block=yes}"
+# Optional GPU-MODEL PIN. Some method venvs ship a torch built for older CUDA
+# archs and crash on newer GPUs ("no kernel image is available for execution on
+# the device") — e.g. scgpt-spatial's torch supports up to sm_86 (Ampere/A100)
+# and fails on an H200 (sm_90). Set GPU_MODEL=<model-token> to append a
+# `gmodel=` constraint to the -gpu spec so the job lands on a compatible GPU.
+# Find the farm's model tokens with `bhosts -gpu` or `lsinfo -gpu` (e.g.
+# NVIDIAA100_SXM4_80GB). Applies to every GPU method in this invocation, so set
+# it on a single-method run (e.g. `--methods scgpt-spatial`).
+if [[ -n "${GPU_MODEL:-}" ]]; then
+    LSF_GPU="${LSF_GPU}:gmodel=${GPU_MODEL}"
+fi
 # Default wall-time bumped 24h -> 96h (4 days). The 24h ceiling was too
 # tight for the heaviest baselines on the largest datasets — Geneformer
 # / scGPT FM extraction alone can take 12-18h on chl59 / spatch_1p, and
@@ -410,16 +421,20 @@ case "$DATASET_TAG" in
         # batch integration IS meaningful. Labels (== what the SQUINT run uses):
         # cell=new_annotation, niche=niche_type (NOT in the runner defaults, so
         # pass explicitly — also note the silver carries a stray `cell_type`
-        # column we do NOT want scored). scGPT vocab is HGNC = data -> no flags;
-        # geneformer/nicheformer map HGNC symbols -> human ENSG via mygene
-        # (--auto-map-symbols; needs internet on the node for the first call).
+        # column we do NOT want scored). scGPT vocab is HGNC = data -> no flags.
+        # Geneformer/Nicheformer read a CACHED var['ensembl_id'] (HGNC->human
+        # ENSG), populated once by analysis/data_preparation/add_ensembl_ids.py
+        # on an internet node. This replaces the old per-run --auto-map-symbols
+        # mygene call, which fails on compute nodes WITHOUT internet (the
+        # tokenizer then drops every cell -> empty dataset -> IndexError). Same
+        # cached-column setup as chl59-8b_1p. REQUIRES add_ensembl_ids.py first.
         SPECIES="human"
         NICHEFORMER_TECHNOLOGY="xenium"
         HOLDOUT_BATCHES=""
         SCGPT_GENE_FLAGS=""
         SCGPT_SPATIAL_GENE_FLAGS=""
-        GENEFORMER_GENE_FLAGS="--auto-map-symbols"
-        NICHEFORMER_GENE_FLAGS="--auto-map-symbols"
+        GENEFORMER_GENE_FLAGS="--ensembl-id-col ensembl_id"
+        NICHEFORMER_GENE_FLAGS="--gene-col ensembl_id"
         UCE_SPECIES_FLAGS="--uce-species human"
         NICHECOMPASS_SPECIES="human"
         LABEL_KEY_ARGS="--cell-label-keys new_annotation --niche-label-keys niche_type"
