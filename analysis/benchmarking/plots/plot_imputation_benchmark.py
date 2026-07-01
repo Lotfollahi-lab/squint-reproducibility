@@ -86,12 +86,56 @@ def _resolve_metrics_csv(locator: str, artifacts_root: Path, dataset_tag: str):
     return None
 
 
-def _load_csv_filtered(csv_path: Path, axis: str, transform: str,
+def _resolve_metrics_csvs(locator: str, artifacts_root: Path, dataset_tag: str):
+    """ALL per-seed metrics CSVs for a method (concatenated by _load_csv_filtered).
+
+    Handles the stage2-ablation layout where each seed is its OWN run dir
+    (`<TS>_seedN/metrics/per_seed_pearson_reconstruction.csv`, one seed each) —
+    _resolve_metrics_csv returns only the first, so SQUINT showed a single dot.
+    Globs one level of subdirs; falls back to the single-CSV resolver for a
+    file / aggregate (all seeds in one CSV) / single run dir."""
+    p = Path(locator)
+    if p.is_file():
+        return [p]
+    base = p if p.is_dir() else (artifacts_root / dataset_tag / locator)
+    csvs: List[Path] = []
+    if base.is_dir():
+        for sub in sorted(base.glob("*")):          # ascending TS -> latest last
+            if not sub.is_dir():
+                continue
+            for n in _CSV_NAMES:
+                f = sub / "metrics" / n
+                if f.is_file():
+                    csvs.append(f)
+                    break
+    if csvs:
+        return csvs
+    single = _resolve_metrics_csv(locator, artifacts_root, dataset_tag)
+    return [single] if single else []
+
+
+def _load_csv_filtered(csv_path, axis: str, transform: str,
                        gene_subset: str, value_col: str = "pearson_mean",
                        branch: str = "cell"):
     """`branch` slice ('cell' = per-cell recon; 'niche' = neighborhood-level)
     as (seed, split, value) reading `value_col` (empty if that column/branch is
-    absent — e.g. an OLD CSV, or a method with no neighborhood branch)."""
+    absent — e.g. an OLD CSV, or a method with no neighborhood branch).
+
+    `csv_path` may be a single path OR a list of per-seed CSVs — a list is read
+    and concatenated (de-duplicated on (seed, split), keeping the latest path)
+    so multi-seed-dir variants contribute every seed."""
+    if isinstance(csv_path, (list, tuple)):
+        frames = []
+        for c in csv_path:
+            if c is None:
+                continue
+            f = _load_csv_filtered(c, axis, transform, gene_subset, value_col, branch)
+            if not f.empty:
+                frames.append(f)
+        if not frames:
+            return pd.DataFrame()
+        out = pd.concat(frames, ignore_index=True)
+        return out.drop_duplicates(subset=["seed", "split"], keep="last")
     df = pd.read_csv(csv_path)
     if value_col not in df.columns:
         return pd.DataFrame()
@@ -304,6 +348,12 @@ def main(argv: Optional[List[str]] = None) -> None:
                    help="Add an EXTRA imputed bar. PATH = CSV / run dir / variant; "
                         "LABEL = display name (e.g. 'SQUINT (No MC)'). Repeatable — "
                         "use to compare decode configs side by side.")
+    p.add_argument("--gest-imputed-label", type=str, default="GeST (imputed)",
+                   help="Display label for the GeST bar (e.g. 'GeST').")
+    p.add_argument("--color", nargs=2, action="append",
+                   metavar=("LABEL", "HEX"), default=None,
+                   help="Override a bar's colour: LABEL = display name, HEX = "
+                        "'#RRGGBB'. Repeatable (e.g. swap two bars' colours).")
     args = p.parse_args(argv)
 
     if args.out_dir is None:
@@ -311,9 +361,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     squint_label = args.squint_imputed_label
+    gest_label = args.gest_imputed_label
     methods: Dict[str, str] = {
         squint_label: args.squint_imputed_path,
-        "GeST (imputed)": args.gest_imputed_path,
+        gest_label: args.gest_imputed_path,
     }
     if args.squint_recon_path:
         methods = {"SQUINT (recon)": args.squint_recon_path, **methods}
@@ -323,23 +374,31 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     _apply_nature_style()
     import plot_pearson_benchmark as ppb
-    # Colours: start from COLOURS; map the (possibly renamed) squint bar to the
-    # SQUINT-imputed shade, and give each extra bar a distinct SQUINT-family shade.
+    # Colours: start from COLOURS; map the (possibly renamed) squint/gest bars to
+    # their base shades, give each extra bar a distinct SQUINT-family shade, then
+    # apply any explicit --color overrides LAST (so they win).
     _extra_shades = ["#B5179E", "#7209B7", "#F72585", "#4361EE"]
     colours = dict(COLOURS)
     colours.setdefault(squint_label, COLOURS["SQUINT (imputed)"])
+    colours.setdefault(gest_label, COLOURS["GeST (imputed)"])
     for i, (_path, _label) in enumerate(args.extra_variant or []):
         colours.setdefault(_label, _extra_shades[i % len(_extra_shades)])
+    for _label, _hex in (args.color or []):
+        colours[_label] = _hex
     # Hatch all imputed bars (everything except the solid SQUINT (recon) ceiling).
     ppb.HATCH_METHODS |= (set(methods) - {"SQUINT (recon)"})
 
-    # resolve each method's CSV once
-    resolved: Dict[str, Optional[Path]] = {}
+    # Resolve each method's per-seed CSV(s). ALL per-seed dirs are collected so
+    # multi-seed-dir variants (stage2-ablation) contribute every seed, not one.
+    resolved: Dict[str, List[Path]] = {}
     print(f"Artifacts root: {args.artifacts_root}\nDataset: {args.dataset_tag}\nSplit: {args.split}")
     for label, locator in methods.items():
-        csv = _resolve_metrics_csv(locator, args.artifacts_root, args.dataset_tag)
-        resolved[label] = csv
-        print(f"  {label:<18s} <- {csv if csv else f'MISSING (from {locator!r})'}")
+        csvs = _resolve_metrics_csvs(locator, args.artifacts_root, args.dataset_tag)
+        resolved[label] = csvs
+        if csvs:
+            print(f"  {label:<18s} <- {len(csvs)} CSV(s); e.g. {csvs[0]}")
+        else:
+            print(f"  {label:<18s} <- MISSING (from {locator!r})")
 
     grid_rows = _GRID_ROWS if args.metric == "panel" else [_PANEL_SPECS[args.metric]]
     blabel = {"cell": "cell-level", "niche": "neighborhood-level"}[args.branch]
