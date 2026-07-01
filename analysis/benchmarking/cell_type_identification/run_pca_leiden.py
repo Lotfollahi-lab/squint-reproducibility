@@ -1465,6 +1465,43 @@ def _sanitize_for_h5ad(adata: ad.AnnData) -> ad.AnnData:
             s = df[col]
             if _is_arrow_string_dtype(s.dtype) or "Arrow" in type(s.array).__name__:
                 df[col] = _force_object_series(s)
+
+    # NESTED frames: uns / obsm / varm can hold DataFrames whose index or columns
+    # are ArrowStringArray-backed (e.g. novae stashes a `verify` frame in uns) —
+    # the top-level obs/var pass misses them and the H5AD writer crashes on the
+    # nested frame's '_index' (seen as `.../verify`). Recurse and fix in place.
+    def _sanitize_df_inplace(df: pd.DataFrame) -> None:
+        try:
+            df.index = _force_object_index(df.index)
+            if _is_arrow_string_dtype(df.columns.dtype) or (
+                hasattr(df.columns, "array") and "Arrow" in type(df.columns.array).__name__):
+                df.columns = _force_object_index(df.columns)
+            for col in list(df.columns):
+                s = df[col]
+                if _is_arrow_string_dtype(s.dtype) or "Arrow" in type(s.array).__name__:
+                    df[col] = _force_object_series(s)
+        except Exception:  # noqa: BLE001  (never let sanitising a stray frame crash)
+            pass
+
+    def _walk(obj) -> None:
+        if isinstance(obj, pd.DataFrame):
+            _sanitize_df_inplace(obj)
+        elif isinstance(obj, dict):
+            for v in obj.values():
+                _walk(v)
+        elif isinstance(obj, (list, tuple)):
+            for v in obj:
+                _walk(v)
+
+    _walk(dict(adata.uns))
+    for mapping in (adata.obsm, adata.varm):
+        try:
+            for key in list(mapping.keys()):
+                val = mapping[key]
+                if isinstance(val, pd.DataFrame):
+                    _sanitize_df_inplace(val)
+        except Exception:  # noqa: BLE001
+            pass
     return adata
 
 
@@ -1543,8 +1580,15 @@ def _write_per_seed_outputs(
     # (e.g. MMD added, or MMD generalized to >2 batches) — not only seed 0.
     # `_sanitize_for_h5ad` only coerces index/string dtypes (idempotent; never
     # touches obsm/labels), so mutating the shared adata here is metric-safe.
-    _sanitize_for_h5ad(adata).write_h5ad(seed_dir / "predicted_adata.h5ad")
-    print(f"  -> {seed_dir / 'predicted_adata.h5ad'}")
+    # Non-fatal: the per-seed adata is a convenience for later re-scoring, NOT
+    # required for the metrics. A write failure (e.g. an exotic ArrowStringArray
+    # the sanitiser can't reach) must never abort the multi-seed run.
+    try:
+        _sanitize_for_h5ad(adata).write_h5ad(seed_dir / "predicted_adata.h5ad")
+        print(f"  -> {seed_dir / 'predicted_adata.h5ad'}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [warn] per-seed predicted_adata not written ({type(exc).__name__}: "
+              f"{exc}); metrics unaffected.", file=sys.stderr)
 
     return seed_dir
 
