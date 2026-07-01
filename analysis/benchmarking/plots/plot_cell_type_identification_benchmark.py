@@ -521,9 +521,11 @@ def _write_summary_tables(df: pd.DataFrame, method_order: List[str],
         lambda r: (f"{r['mean']:.3f}±{r['ci95']:.3f}"
                    if r["mean"] == r["mean"] else ""), axis=1)
     present_metrics = [m for m in metric_order if m in set(summary["metric"])]
+    # keep any extra metrics not in the figure panel set (e.g. 'Runtime (s)')
+    extra_metrics = [m for m in dict.fromkeys(summary["metric"]) if m not in metric_order]
     wide = (summary.pivot(index="method", columns="metric", values="cell")
             .reindex(index=[m for m in method_order if m in set(summary["method"])],
-                     columns=present_metrics))
+                     columns=present_metrics + extra_metrics))
     wide.columns.name = None
     wide_csv = out_path_base.parent / f"{out_path_base.name}_wide.csv"
     wide.to_csv(wide_csv)
@@ -625,6 +627,30 @@ def make_figure(
     _write_summary_tables(df, method_order, out_path_base)
 
 
+def load_method_runtime_rows(variant_dir: Path, method_label: str) -> List[dict]:
+    """Rows (method, seed, metric='Runtime (s)', value) from the latest
+    ``<TS>/metrics/per_seed_runtimes.csv`` under ``variant_dir`` (schema:
+    seed, method, runtime_seconds, local_seconds, shared_setup_seconds).
+    Empty list if no runtime CSV is present (so it's an opt-in extra column)."""
+    if not variant_dir.is_dir():
+        return []
+    for ts in sorted((p for p in variant_dir.iterdir() if p.is_dir()),
+                     key=lambda p: p.name, reverse=True):
+        f = ts / "metrics" / "per_seed_runtimes.csv"
+        if not f.is_file():
+            continue
+        d = pd.read_csv(f)
+        if "runtime_seconds" not in d.columns:
+            return []
+        if "seed" not in d.columns:
+            d = d.copy(); d["seed"] = 0
+        d = d[pd.to_numeric(d["runtime_seconds"], errors="coerce").notna()]
+        return [{"method": method_label, "seed": int(r["seed"]),
+                 "metric": "Runtime (s)", "value": float(r["runtime_seconds"])}
+                for _, r in d.iterrows()]
+    return []
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -701,6 +727,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         print(f"  [{label:<22s}]  {status:<25s}  ({variant_dir})")
         if not df.empty:
             frames.append(df)
+        rt = load_method_runtime_rows(variant_dir, label)   # runtime -> extra metric row
+        if rt:
+            frames.append(pd.DataFrame(rt))
 
     if not frames:
         raise SystemExit(
