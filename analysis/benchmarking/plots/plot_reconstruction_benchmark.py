@@ -66,8 +66,11 @@ def main(argv=None) -> None:
     p.add_argument("--dataset-tag", type=str, default=DEFAULT_DATASET_TAG)
     p.add_argument("--out-dir", type=Path, default=None)
     p.add_argument("--out-prefix", type=str, default="reconstruction_benchmark")
-    p.add_argument("--split", type=str, default="all",
-                   help="Pearson split to plot. Default 'all' (full reconstruction).")
+    p.add_argument("--split", type=str, default="test",
+                   help="Pearson split to plot. Default 'test' (held-out region — "
+                        "reconstruction of unseen cells; the fair comparison for the "
+                        "region-holdout runs). Use 'all' for reconstruction over "
+                        "every cell (train-dominated) or 'train'.")
     p.add_argument("--branch", type=str, default="cell", choices=["cell", "niche"],
                    help="'cell' = per-cell reconstruction; 'niche' = "
                         "neighborhood-level (X_hat_nbr vs X_nbr; aggregated over the "

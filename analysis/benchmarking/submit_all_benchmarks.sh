@@ -573,9 +573,27 @@ for entry in "${METHODS[@]}"; do
     LOG_OUT="$LOG_DIR/${KEY}.out"
     LOG_ERR="$LOG_DIR/${KEY}.err"
 
+    # Per-family Leiden cluster count. The two ID tracks are DISJOINT method
+    # families living in separate dirs, and each method does ONE clustering
+    # (scored against both label sets, but each plot reads only its own
+    # track's NMI). So route N_CLUSTERS by the script's directory:
+    #   N_CLUSTERS_CELL  -> every cell_type_identification/ runner
+    #   N_CLUSTERS_NICHE -> every niche_identification/ runner
+    # Unset => runner default (30). Used to benchmark at the ground-truth
+    # label count (e.g. xhs1000: N_CLUSTERS_CELL=21 N_CLUSTERS_NICHE=12).
+    # All 14 runners accept --n-clusters. SQUINT is sized via its codebook,
+    # not this flag, so it's unaffected.
+    NCLUST_FLAG=""
+    case "$SCRIPT_REL" in
+        *cell_type_identification*)
+            [[ -n "${N_CLUSTERS_CELL:-}" ]]  && NCLUST_FLAG="--n-clusters $N_CLUSTERS_CELL" ;;
+        *niche_identification*)
+            [[ -n "${N_CLUSTERS_NICHE:-}" ]] && NCLUST_FLAG="--n-clusters $N_CLUSTERS_NICHE" ;;
+    esac
+
     # The script invocation is COMMON_ARGS + EXTRA (interpolated). Use
     # `eval` so variable references inside EXTRA expand correctly.
-    eval "FULL_ARGS=( $COMMON_ARGS $EXTRA )"
+    eval "FULL_ARGS=( $COMMON_ARGS $NCLUST_FLAG $EXTRA )"
 
     BSUB_CMD=(
         bsub
