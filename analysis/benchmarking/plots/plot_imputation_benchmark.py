@@ -30,6 +30,7 @@ Outputs (to --out-dir, default <artifacts>/benchmarking/figures/):
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -130,8 +131,17 @@ def _load_csv_filtered(csv_path, axis: str, transform: str,
             if c is None:
                 continue
             f = _load_csv_filtered(c, axis, transform, gene_subset, value_col, branch)
-            if not f.empty:
-                frames.append(f)
+            if f.empty:
+                continue
+            # Derive the seed from the PATH (`..._seedN` / `seed_N`), overriding
+            # the CSV's seed column. The stage2-ablation decode step doesn't pass
+            # --seed, so every per-seed dir's CSV is stamped seed=0 — trusting it
+            # would collapse all 5 seeds to one in the de-dup below. A single
+            # aggregate CSV (no `seed` token in its path) keeps its own seeds.
+            mm = re.findall(r"seed_?(\d+)", str(c))
+            if mm:
+                f = f.copy(); f["seed"] = int(mm[-1])
+            frames.append(f)
         if not frames:
             return pd.DataFrame()
         out = pd.concat(frames, ignore_index=True)
@@ -348,8 +358,8 @@ def main(argv: Optional[List[str]] = None) -> None:
                    help="Add an EXTRA imputed bar. PATH = CSV / run dir / variant; "
                         "LABEL = display name (e.g. 'SQUINT (No MC)'). Repeatable — "
                         "use to compare decode configs side by side.")
-    p.add_argument("--gest-imputed-label", type=str, default="GeST (imputed)",
-                   help="Display label for the GeST bar (e.g. 'GeST').")
+    p.add_argument("--gest-imputed-label", type=str, default="GeST",
+                   help="Display label for the GeST bar (default 'GeST').")
     p.add_argument("--color", nargs=2, action="append",
                    metavar=("LABEL", "HEX"), default=None,
                    help="Override a bar's colour: LABEL = display name, HEX = "
