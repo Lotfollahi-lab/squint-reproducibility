@@ -38,6 +38,14 @@ ART="${ART:-/nfs/team361/sb75/squint-reproducibility/artifacts}"
 DATASET="${DATASET:-mmb0-1b_smb1-1b_1p}"
 SEEDS="${SEEDS:-0,1,2,3,4}"
 SILVER_DIR="${SILVER_DIR:-}"                 # empty -> runner's own default
+# Niche-branch spatial-kNN neighbor count. Empty -> each runner's own default,
+# which is now 16 (matches SQUINT's native niche graph, +knn16+, so the
+# niche-level metrics are graph-consistent across ALL methods and both figures).
+# Override e.g. NBR_NEIGHS=10 for the old behavior. Threaded to the RIGHT flag
+# per method (native -nbr/NicheCompass use --n-spatial-neighs = their TRAINING
+# target graph -> a retrain; cell-only methods use --nbr-neighs = a cheap
+# eval-time re-aggregation).
+NBR_NEIGHS="${NBR_NEIGHS:-}"
 # gestarch frozen stage-1 predicted_adata (FiLM-scale region-holdout, seed0):
 PREDICTED_ADATA="${PREDICTED_ADATA:-$ART/$DATASET/dualvq+rvq-both+decoder-cov+no-batch-int+enc-deeper+dec-w32+knn16+sampler16+cell-w1+bs512+lr7e-4+within-sec+decoupled-enc+diversity-w10+filmscale+crossmnn-wt10-k1+region-holdout+$DATASET/20260629_023326_seed0/predicted_adata.h5ad}"
 # NicheCompass GP args (mmb = mouse). Match submit_all_benchmarks.sh defaults.
@@ -68,6 +76,18 @@ method_spec() {
     esac
 }
 
+# method -> the neighbor-count flag it accepts (native niche models train on the
+# aggregate, so their flag is --n-spatial-neighs; cell-only methods aggregate at
+# eval via --nbr-neighs). Empty NBR_NEIGHS -> no flag (runner default).
+neighs_flag() {
+    [[ -z "$NBR_NEIGHS" ]] && { echo ""; return 0; }
+    case "$1" in
+        scvi-nbr|vanilla-nbr|nichecompass) echo "--n-spatial-neighs $NBR_NEIGHS" ;;
+        gest|gestarch|scvi|vanilla-cell)   echo "--nbr-neighs $NBR_NEIGHS" ;;
+        *) echo "" ;;
+    esac
+}
+
 METHODS="${METHODS:-gest gestarch scvi scvi-nbr nichecompass vanilla-cell vanilla-nbr}"
 
 echo "=========================================================="
@@ -94,6 +114,7 @@ for m in $METHODS; do
     if [[ -n "$SILVER_DIR" && "$m" != "gestarch" ]]; then
         common="$common --silver-dir $SILVER_DIR"
     fi
+    extra="$extra $(neighs_flag "$m")"          # NBR_NEIGHS -> per-method neighbor flag
 
     job="imprec-$m"
     log_out="$LOG_ROOT/${m}.out"; log_err="$LOG_ROOT/${m}.err"

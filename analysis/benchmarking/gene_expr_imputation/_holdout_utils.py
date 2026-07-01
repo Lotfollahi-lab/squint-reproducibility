@@ -29,11 +29,14 @@ Used by every method script in this directory:
         so the plotting script can union them.
 
 Output convention used by every method script:
-  <out_dir>/predicted_adata.h5ad
+  <out_dir>/predicted_adata_seed{N}.h5ad
+        ONE per seed (via write_predicted_adata) so EVERY seed can be
+        re-scored later (rescore_imputation.py), not just seed 0.
         Contains `obs["data_split"]` ("train" / "test"), and one or
         both of `layers["X_hat"]` (cell-level pred) and
         `layers["X_hat_nbr"]` (nbr-level pred), `layers["X_nbr"]`
-        (nbr-level target).
+        (nbr-level target). (Legacy runs may have a single
+        `predicted_adata.h5ad` = seed 0 only; still written for compat.)
   <out_dir>/metrics/per_seed_pearson_reconstruction.csv
         Long format: seed, branch, split, axis, transform, gene_subset,
         pearson_mean, pearson_median, n_cells, n_genes
@@ -280,9 +283,10 @@ def compute_X_nbr(
 # Neighborhood aggregation of a cell-level prediction, so methods WITHOUT a
 # native neighborhood branch (GeST, scVI, vanilla-VQ-cell, SQUINT-imputed) can
 # still be scored at the neighborhood level: X_hat_nbr = spatial-graph mean of
-# X_hat, compared against X_nbr (the same aggregation of the TRUE X). Use the
-# SAME n_neighs as the native-niche runners (default 10) so the X_nbr targets —
-# and hence the niche-level Pearson — are comparable across all methods.
+# X_hat, compared against X_nbr (the same aggregation of the TRUE X). Default
+# n_neighs=16 to MATCH SQUINT's native niche graph (its `+knn16+` spatial graph),
+# so the X_nbr targets — and hence the niche-level Pearson — are graph-consistent
+# across all methods and both figures (2026-07-01; was 10).
 # ---------------------------------------------------------------------------
 
 def _neighbor_mean(A, M, normalize: str = "mean") -> np.ndarray:
@@ -301,7 +305,7 @@ def add_neighborhood_layers(
         adata: ad.AnnData,
         *,
         batch_key: str = "adata_batch_id",
-        n_neighs: int = 10,
+        n_neighs: int = 16,
         normalize: str = "mean",
     ) -> ad.AnnData:
     """Ensure the niche-branch layers exist so `build_pearson_dataframe` scores
@@ -777,6 +781,27 @@ def write_pearson_outputs(
         mean_csv = metrics_dir / "pearson_reconstruction_metrics.csv"
         agg.to_csv(mean_csv, index=False)
         print(f"  -> {mean_csv}")
+
+
+def write_predicted_adata(adata: ad.AnnData, out_dir: Path, seed: int) -> Path:
+    """Write ``<out_dir>/predicted_adata_seed{seed}.h5ad`` (one per seed) so
+    EVERY seed can be re-scored later (rescore_imputation.py), not just seed 0.
+    Sanitises object-dtype obs/var for h5ad using the cell-type-id helper (same
+    as the old seed-0 snapshot path). Mutates ``adata`` in place (sanitise)."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        sib = Path(__file__).resolve().parent.parent / "cell_type_identification"
+        if str(sib) not in sys.path:
+            sys.path.insert(0, str(sib))
+        from run_pca_leiden import _sanitize_for_h5ad  # type: ignore
+        _sanitize_for_h5ad(adata)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  (h5ad sanitizer unavailable: {exc})")
+    out = out_dir / f"predicted_adata_seed{seed}.h5ad"
+    adata.write_h5ad(out)
+    print(f"  -> {out}")
+    return out
 
 
 # ---------------------------------------------------------------------------

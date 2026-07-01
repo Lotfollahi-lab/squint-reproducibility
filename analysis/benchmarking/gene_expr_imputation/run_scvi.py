@@ -48,7 +48,7 @@ from _holdout_utils import (  # noqa: E402
     apply_holdout_regions,
     build_pearson_dataframe,
     load_silver_concat,
-    write_pearson_outputs,
+    write_pearson_outputs, write_predicted_adata,
 )
 
 
@@ -160,6 +160,10 @@ def main() -> None:
     p.add_argument("--variant-tag", type=str, default=DEFAULT_VARIANT_TAG)
     p.add_argument("--out-dir", type=Path, default=None)
     p.add_argument("--batch-key", type=str, default="adata_batch_id")
+    p.add_argument("--nbr-neighs", type=int, default=16,
+                   help="Spatial kNN neighbors for the niche-branch aggregation "
+                        "(X_nbr / X_hat_nbr). Default 16 (matches SQUINT's native "
+                        "niche graph); was 10.")
     p.add_argument("--use-default-holdout-regions", action="store_true", default=True)
     p.add_argument("--no-default-holdout-regions",
                    dest="use_default_holdout_regions", action="store_false")
@@ -203,7 +207,6 @@ def main() -> None:
 
     # ---- 3. Per-seed train + infer + Pearson ----------------------------
     per_seed_frames: List[pd.DataFrame] = []
-    seed0_adata: Optional[ad.AnnData] = None
     for s_idx, seed in enumerate(seeds):
         print()
         print("=" * 78)
@@ -218,11 +221,10 @@ def main() -> None:
             n_latent=args.scvi_n_latent,
             accelerator=args.accelerator,
         )
-        add_neighborhood_layers(adata_s, batch_key=args.batch_key)
+        add_neighborhood_layers(adata_s, batch_key=args.batch_key, n_neighs=args.nbr_neighs)
         df = build_pearson_dataframe(adata_s, seed=seed, log1p=True, n_hvg=50)
         per_seed_frames.append(df)
-        if s_idx == 0:
-            seed0_adata = adata_s
+        write_predicted_adata(adata_s, args.out_dir, seed)   # per-seed h5ad -> rescore-able
 
         for split in ("all", "train", "test"):
             row = df[
@@ -244,21 +246,6 @@ def main() -> None:
     # ---- 4. Write CSVs --------------------------------------------------
     print("\n=== Writing outputs ===")
     write_pearson_outputs(args.out_dir, per_seed)
-
-    # ---- 5. Save seed-0 predicted adata --------------------------------
-    if seed0_adata is not None:
-        out_h5ad = args.out_dir / "predicted_adata.h5ad"
-        sib = (Path(__file__).resolve().parent.parent
-               / "cell_type_identification")
-        if str(sib) not in sys.path:
-            sys.path.insert(0, str(sib))
-        try:
-            from run_pca_leiden import _sanitize_for_h5ad  # type: ignore
-            _sanitize_for_h5ad(seed0_adata)
-        except Exception as exc:
-            print(f"  (sanitizer not available: {exc})")
-        seed0_adata.write_h5ad(out_h5ad)
-        print(f"  -> {out_h5ad}  (seed[0] snapshot)")
 
     # ---- 6. Console summary --------------------------------------------
     print()

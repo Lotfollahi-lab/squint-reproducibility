@@ -53,7 +53,7 @@ from _holdout_utils import (  # noqa: E402
     compute_X_nbr,
     load_silver_concat,
     spatial_knn_per_batch,
-    write_pearson_outputs,
+    write_pearson_outputs, write_predicted_adata,
 )
 
 # Re-use NicheCompass setup from the existing benchmarking script.
@@ -277,7 +277,9 @@ def main() -> None:
     p.add_argument("--min-source-genes-per-gp", type=int, default=1)
     p.add_argument("--min-target-genes-per-gp", type=int, default=1)
     # --- NicheCompass training hparams (notebook defaults) ----------
-    p.add_argument("--n-spatial-neighs", type=int, default=10)
+    p.add_argument("--n-spatial-neighs", type=int, default=16,
+                   help="Spatial kNN graph size (model graph + X_nbr target). "
+                        "Default 16 (matches SQUINT's native niche graph; was 10).")
     p.add_argument("--conv-layer-encoder", type=str, default="gatv2conv")
     p.add_argument("--active-gp-thresh-ratio", type=float, default=0.01)
     p.add_argument("--n-epochs", type=int, default=400)
@@ -366,7 +368,6 @@ def main() -> None:
     cat_covariates_no_edges = [True]
 
     per_seed_frames: List[pd.DataFrame] = []
-    seed0_adata: Optional[ad.AnnData] = None
     for s_idx, seed in enumerate(seeds):
         print()
         print("=" * 78)
@@ -415,8 +416,7 @@ def main() -> None:
 
         df = build_pearson_dataframe(adata_s, seed=seed, log1p=True, n_hvg=50)
         per_seed_frames.append(df)
-        if s_idx == 0:
-            seed0_adata = adata_s
+        write_predicted_adata(adata_s, args.out_dir, seed)   # per-seed h5ad -> rescore-able
 
         for branch in ("cell", "niche"):
             for split in ("all", "train", "test"):
@@ -440,20 +440,6 @@ def main() -> None:
     # ---- 6. Write outputs ----------------------------------------------
     print("\n=== Writing outputs ===")
     write_pearson_outputs(args.out_dir, per_seed)
-
-    if seed0_adata is not None:
-        out_h5ad = args.out_dir / "predicted_adata.h5ad"
-        sib = (Path(__file__).resolve().parent.parent
-               / "cell_type_identification")
-        if str(sib) not in sys.path:
-            sys.path.insert(0, str(sib))
-        try:
-            from run_pca_leiden import _sanitize_for_h5ad  # type: ignore
-            _sanitize_for_h5ad(seed0_adata)
-        except Exception as exc:
-            print(f"  (sanitizer not available: {exc})")
-        seed0_adata.write_h5ad(out_h5ad)
-        print(f"  -> {out_h5ad}  (seed[0] snapshot)")
 
     # ---- 7. Console summary --------------------------------------------
     print()
