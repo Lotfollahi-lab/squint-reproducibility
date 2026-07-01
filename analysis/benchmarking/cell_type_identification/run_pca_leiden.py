@@ -1499,6 +1499,8 @@ def _write_per_seed_outputs(
                 <each cell_label_key present>.{png,svg}
                 <each niche_label_key present>.{png,svg}
                 <batch_key>.{png,svg}
+            predicted_adata.h5ad   (this seed's embedding + leiden + labels +
+                                    batch + UMAP; re-scoreable if a metric changes)
 
     The `seed` column is dropped from the per-seed CSVs (the file
     location already records which seed it came from). The aggregated
@@ -1535,6 +1537,14 @@ def _write_per_seed_outputs(
         out_path = umap_dir / key.replace("/", "_")
         _plot_umap(adata, color_key=key, out_path=out_path,
                    cmap_name=cmap, spot_size=spot_size, dpi=dpi)
+
+    # Per-seed AnnData snapshot: the embedding + THIS seed's leiden/labels/
+    # batch/UMAP, so EVERY seed can be re-scored later if a metric changes
+    # (e.g. MMD added, or MMD generalized to >2 batches) — not only seed 0.
+    # `_sanitize_for_h5ad` only coerces index/string dtypes (idempotent; never
+    # touches obsm/labels), so mutating the shared adata here is metric-safe.
+    _sanitize_for_h5ad(adata).write_h5ad(seed_dir / "predicted_adata.h5ad")
+    print(f"  -> {seed_dir / 'predicted_adata.h5ad'}")
 
     return seed_dir
 
