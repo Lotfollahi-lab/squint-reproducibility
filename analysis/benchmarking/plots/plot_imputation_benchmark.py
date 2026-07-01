@@ -296,22 +296,42 @@ def main(argv: Optional[List[str]] = None) -> None:
     p.add_argument("--squint-recon-path", type=str, default=None,
                    help="Optional: add a SQUINT (recon) ceiling bar from this "
                         "CSV/dir/variant (off by default — it's in the recon figure).")
+    p.add_argument("--squint-imputed-label", type=str, default="SQUINT (imputed)",
+                   help="Display label for the --squint-imputed-path bar "
+                        "(e.g. 'SQUINT (MC)').")
+    p.add_argument("--extra-variant", nargs=2, action="append",
+                   metavar=("PATH", "LABEL"), default=None,
+                   help="Add an EXTRA imputed bar. PATH = CSV / run dir / variant; "
+                        "LABEL = display name (e.g. 'SQUINT (No MC)'). Repeatable — "
+                        "use to compare decode configs side by side.")
     args = p.parse_args(argv)
 
     if args.out_dir is None:
         args.out_dir = args.artifacts_root / "benchmarking" / "figures"
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
+    squint_label = args.squint_imputed_label
     methods: Dict[str, str] = {
-        "SQUINT (imputed)": args.squint_imputed_path,
+        squint_label: args.squint_imputed_path,
         "GeST (imputed)": args.gest_imputed_path,
     }
     if args.squint_recon_path:
         methods = {"SQUINT (recon)": args.squint_recon_path, **methods}
+    # Extra imputed bars (e.g. a second SQUINT decode config to compare).
+    for _path, _label in (args.extra_variant or []):
+        methods[_label] = _path
 
     _apply_nature_style()
     import plot_pearson_benchmark as ppb
-    ppb.HATCH_METHODS |= {"SQUINT (imputed)", "GeST (imputed)"}   # recon stays solid
+    # Colours: start from COLOURS; map the (possibly renamed) squint bar to the
+    # SQUINT-imputed shade, and give each extra bar a distinct SQUINT-family shade.
+    _extra_shades = ["#B5179E", "#7209B7", "#F72585", "#4361EE"]
+    colours = dict(COLOURS)
+    colours.setdefault(squint_label, COLOURS["SQUINT (imputed)"])
+    for i, (_path, _label) in enumerate(args.extra_variant or []):
+        colours.setdefault(_label, _extra_shades[i % len(_extra_shades)])
+    # Hatch all imputed bars (everything except the solid SQUINT (recon) ceiling).
+    ppb.HATCH_METHODS |= (set(methods) - {"SQUINT (recon)"})
 
     # resolve each method's CSV once
     resolved: Dict[str, Optional[Path]] = {}
@@ -329,7 +349,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         resolved, grid_rows, args.split,
         fig_base=args.out_dir / f"{args.out_prefix}_{args.metric}_{args.branch}_{args.split}",
         long_csv_path=args.out_dir / f"{args.out_prefix}_{args.metric}_{args.branch}.csv",
-        suptitle=suptitle, colours=COLOURS, branch=args.branch)
+        suptitle=suptitle, colours=colours, branch=args.branch)
 
 
 if __name__ == "__main__":

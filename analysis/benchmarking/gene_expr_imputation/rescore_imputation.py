@@ -90,16 +90,36 @@ def main(argv=None) -> int:
                    help="Skip adding the neighborhood branch (X_hat_nbr/X_nbr).")
     args = p.parse_args(argv)
 
+    def _uns_to_layers(adata) -> None:
+        """SQUINT's predict saves X_hat / X_hat_nbr / X_nbr to adata.uns (torch
+        tensors); build_pearson_dataframe reads layers. Copy any (n_obs, n_vars)
+        uns tensor into the matching layer so SQUINT is scored by the SAME code
+        (and metric definitions) as the baselines, using its NATIVE niche
+        prediction (X_hat_nbr) — no re-aggregation. No-op for baseline adatas
+        (they already have the layers)."""
+        import numpy as _np
+        for k in ("X_hat", "X_hat_nbr", "X_nbr"):
+            if k in adata.layers or k not in adata.uns:
+                continue
+            v = adata.uns[k]
+            arr = v.detach().cpu().numpy() if hasattr(v, "detach") else _np.asarray(v)
+            if getattr(arr, "shape", None) == adata.shape:      # per-cell matrix only
+                adata.layers[k] = arr
+                print(f"  [uns->layers] copied uns['{k}'] -> layers['{k}'] {arr.shape}")
+
     def _score_one(adata_path: Path, seed: int) -> pd.DataFrame:
         print(f"Loading {adata_path}  (seed={seed})")
         adata = ad.read_h5ad(adata_path)
         if "data_split" not in adata.obs.columns:
             raise SystemExit(
                 f"obs['data_split'] missing in {adata_path} — not holdout-split.")
+        _uns_to_layers(adata)                                    # SQUINT uns -> layers
         if "X_hat" not in adata.layers:
-            raise SystemExit(f"layers['X_hat'] missing in {adata_path}.")
+            raise SystemExit(f"layers['X_hat'] (or uns['X_hat']) missing in {adata_path}.")
         print(f"  n_obs={adata.n_obs}, n_vars={adata.n_vars}")
         if not args.no_nbr:
+            # No-op when X_hat_nbr + X_nbr are already present (SQUINT native
+            # niche, or a prior run) — only aggregates for cell-only methods.
             add_neighborhood_layers(adata, batch_key=args.batch_key,
                                     n_neighs=args.nbr_neighs)
         return build_pearson_dataframe(
