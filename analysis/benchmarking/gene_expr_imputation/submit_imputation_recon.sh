@@ -18,7 +18,7 @@
 #   vanilla-cell  run_vanilla_vq_cell.py  (Vanilla VQ cell recon)  venv: squint
 #   vanilla-nbr   run_vanilla_vq_nbr.py   (Vanilla VQ niche recon) venv: squint
 #   knn           run_knn_spatial.py      (kNN imputation floor)   venv: squint
-#   mlp           run_mlp_spatial.py      (MLP imputation, GeST's)  venv: squint
+#   mlp           run_mlp_spatial.py      (MLP imputation; NOT plotted) venv: squint
 #
 # Usage:
 #   bash gene_expr_imputation/submit_imputation_recon.sh                  # all 7
@@ -74,9 +74,11 @@ method_spec() {
         nichecompass) echo "nichecompass|gene_expr_imputation/run_nichecompass.py|--species $NC_SPECIES --gene-orthologs-csv $NC_ORTHOLOGS --mebocost-dir $NC_MEBOCOST" ;;
         vanilla-cell) echo "squint|gene_expr_imputation/run_vanilla_vq_cell.py|" ;;
         vanilla-nbr)  echo "squint|gene_expr_imputation/run_vanilla_vq_nbr.py|" ;;
-        # Task-matched imputation baselines (GeST's own GP/MLP baseline family):
-        # knn = non-parametric spatial neighbor-averaging floor; mlp = GeST's
-        # learned coords->expression MLP. Both single-modality (no reference).
+        # Task-matched imputation baselines (GeST's own GP/MLP baseline family),
+        # single-modality (no reference): knn = non-parametric spatial neighbor-
+        # averaging floor; mlp = GeST's coords->expression MLP. Both are runnable
+        # here; NOTE the mlp bar is EXCLUDED from the FIGURES (a coords-only MLP
+        # is a near-zero comparator) — kept wired for running/inspection.
         knn)          echo "squint|gene_expr_imputation/run_knn_spatial.py|" ;;
         mlp)          echo "squint|gene_expr_imputation/run_mlp_spatial.py|" ;;
         *) return 1 ;;
