@@ -34,7 +34,7 @@ Outputs (to --out-dir, default <run_dir>/codebook_usage_plots/):
   codebook_usage.json    same, machine-readable
   codebook_usage.png/svg per-(branch, level) sorted usage bar charts
 
-Usage (auto-resolve the latest run of the default s49_v23 variant):
+Usage (auto-resolve the latest run of the default FiLM-scale reference variant):
     python report_codebook_usage.py
 
 Or point it at a specific artifact / run / timestamp:
@@ -54,12 +54,9 @@ import sys
 
 import numpy as np
 
-# Defaults — the variant the reviewer asked about + standard farm layout.
-DEFAULT_VARIANT = (
-    "s49_v23_dualvq+rvq-both+decoder-cov+no-batch-int+enc-deeper+dec-w32+"
-    "knn16+sampler16+cell-w1+bs512+lr7e-4+within-sec+decoupled-enc+"
-    "diversity-w10+contrastWB-w10-k5+mmb0-1b_smb1-1b_1p"
-)
+# Defaults — the current FiLM-scale mouse-brain REFERENCE + standard farm
+# layout. (Was the s49_v23 winner; switched to s57_v19 on 2026-07-02.)
+DEFAULT_VARIANT = "s57_v19_reference-filmscale+mmb0-1b_smb1-1b_1p"
 DEFAULT_DATASET = "mmb0-1b_smb1-1b_1p"
 DEFAULT_ARTIFACTS_ROOT = "/nfs/team361/sb75/squint-reproducibility/artifacts"
 
@@ -420,7 +417,8 @@ def main(argv=None):
     src.add_argument("--run-dir", default=None,
                      help="A <timestamp> run dir containing predicted_adata.h5ad.")
     src.add_argument("--variant", default=DEFAULT_VARIANT,
-                     help="Variant key (default: the s49_v23 mouse-brain winner).")
+                     help="Variant key (default: the s57_v19 FiLM-scale "
+                          "mouse-brain reference).")
     src.add_argument("--dataset", default=DEFAULT_DATASET,
                      help="Dataset tag dir under the artifacts root.")
     src.add_argument("--artifacts-root", default=DEFAULT_ARTIFACTS_ROOT)

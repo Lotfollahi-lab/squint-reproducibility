@@ -11,9 +11,9 @@
 # Usage:
 #   bash submit_codebook_usage.sh [VARIANT] [-- <extra args to the .py>]
 #
-#   VARIANT  Optional. A registered variant key. Defaults to the s49_v23
-#            mouse-brain winner the reviewer asked about. The script reports
-#            on that variant's LATEST run unless you pass --timestamp.
+#   VARIANT  Optional. A registered variant key. Defaults to the s57_v19
+#            FiLM-scale mouse-brain reference. The script reports on that
+#            variant's LATEST run unless you pass --timestamp.
 #
 #   Anything after a literal `--` is forwarded verbatim to
 #   report_codebook_usage.py (e.g. --timestamp 20260601_120000,
@@ -40,7 +40,8 @@
 # -----------------------------------------------------------------------------
 set -euo pipefail
 
-DEFAULT_VARIANT="s49_v23_dualvq+rvq-both+decoder-cov+no-batch-int+enc-deeper+dec-w32+knn16+sampler16+cell-w1+bs512+lr7e-4+within-sec+decoupled-enc+diversity-w10+contrastWB-w10-k5+mmb0-1b_smb1-1b_1p"
+# FiLM-scale mouse-brain reference (was the s49_v23 winner until 2026-07-02).
+DEFAULT_VARIANT="s57_v19_reference-filmscale+mmb0-1b_smb1-1b_1p"
 
 # Split args at the first literal `--`: before = VARIANT, after = py passthrough.
 VARIANT=""
