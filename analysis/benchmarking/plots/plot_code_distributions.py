@@ -400,19 +400,76 @@ def _donor_palette(donors_ordered: List[str]) -> Dict[str, tuple]:
     return dict(zip(donors_ordered, cols))
 
 
-def _build_code_universe(obs: pd.DataFrame, code_col: str) -> np.ndarray:
-    """Return the sorted array of unique code values seen in `code_col`.
-    Numeric codes are sorted numerically; everything else lexically."""
+def _build_code_universe(obs: pd.DataFrame, code_col: str,
+                         nominal_k: "int | None" = None) -> np.ndarray:
+    """Return the sorted array of code values to plot for `code_col`.
+
+    By default this is the set of codes that ACTUALLY APPEAR in the data
+    (`.unique()`), so a dead code (a codebook entry never assigned to any
+    cell) is silently absent — e.g. a nominal-90 codebook with one dead code
+    yields 89 bars. Pass `nominal_k` (the codebook size for this level) to
+    instead span the FULL codebook `0..K-1`, so dead codes show as zero-height
+    bars and the axis matches the reported K. Only applies to INTEGER codes;
+    ignored for non-integer (label-name) columns."""
     vals = obs[code_col].dropna().unique()
     # Try to coerce to int -> numeric sort; fall back to string sort.
     try:
         arr = np.array([int(v) for v in vals])
         arr.sort()
+        if nominal_k is not None:
+            # Span the full nominal codebook. Guard: never SHRINK below the
+            # observed max (in case an index unexpectedly exceeds nominal_k),
+            # so no assigned code is ever dropped.
+            observed_max = int(arr.max()) + 1 if arr.size else 0
+            return np.arange(max(int(nominal_k), observed_max), dtype=int)
         return arr
     except (TypeError, ValueError):
         arr = np.array([str(v) for v in vals])
         arr.sort()
         return arr
+
+
+def _nominal_codebook_k(adata, branch: str, src: str, key: str,
+                        level, cli_override: "int | None" = None) -> "int | None":
+    """Nominal codebook size K for the resolved (branch, level) column.
+
+    Lets the distribution axis span the FULL codebook (dead codes -> zero
+    bars) instead of only the observed-unique codes. Priority:
+      cli_override  >  adata.uns['codebook_sizes_<branch>'][level_idx]
+    Returns None (=> keep the observed-unique behaviour) for composite levels
+    or when the sizes metadata is missing / the level is out of range.
+
+    `level` is the parsed --*-level (int or 'composite') for obsm columns; for
+    obs columns the level is baked into the key name (e.g. '[level_1]')."""
+    if cli_override is not None:
+        return int(cli_override)
+    # Which residual level does the resolved column correspond to?
+    if src == "obsm":
+        level_idx = level if isinstance(level, int) else None      # composite -> None
+    else:                                    # obs column: level baked into name
+        low = str(key).lower()
+        if "composite" in low:
+            level_idx = None
+        elif "level_2" in low or "level2" in low:
+            level_idx = 2
+        elif "level_1" in low or "level1" in low:
+            level_idx = 1
+        else:
+            level_idx = 0                    # 'level_0' or a bare single-level col
+    if level_idx is None:
+        return None
+    sizes = adata.uns.get(f"codebook_sizes_{branch}")
+    if sizes is None and branch == "niche":
+        sizes = adata.uns.get("codebook_sizes")                    # legacy alias
+    if sizes is None:
+        return None
+    try:
+        sizes = [int(s) for s in np.asarray(sizes).ravel().tolist()]
+    except (TypeError, ValueError):
+        return None
+    if 0 <= level_idx < len(sizes):
+        return int(sizes[level_idx])
+    return None
 
 
 def _section_distribution(
@@ -1390,6 +1447,8 @@ def _run_distribution_pass(
         skip_per_section: bool,
         progress_label: str,
         code_colored: bool = True,
+        cell_nominal_k: "int | None" = None,
+        niche_nominal_k: "int | None" = None,
     ) -> List[Dict]:
     """Run one full analysis pass (codes or labels) on a working obs
     DataFrame containing `cell_col_internal` and `niche_col_internal`.
@@ -1400,8 +1459,10 @@ def _run_distribution_pass(
     caller to combine into a single similarity_long.csv.
     """
     # ---- Build code universes ------------------------------------------
-    code_universe_cell  = _build_code_universe(obs, cell_col_internal)
-    code_universe_niche = _build_code_universe(obs, niche_col_internal)
+    # nominal_k (when known) spans the FULL codebook so dead codes appear as
+    # zero bars; None -> observed-unique (the labels pass always passes None).
+    code_universe_cell  = _build_code_universe(obs, cell_col_internal, cell_nominal_k)
+    code_universe_niche = _build_code_universe(obs, niche_col_internal, niche_nominal_k)
     print(f"  {progress_label}: unique cell  values: "
           f"{len(code_universe_cell)}")
     print(f"  {progress_label}: unique niche values: "
@@ -1561,6 +1622,21 @@ def main(argv: Optional[List[str]] = None) -> None:
         help="Same as --cell-level but for niche codes. Default: '0'.",
     )
     p.add_argument(
+        "--cell-codebook-size", type=int, default=None,
+        help="Nominal CELL codebook size (K) for the plotted level. The code "
+             "axis then spans the FULL codebook 0..K-1 so DEAD codes (never "
+             "assigned) show as zero-height bars — otherwise the axis only "
+             "covers observed codes (e.g. 89 bars for a nominal-90 codebook "
+             "with one dead code). Default: auto from "
+             "adata.uns['codebook_sizes_cell'] for the resolved level; only "
+             "needed for old artifacts without that metadata, or to override.",
+    )
+    p.add_argument(
+        "--niche-codebook-size", type=int, default=None,
+        help="Nominal NICHE codebook size (K) for the plotted level. See "
+             "--cell-codebook-size.",
+    )
+    p.add_argument(
         "--section-col", type=str, default=None,
         help=f"obs column for section ids. Default: first present from "
              f"{list(DEFAULT_SECTION_COLS)}.",
@@ -1712,6 +1788,18 @@ def main(argv: Optional[List[str]] = None) -> None:
     print(f"  niche-code:  {niche_desc}")
     print(f"  section col: {args.section_col}")
 
+    # Nominal codebook size for each plotted level -> the code axis spans the
+    # FULL codebook (0..K-1) so DEAD codes show as zero bars. None => plot only
+    # the observed-unique codes (previous behaviour; also used for composite).
+    cell_nominal_k = _nominal_codebook_k(
+        adata, "cell", cell_src, cell_key, cell_level, args.cell_codebook_size)
+    niche_nominal_k = _nominal_codebook_k(
+        adata, "niche", niche_src, niche_key, niche_level, args.niche_codebook_size)
+    print(f"  cell  codebook axis span: "
+          f"{cell_nominal_k if cell_nominal_k is not None else 'observed-only'}")
+    print(f"  niche codebook axis span: "
+          f"{niche_nominal_k if niche_nominal_k is not None else 'observed-only'}")
+
     # Build a fixed-schema working DataFrame so the downstream pipeline
     # (which still does `df[df[section_col] == section][code_col]`-style
     # lookups) doesn't have to know whether codes came from obs or obsm.
@@ -1857,6 +1945,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         query_sections=query_sections,
         skip_per_section=args.skip_per_section,
         progress_label="Codes",
+        cell_nominal_k=cell_nominal_k,
+        niche_nominal_k=niche_nominal_k,
     ))
 
     # ---- Pass 2: labels-based analysis --------------------------------

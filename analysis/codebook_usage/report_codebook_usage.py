@@ -135,9 +135,24 @@ def _get_indices(adata, branch: str) -> np.ndarray:
     return idx.astype(np.int64)
 
 
-def _get_sizes(adata, branch: str, idx: np.ndarray) -> list:
-    """Codebook size per level for a branch. Prefer stored metadata."""
+def _get_sizes(adata, branch: str, idx: np.ndarray, override=None) -> list:
+    """Codebook size per level for a branch.
+
+    Priority: explicit `override` (from --codebook-sizes-*) > stored metadata
+    (`adata.uns['codebook_sizes_<branch>']`) > inferred from the max observed
+    index (+1). The last resort UNDER-counts K when the TOP code(s) are dead
+    (e.g. a nominal-90 codebook whose code #89 is never used reads as 89), so
+    pass the true K via the run metadata or --codebook-sizes-<branch>."""
     k = _BRANCH_KEYS[branch]
+    # 1) explicit CLI override wins (fixes old artifacts with no stored sizes).
+    if override is not None:
+        ov = [int(s) for s in override]
+        if len(ov) == idx.shape[1]:
+            return ov
+        print(f"[usage] WARNING: --codebook-sizes-{branch} has {len(ov)} "
+              f"level(s) {ov} but the stored code stack has {idx.shape[1]} "
+              f"level(s) — ignoring the override.", file=sys.stderr)
+    # 2) stored metadata.
     sizes = None
     if k["sizes"] in adata.uns:
         sizes = adata.uns[k["sizes"]]
@@ -211,8 +226,12 @@ _COLS = ["branch", "level", "K", "n_used", "active_fraction", "n_dead",
          "max_code_share", "n_cells"]
 
 
-def _compute_rows(adata):
-    """Return (rows, usage_for_plot) of per (branch, level) codebook metrics."""
+def _compute_rows(adata, sizes_override=None):
+    """Return (rows, usage_for_plot) of per (branch, level) codebook metrics.
+
+    `sizes_override` (optional) maps branch -> [K_per_level] and takes
+    precedence over the stored metadata / max-index inference."""
+    sizes_override = sizes_override or {}
     rows, usage_for_plot = [], {}
     for branch in ("cell", "niche"):
         idx = _get_indices(adata, branch)
@@ -221,7 +240,7 @@ def _compute_rows(adata):
                   f"(uns/{_BRANCH_KEYS[branch]['uns']}, "
                   f"obsm/{_BRANCH_KEYS[branch]['obsm']}). Skipping.", file=sys.stderr)
             continue
-        sizes = _get_sizes(adata, branch, idx)
+        sizes = _get_sizes(adata, branch, idx, override=sizes_override.get(branch))
         for q in range(idx.shape[1]):
             m, counts = _level_metrics(idx[:, q], sizes[q])
             rows.append({"branch": branch, "level": f"L{q}", **m})
@@ -279,13 +298,13 @@ def _plot_usage(usage_for_plot, df, out_dir, stem, suptitle):
         print(f"[usage] plot skipped ({type(e).__name__}: {e})", file=sys.stderr)
 
 
-def _report_one(path, out_dir, variant, stem, make_plot):
+def _report_one(path, out_dir, variant, stem, make_plot, sizes_override=None):
     """Compute + write csv/json + plot for one run. Returns the metrics df (or None)."""
     import anndata as ad
     import pandas as pd
     print(f"[usage] reading {path}")
     adata = ad.read_h5ad(path)
-    rows, usage_for_plot = _compute_rows(adata)
+    rows, usage_for_plot = _compute_rows(adata, sizes_override=sizes_override)
     if not rows:
         print(f"[usage] no code indices in {path} (continuous / old artifact?) — skip",
               file=sys.stderr)
@@ -373,6 +392,25 @@ def _plot_aggregate(alldf, out_dir):
 # ----------------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------------
+def _parse_sizes_csv(s):
+    """'30,90' -> [30, 90]; None / '' -> None."""
+    if not s:
+        return None
+    return [int(x) for x in str(s).split(",") if str(x).strip() != ""]
+
+
+def _sizes_override_from_args(args):
+    """Build the branch -> [K_per_level] override dict from the CLI (or None)."""
+    ov = {}
+    c = _parse_sizes_csv(getattr(args, "codebook_sizes_cell", None))
+    n = _parse_sizes_csv(getattr(args, "codebook_sizes_niche", None))
+    if c:
+        ov["cell"] = c
+    if n:
+        ov["niche"] = n
+    return ov or None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -398,17 +436,29 @@ def main(argv=None):
                          "<variant>/codebook_usage_plots/ for --all-seeds).")
     ap.add_argument("--no-plot", action="store_true",
                     help="Skip the usage bar-chart figures.")
+    ap.add_argument("--codebook-sizes-cell", default=None,
+                    help="Override the CELL codebook size(s) per level, comma-"
+                         "separated (e.g. '30,90'). Use for OLD artifacts that "
+                         "don't store codebook_sizes_cell — otherwise K is "
+                         "inferred from the max index (+1), which UNDER-counts "
+                         "when the top code is dead (reads K=89 for a nominal-90 "
+                         "codebook). Length must match the number of RVQ levels.")
+    ap.add_argument("--codebook-sizes-niche", default=None,
+                    help="Override the NICHE codebook size(s) per level "
+                         "(comma-separated). See --codebook-sizes-cell.")
     args = ap.parse_args(argv)
 
     if args.all_seeds:
         _run_all_seeds(args)
         return
 
+    sizes_override = _sizes_override_from_args(args)
     path = _resolve_predicted_adata(args)
     out_dir = args.out_dir or os.path.join(os.path.dirname(path), "codebook_usage_plots")
     os.makedirs(out_dir, exist_ok=True)
     print(f"[usage] out -> {out_dir}\n")
-    df = _report_one(path, out_dir, args.variant, "codebook_usage", not args.no_plot)
+    df = _report_one(path, out_dir, args.variant, "codebook_usage",
+                     not args.no_plot, sizes_override=sizes_override)
     if df is None:
         raise SystemExit("No codebook indices found in the predicted adata — "
                          "continuous/non-VQ run, or an old artifact without codes?")
@@ -431,13 +481,15 @@ def _run_all_seeds(args):
         raise SystemExit(f"No <timestamp>/predicted_adata.h5ad run dirs under {base}")
     out_dir = args.out_dir or os.path.join(base, "codebook_usage_plots")
     os.makedirs(out_dir, exist_ok=True)
+    sizes_override = _sizes_override_from_args(args)
     print(f"[usage] --all-seeds: {len(stamps)} run(s) under\n  {base}\n  out -> {out_dir}\n")
     per_seed = []
     for ts in stamps:
         print(f"\n===== {ts} =====")
         path = os.path.join(base, ts, "predicted_adata.h5ad")
         df = _report_one(path, out_dir, args.variant,
-                         f"codebook_usage_{ts}", not args.no_plot)
+                         f"codebook_usage_{ts}", not args.no_plot,
+                         sizes_override=sizes_override)
         if df is not None:
             df = df.copy()
             df.insert(0, "seed_run", ts)
