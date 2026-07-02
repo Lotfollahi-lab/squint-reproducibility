@@ -7,29 +7,41 @@ reviewer comment "the rationale for discrete codebooks over continuous latents
 is not sufficiently supported".
 
 THREE conditions (bars), each scored on ALL 8 ablation metrics — resolution
-(Cell/Niche NMI & ARI) AND integration (Cell/Niche iLISI & MMD):
+(Cell/Niche NMI & ARI) AND integration (Cell/Niche iLISI & MMD). To reconcile
+with the main benchmark, the DISCRETE model is the HEADLINE SQUINT reference
+(s57_v19) and the CONTINUOUS model is its exact continuous counterpart (s57_v33
+= identical config with the ResidualVQ bottleneck replaced by a ContinuousVQ
+passthrough), so discreteness is the ONLY thing that varies between them:
 
-  - "Discrete codes"        VQ-VAE: NMI/ARI from the level-0 CODES directly;
-                            iLISI/MMD from the quantized z_q embedding.
-  - "Discrete clustered"    VQ-VAE: NMI/ARI from k-means of the PRE-VQ latent z;
-                            iLISI/MMD from the pre-VQ z embedding.
-  - "Continuous clustered"  continuous model: NMI/ARI from k-means of its emb;
-                            iLISI/MMD from its embedding.
+  - "SQUINT (codes)"    headline SQUINT: NMI/ARI from the level-0 CODES directly
+                        (no clustering step — the codes ARE the assignment);
+                        iLISI/MMD from the quantized z_q embedding. This bar is
+                        the headline niche/cell number reported in Table 1.
+  - "SQUINT (Leiden)"   headline SQUINT: NMI/ARI from Leiden clustering of the
+                        PRE-VQ latent z (the model's own continuous
+                        representation), iLISI/MMD from the pre-VQ z embedding.
+  - "Continuous (Leiden)"  s57_v33 continuous counterpart: NMI/ARI from Leiden
+                        clustering of its embedding; iLISI/MMD from that emb.
 
-So the VQ-VAE contributes both its DISCRETIZED (z_q) and its CONTINUOUS (pre-VQ
-z) embeddings, and the continuous variant its continuous embedding — exactly the
-integration comparison requested. RESOLUTION (NMI/ARI) is computed here by
-k-means at k = #discrete codes (--match nominal = L0 codebook size; --match used
-= #unique codes). INTEGRATION (iLISI/MMD) is read straight from each run's
-precomputed metrics/batch_integration_metrics.csv (emb keys cell_emb /
-neighborhood_emb = z_q ; cell_latent / neighborhood_latent = pre-VQ z) — no
-recomputation, so it matches the numbers in the other ablation plots. k-means
-seed fixed (--kmeans-seed); VARIANCE = the training seeds. Significance: each
-condition vs the "Discrete codes" default.
+So the headline model contributes both its DISCRETE (codes / z_q) and its
+CONTINUOUS (pre-VQ z) representations, and the continuous-trained counterpart
+its embedding — isolating whether the discrete codes match (or beat) clustering
+a continuous latent. RESOLUTION (NMI/ARI) for the two Leiden bars is computed
+here by Leiden with resolution binary-search to k = #discrete codes clusters
+(--match nominal = L0 codebook size = 30; --match used = #unique codes), the
+IDENTICAL protocol used for the continuous baselines in the main niche/cell-type
+benchmark (analysis/benchmarking/.../run_pca_leiden.py::_leiden_n_clusters:
+sc.pp.neighbors n_neighbors=15 then bisect resolution in [0.05, 10.0]).
+INTEGRATION (iLISI/MMD) is read straight from each run's precomputed
+metrics/batch_integration_metrics.csv (emb keys cell_emb / neighborhood_emb =
+z_q ; cell_latent / neighborhood_latent = pre-VQ z) — no recomputation, so it
+matches the numbers in the other ablation plots. Leiden seed fixed
+(--leiden-seed); VARIANCE = the training seeds. Significance: each condition vs
+the "SQUINT (codes)" default.
 
 MULTI-SEED: pass run dirs per model; each may be a run dir, a multiseed sweep /
 seed_run_index.csv (auto-expanded), or a variant parent dir. Default runs =
-s57_v29 (discrete) and s57_v28 (continuous).
+s57_v19 (headline discrete) and s57_v33 (continuous counterpart).
 
 Outputs (to --out-dir, default <first continuous run>/comparison_vs_discrete/):
   discretization_per_seed.csv      one row per (condition, branch, metric, seed)
@@ -55,13 +67,20 @@ import sys
 import numpy as np
 
 # --- default sweep dirs ------------------------------------------------------
-# Default to the s57 self-contained paper set: s57_v29 (discrete VQ ref) and
-# s57_v28 (continuous latent) multi-seed sweep PARENT dirs. `_expand_runs`
-# auto-descends each to its latest <timestamp>/seed_run_index.csv, so these stay
-# correct across re-runs. Override with --discrete-runs / --continuous-runs.
+# Matched-pair discretization ablation on the HEADLINE config:
+#   discrete   = s57_v19 (the paper's headline SQUINT reference; its level-0
+#                codes ARE the Table-1 niche/cell-type clustering, so the
+#                "SQUINT (codes)" bar reconciles with Table 1).
+#   continuous = s57_v33 (the EXACT continuous counterpart of s57_v19 — same
+#                FiLM-scale coupling + cross-batch-MNN contrastive spine, with
+#                the ResidualVQ bottleneck swapped for a ContinuousVQ
+#                passthrough on both branches). Isolates discreteness alone.
+# Both are multi-seed sweep PARENT dirs; `_expand_runs` auto-descends each to
+# its latest <timestamp>/seed_run_index.csv. Override with
+# --discrete-runs / --continuous-runs.
 _ARTROOT = "/nfs/team361/sb75/squint-reproducibility/artifacts/mmb0-1b_smb1-1b_1p"
-_DISCRETE_VARIANT = "s57_v29_discrete-vq-ref+mmb0-1b_smb1-1b_1p"
-_CONTINUOUS_VARIANT = "s57_v28_continuous-latent+mmb0-1b_smb1-1b_1p"
+_DISCRETE_VARIANT = "s57_v19_reference-filmscale+mmb0-1b_smb1-1b_1p"
+_CONTINUOUS_VARIANT = "s57_v33_continuous-ref-filmscale+mmb0-1b_smb1-1b_1p"
 DEFAULT_DISCRETE_RUNS = [os.path.join(_ARTROOT, _DISCRETE_VARIANT + "__multiseed")]
 DEFAULT_CONTINUOUS_RUNS = [os.path.join(_ARTROOT, _CONTINUOUS_VARIANT + "__multiseed")]
 
@@ -77,17 +96,7 @@ _CODE_KEYS = {
     "niche": {"uns": "Indices_niche", "obsm": "neighborhood_code_indices",
               "obs": "neighborhood_code_index", "sizes": "codebook_sizes_niche"},
 }
-# Condition labels (the 4 folds) and short labels for the plot.
-C1, C2, C3, C4 = ("1. Discrete codes (L0)",
-                  "2. VQ-VAE quant. emb, clustered",
-                  "3. VQ-VAE pre-quant emb, clustered",
-                  "4. Continuous emb, clustered")
-SHORT = {C1: "Discrete\ncodes", C2: "Quant.\nemb",
-         C3: "Discrete\nclustered", C4: "Continuous\nclustered"}
 BRANCHES = [("cell", "Cell-type"), ("niche", "Niche")]
-# Per-condition colours: the three VQ-VAE folds in the red family, the
-# continuous baseline in grey — mirrors the ablation figure's red-vs-grey.
-COND_COLOURS = {C1: "#C2185B", C2: "#E91E63", C3: "#F06292", C4: "#9E9E9E"}
 
 
 def _darken(colour, f: float = 0.62):
@@ -191,10 +200,41 @@ def _nmi_ari(true_lab, pred_lab):
     return float(_nmi(true_lab, pred_lab)), float(_ari(true_lab, pred_lab))
 
 
-def _kmeans(emb, k, seed):
-    from sklearn.cluster import KMeans
-    return KMeans(n_clusters=int(k), n_init=10, random_state=seed).fit_predict(
-        np.asarray(emb, dtype=np.float32))
+def _leiden(emb, k, seed, n_neighbors: int = 15, max_iters: int = 25):
+    """Leiden clustering with resolution binary-search to hit `k` clusters,
+    returning integer labels aligned to `emb` rows.
+
+    Mirrors the main niche/cell-type benchmark protocol
+    (analysis/benchmarking/.../run_pca_leiden.py::_leiden_n_clusters, CPU path):
+    build a k-NN graph on the embedding (n_neighbors=15) then bisect the Leiden
+    resolution in [0.05, 10.0] until the cluster count equals `k` (or as close
+    as possible within `max_iters`). This is the IDENTICAL clustering the
+    continuous baselines get in the main benchmark, so the two Leiden bars here
+    are apples-to-apples with Table 1's baselines.
+    """
+    import anndata as ad
+    import scanpy as sc
+    X = np.asarray(emb, dtype=np.float32)
+    A = ad.AnnData(X)
+    A.obsm["X_emb"] = X
+    sc.pp.neighbors(A, n_neighbors=n_neighbors, use_rep="X_emb", random_state=seed)
+    lo, hi = 0.05, 10.0
+    best = None  # (abs-diff, labels)
+    for _ in range(int(max_iters)):
+        mid = 0.5 * (lo + hi)
+        sc.tl.leiden(A, resolution=mid, key_added="leiden", random_state=seed)
+        lab = A.obs["leiden"].astype(int).to_numpy()
+        n_found = int(np.unique(lab).size)
+        diff = abs(n_found - int(k))
+        if best is None or diff < best[0]:
+            best = (diff, lab)
+        if n_found == int(k):
+            return lab
+        if n_found < int(k):
+            lo = mid
+        else:
+            hi = mid
+    return best[1]
 
 
 def _codes_l0(adata, branch):
@@ -294,11 +334,13 @@ def main(argv=None):
     ap.add_argument("--cell-label-key", default=None)
     ap.add_argument("--niche-label-key", default=None)
     ap.add_argument("--match", choices=["nominal", "used"], default="nominal",
-                    help="k for embedding clustering = #discrete codes. "
-                         "nominal (default) = L0 codebook size; used = #unique "
-                         "L0 codes assigned (per discrete run; fold-4 uses the mean).")
-    ap.add_argument("--kmeans-seed", type=int, default=0,
-                    help="Fixed k-means seed (variance comes from training seeds).")
+                    help="target #clusters for Leiden = #discrete codes. "
+                         "nominal (default) = L0 codebook size (=30); used = "
+                         "#unique L0 codes assigned (per discrete run; the "
+                         "continuous fold uses the mean).")
+    ap.add_argument("--leiden-seed", type=int, default=0,
+                    help="Fixed Leiden/neighbors seed (variance comes from "
+                         "training seeds).")
     ap.add_argument("--test", choices=["ttest", "mannwhitney"], default="ttest")
     ap.add_argument("--error", choices=["ci95", "sem", "std"], default="ci95",
                     help="Error-bar half-width (default 95%% CI).")
@@ -321,13 +363,14 @@ def main(argv=None):
                                 _apply_nature_style)
     from plot_ablations_multiseed import render_axis                    # noqa: E402
 
-    # The 3 conditions (bars). Each maps a RESOLUTION source (codes / k-means at
-    # k=#codes) and an INTEGRATION embedding (iLISI/MMD read straight from each
+    # The 3 conditions (bars). Each maps a RESOLUTION source (codes directly /
+    # Leiden-to-k on an embedding, k=#codes) and an INTEGRATION embedding
+    # (iLISI/MMD read straight from each
     # run's precomputed metrics/batch_integration_metrics.csv — cell_emb /
     # neighborhood_emb = z_q; cell_latent / neighborhood_latent = pre-VQ z).
-    COND_CODES  = "Discrete codes"          # VQ-VAE discrete: NMI/ARI from codes; iLISI/MMD from z_q
-    COND_DCLUST = "Discrete clustered"      # VQ-VAE: NMI/ARI from pre-VQ z clustered; iLISI/MMD from pre-VQ z
-    COND_CONT   = "Continuous clustered"    # continuous model: NMI/ARI clustered; iLISI/MMD from its emb
+    COND_CODES  = "SQUINT (codes)"       # headline SQUINT: NMI/ARI from L0 codes; iLISI/MMD from z_q (= Table 1)
+    COND_DCLUST = "SQUINT (Leiden)"      # headline SQUINT: NMI/ARI from Leiden of pre-VQ z; iLISI/MMD from pre-VQ z
+    COND_CONT   = "Continuous (Leiden)"  # s57_v33 continuous counterpart: NMI/ARI from Leiden of emb; iLISI/MMD from emb
     CONDS = [COND_CODES, COND_DCLUST, COND_CONT]
     INTEG_EMB = {
         COND_CODES:  {"cell": "cell_emb",    "niche": "neighborhood_emb"},
@@ -391,9 +434,9 @@ def main(argv=None):
             # COND_CODES resolution = codes directly
             nmi, ari = _nmi_ari(true_lab, codes_v)
             _push(res, COND_CODES, branch, "NMI", nmi); _push(res, COND_CODES, branch, "ARI", ari)
-            # COND_DCLUST resolution = pre-VQ z clustered
+            # COND_DCLUST resolution = pre-VQ z Leiden-clustered to k
             if pkey in A.obsm:
-                nmi, ari = _nmi_ari(true_lab, _kmeans(A.obsm[pkey][mask], k, args.kmeans_seed))
+                nmi, ari = _nmi_ari(true_lab, _leiden(A.obsm[pkey][mask], k, args.leiden_seed))
                 _push(res, COND_DCLUST, branch, "NMI", nmi); _push(res, COND_DCLUST, branch, "ARI", ari)
         ig = _read_integration(rd)
         for cond in (COND_CODES, COND_DCLUST):
@@ -426,8 +469,8 @@ def main(argv=None):
             if lab_key not in A.obs or qkey not in A.obsm:
                 continue
             mask, true_lab = _label_mask_factorize(A.obs[lab_key])
-            nmi, ari = _nmi_ari(true_lab, _kmeans(A.obsm[qkey][mask], k_cont[branch],
-                                                  args.kmeans_seed))
+            nmi, ari = _nmi_ari(true_lab, _leiden(A.obsm[qkey][mask], k_cont[branch],
+                                                  args.leiden_seed))
             _push(res, COND_CONT, branch, "NMI", nmi); _push(res, COND_CONT, branch, "ARI", ari)
         ig = _read_integration(rd)
         for branch, _bn in BRANCHES:
@@ -478,7 +521,7 @@ def main(argv=None):
             _apply_nature_style()
             axis = AxisSpec(
                 key="discretization",
-                title="Discretization: Discrete Codes vs Clustered Embeddings",
+                title="Discretization: Discrete Codes vs Leiden-Clustered Embeddings",
                 entries=(VariantEntry(COND_CODES, COND_CODES, is_default=True),
                          VariantEntry(COND_DCLUST, COND_DCLUST),
                          VariantEntry(COND_CONT, COND_CONT)))
