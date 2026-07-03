@@ -389,7 +389,27 @@ def main(argv=None):
                     help="Error-bar half-width (default 95%% CI).")
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("--no-plot", action="store_true")
+    ap.add_argument("--list-pairs", action="store_true",
+                    help="Print the paired per-seed run dirs (lines "
+                         "'PAIR<TAB>idx<TAB>discrete_run<TAB>continuous_run') and "
+                         "exit. Used by the per-seed parallel submit wrapper.")
+    ap.add_argument("--aggregate", nargs="+", default=None,
+                    help="Aggregate mode: dirs / globs / CSVs each holding a "
+                         "per-seed worker's discretization_per_seed.csv; "
+                         "concatenate them and write the combined summary + figure "
+                         "to --out-dir. Skips all adata loading / Leiden.")
     args = ap.parse_args(argv)
+
+    if args.list_pairs:
+        disc = _expand_runs(args.discrete_runs, "discrete")
+        cont = _expand_runs(args.continuous_runs, "continuous")
+        n = min(len(disc), len(cont))
+        for i in range(n):
+            print(f"PAIR\t{i}\t{disc[i]}\t{cont[i]}")
+        if len(disc) != len(cont):
+            print(f"[list-pairs] WARNING: {len(disc)} discrete vs {len(cont)} "
+                  f"continuous run(s); paired the first {n}.", file=sys.stderr)
+        return
 
 
     import anndata as ad
@@ -420,6 +440,70 @@ def main(argv=None):
         COND_DCLUST: {"cell": "cell_latent", "niche": "neighborhood_latent"},
         COND_CONT:   {"cell": "cell_emb",    "niche": "neighborhood_emb"},
     }
+
+    if args.aggregate:
+        out_dir = args.out_dir or os.getcwd()
+        os.makedirs(out_dir, exist_ok=True)
+        srcs = []
+        for d in args.aggregate:
+            cands = sorted(glob.glob(d)) if any(ch in d for ch in "*?[") else [d]
+            for c in cands:
+                f = c if c.endswith(".csv") else os.path.join(
+                    c, "discretization_per_seed.csv")
+                if os.path.isfile(f):
+                    srcs.append(f)
+        srcs = sorted(set(srcs))
+        if not srcs:
+            raise SystemExit(f"--aggregate: no discretization_per_seed.csv found "
+                             f"under {args.aggregate}")
+        dfs = []
+        for j, f in enumerate(srcs):
+            x = pd.read_csv(f)
+            x["seed_idx"] = j          # one distinct seed per per-seed worker file
+            dfs.append(x)
+            print(f"[aggregate] {f}: {len(x)} rows")
+        ps_df = pd.concat(dfs, ignore_index=True)
+        summ = (ps_df.groupby(["condition", "branch", "metric"])
+                .agg(mean=("value", "mean"), std=("value", "std"),
+                     n=("value", "size")).reset_index())
+        ps_csv = os.path.join(out_dir, "discretization_per_seed.csv")
+        su_csv = os.path.join(out_dir, "discretization_summary.csv")
+        ps_df.to_csv(ps_csv, index=False)
+        summ.to_csv(su_csv, index=False)
+        pd.set_option("display.width", 200)
+        pd.set_option("display.float_format", lambda v: f"{v:.4f}")
+        print("\n" + "=" * 78)
+        print(f"DISCRETE vs CONTINUOUS — aggregated over {len(srcs)} per-seed run(s)")
+        print("=" * 78)
+        print(summ.to_string(index=False))
+        print(f"\n[aggregate] wrote {ps_csv}\n[aggregate] wrote {su_csv}")
+        if not args.no_plot:
+            try:
+                per_metric_values = {}
+                for metric_label, _direction in METRICS:
+                    branch = "cell" if metric_label.startswith("Cell") else "niche"
+                    kind = metric_label.split()[-1]
+                    sub = ps_df[(ps_df["branch"] == branch)
+                                & (ps_df["metric"] == kind)]
+                    per_metric_values[metric_label] = {
+                        cond: sub[sub["condition"] == cond]["value"].to_numpy(
+                            dtype=float) for cond in CONDS}
+                _apply_nature_style()
+                axis = AxisSpec(
+                    key="discretization",
+                    title="Discretization: Discrete Codes vs Leiden-Clustered Embeddings",
+                    entries=(VariantEntry(COND_CODES, COND_CODES, is_default=True),
+                             VariantEntry(COND_DCLUST, COND_DCLUST),
+                             VariantEntry(COND_CONT, COND_CONT)))
+                render_axis(axis, per_metric_values, {c: c for c in CONDS}, COND_CODES,
+                            Path(out_dir) / "discretization_comparison",
+                            args.test, args.error)
+                print(f"[aggregate] wrote {out_dir}/discretization_comparison.{{svg,png,pdf}}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[aggregate] plot skipped ({type(exc).__name__}: {exc})",
+                      file=sys.stderr)
+        print("\n[aggregate] DONE")
+        return
 
     def _read_integration(run_dir):
         """{(emb_key, metric): score} from <run_dir>/metrics/batch_integration_metrics.csv."""
