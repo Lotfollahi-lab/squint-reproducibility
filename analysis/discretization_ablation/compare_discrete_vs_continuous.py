@@ -49,7 +49,7 @@ Outputs (to --out-dir, default <first continuous run>/comparison_vs_discrete/):
   discretization_comparison.{svg,png,pdf}  horizontal ablation-style figure
 
 Usage:
-    python compare_discrete_vs_continuous.py            # s57_v29 vs s57_v28
+    python compare_discrete_vs_continuous.py            # s57_v19 (discrete) vs s57_v33 (continuous)
     python compare_discrete_vs_continuous.py --test mannwhitney --error sem
 
 Requirements: anndata, numpy, pandas, scikit-learn, matplotlib (+ the ablation
@@ -87,9 +87,13 @@ DEFAULT_CONTINUOUS_RUNS = [os.path.join(_ARTROOT, _CONTINUOUS_VARIANT + "__multi
 # Per-branch keys.
 _QUANT_KEY    = {"cell": "cell_emb",    "niche": "neighborhood_emb"}      # z_q
 _PREQUANT_KEY = {"cell": "cell_latent", "niche": "neighborhood_latent"}   # z (pre-VQ)
-_CELL_LABELS  = ["cell_type", "cell_types", "annotation"]
+# Ground-truth label columns, mirroring compute_inference_metrics.py's
+# DEFAULT_{CELL,NICHE}_LABEL_KEYS so the resolution NMI/ARI here matches the
+# main benchmark. Niche NMI/ARI is the cell-count-weighted mean over ALL
+# present niche labels (= Table 1's aggregate "niche" row); cell uses one.
+_CELL_LABELS  = ["cell_type", "cell_types", "annotation", "new_annotation"]
 _NICHE_LABELS = ["niche", "Sub_molecular_tissue_region", "ccf_region_name",
-                 "spatial_cluster"]
+                 "spatial_cluster", "niche_type"]
 _CODE_KEYS = {
     "cell":  {"uns": "Indices_cell",  "obsm": "cell_code_indices",
               "obs": "cell_code_index",         "sizes": "codebook_sizes_cell"},
@@ -188,8 +192,13 @@ def _first_present(container, keys):
 
 def _label_mask_factorize(labels):
     import pandas as pd
-    s = pd.Series(np.asarray(labels))
-    mask = (~pd.isna(s)).to_numpy()
+    # Drop NaN AND the literal "nan"/"None" strings (h5ad object columns can
+    # smuggle these through), exactly as compute_inference_metrics.py does, so
+    # the labelled-cell set matches the benchmark.
+    s = pd.Series(np.asarray(labels)).astype("object").map(
+        lambda v: None if (v is None or (isinstance(v, float) and np.isnan(v)))
+        else str(v))
+    mask = (s.notna() & (s != "nan") & (s != "None")).to_numpy()
     lab = pd.factorize(s[mask].to_numpy())[0]
     return mask, lab
 
@@ -198,6 +207,40 @@ def _nmi_ari(true_lab, pred_lab):
     from sklearn.metrics import (normalized_mutual_info_score as _nmi,
                                  adjusted_rand_score as _ari)
     return float(_nmi(true_lab, pred_lab)), float(_ari(true_lab, pred_lab))
+
+
+def _present_labels(adata, branch, override=None):
+    """Ground-truth label columns present in `adata` for a branch, mirroring
+    compute_inference_metrics.py: the niche resolution is scored against EVERY
+    present niche label (then cell-count-weighted-averaged), while the cell
+    resolution uses a single primary label."""
+    keys = [override] if override else (_CELL_LABELS if branch == "cell"
+                                        else _NICHE_LABELS)
+    present = [k for k in keys if k in adata.obs]
+    if branch == "cell":
+        present = present[:1]
+    return present
+
+
+def _res_weighted(pred_all, adata, present):
+    """Cell-count-weighted mean (NMI, ARI) of the per-cell labels `pred_all`
+    (codes or Leiden clusters, defined for ALL cells) against each present
+    ground-truth label -- the same aggregation compute_inference_metrics.py
+    uses for Table 1's niche row, so the "SQUINT (codes)" bar reconciles with
+    the headline. Returns None if no labelled cells."""
+    pred_all = np.asarray(pred_all)
+    tot = 0
+    wn = wa = 0.0
+    for key in present:
+        mask, true_lab = _label_mask_factorize(adata.obs[key])
+        n = int(mask.sum())
+        if n == 0:
+            continue
+        nmi, ari = _nmi_ari(true_lab, pred_all[mask])
+        tot += n
+        wn += nmi * n
+        wa += ari * n
+    return (wn / tot, wa / tot) if tot else None
 
 
 def _leiden(emb, k, seed, n_neighbors: int = 15, max_iters: int = 25):
@@ -418,26 +461,27 @@ def main(argv=None):
         print(f"[compare] discrete seed {si}: {p}")
         A = ad.read_h5ad(p)
         for branch, _bn in BRANCHES:
-            lab_key = _label_key(A, branch, args.cell_label_key if branch == "cell"
-                                 else args.niche_label_key)
+            present = _present_labels(A, branch, args.cell_label_key if branch == "cell"
+                                      else args.niche_label_key)
             codes = _codes_l0(A, branch)
             pkey = _PREQUANT_KEY[branch]
-            if lab_key is None or codes is None:
+            if not present or codes is None:
                 print(f"    [{branch}] missing label/codes — skip", file=sys.stderr)
                 continue
-            label_per_branch[branch] = lab_key
+            label_per_branch[branch] = present
             nominal_k.setdefault(branch, _nominal_l0(A, branch) or int(len(np.unique(codes))))
-            mask, true_lab = _label_mask_factorize(A.obs[lab_key])
-            codes_v = codes[mask]
-            used_counts[branch].append(int(len(np.unique(codes_v))))
-            k = nominal_k[branch] if args.match == "nominal" else int(len(np.unique(codes_v)))
-            # COND_CODES resolution = codes directly
-            nmi, ari = _nmi_ari(true_lab, codes_v)
-            _push(res, COND_CODES, branch, "NMI", nmi); _push(res, COND_CODES, branch, "ARI", ari)
-            # COND_DCLUST resolution = pre-VQ z Leiden-clustered to k
+            used_counts[branch].append(int(len(np.unique(codes))))
+            k = nominal_k[branch] if args.match == "nominal" else int(len(np.unique(codes)))
+            # COND_CODES resolution = codes directly (weighted over all labels)
+            r = _res_weighted(codes, A, present)
+            if r:
+                _push(res, COND_CODES, branch, "NMI", r[0]); _push(res, COND_CODES, branch, "ARI", r[1])
+            # COND_DCLUST resolution = pre-VQ z Leiden-clustered to k (ALL cells)
             if pkey in A.obsm:
-                nmi, ari = _nmi_ari(true_lab, _leiden(A.obsm[pkey][mask], k, args.leiden_seed))
-                _push(res, COND_DCLUST, branch, "NMI", nmi); _push(res, COND_DCLUST, branch, "ARI", ari)
+                lab_all = _leiden(A.obsm[pkey], k, args.leiden_seed)
+                r = _res_weighted(lab_all, A, present)
+                if r:
+                    _push(res, COND_DCLUST, branch, "NMI", r[0]); _push(res, COND_DCLUST, branch, "ARI", r[1])
         ig = _read_integration(rd)
         for cond in (COND_CODES, COND_DCLUST):
             for branch, _bn in BRANCHES:
@@ -464,14 +508,14 @@ def main(argv=None):
         for branch, _bn in BRANCHES:
             if branch not in label_per_branch or branch not in k_cont:
                 continue
-            lab_key = label_per_branch[branch]
+            present = [k for k in label_per_branch[branch] if k in A.obs]
             qkey = _QUANT_KEY[branch]
-            if lab_key not in A.obs or qkey not in A.obsm:
+            if not present or qkey not in A.obsm:
                 continue
-            mask, true_lab = _label_mask_factorize(A.obs[lab_key])
-            nmi, ari = _nmi_ari(true_lab, _leiden(A.obsm[qkey][mask], k_cont[branch],
-                                                  args.leiden_seed))
-            _push(res, COND_CONT, branch, "NMI", nmi); _push(res, COND_CONT, branch, "ARI", ari)
+            lab_all = _leiden(A.obsm[qkey], k_cont[branch], args.leiden_seed)
+            r = _res_weighted(lab_all, A, present)
+            if r:
+                _push(res, COND_CONT, branch, "NMI", r[0]); _push(res, COND_CONT, branch, "ARI", r[1])
         ig = _read_integration(rd)
         for branch, _bn in BRANCHES:
             ek = INTEG_EMB[COND_CONT][branch]

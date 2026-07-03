@@ -93,11 +93,11 @@ DEFAULT_BASELINES: Dict[str, str] = {
 # per_seed_*.csv files, so the loader treats them uniformly.
 # Override on the CLI via `--squint-variant`.
 DEFAULT_SQUINT_VARIANT = (
-    # s49_v23: decoupled-enc + diversity wt=10 + within-batch contrastive wt=10
-    # on the s48_v2 spine (cell-w=1, no-batch-int, enc-deeper, within-sec).
-    # Replaces the previous default (s42 winner, cell-w=5.0) as of the
-    # s49 sweep results — see project_squint.md.
-    "s49_v23_dualvq+rvq-both+decoder-cov+no-batch-int+enc-deeper+dec-w32+knn16+sampler16+cell-w1+bs512+lr7e-4+within-sec+decoupled-enc+diversity-w10+contrastWB-w10-k5+mmb0-1b_smb1-1b_1p__multiseed"
+    # s57_v19 = SQUINT headline reference: cell-conditioned niche FiLM-scale
+    # coupling + cross-batch MNN contrastive on the decoupled dual-VQ spine
+    # (RVQ 30/90). This is the model reported in the paper's benchmark tables;
+    # supersedes the earlier s49_v23 within-batch default — see project_squint.md.
+    "s57_v19_reference-filmscale+mmb0-1b_smb1-1b_1p__multiseed"
 )
 SQUINT_LABEL = "SQUINT"
 

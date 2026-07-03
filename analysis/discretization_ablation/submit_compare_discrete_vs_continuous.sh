@@ -1,22 +1,24 @@
 #!/usr/bin/env bash
 # submit_compare_discrete_vs_continuous.sh
 # -----------------------------------------------------------------------------
-# Submit the 4-fold, multi-seed discrete-vs-continuous comparison to LSF.
+# Submit the 3-fold, multi-seed discrete-vs-continuous comparison to LSF.
 #
-# For each branch (cell, niche) it scores 4 representations vs ground-truth
-# labels (NMI/ARI), across the 5 training seeds of each model:
-#   1) discrete codes, 2) VQ-VAE quantized emb clustered, 3) VQ-VAE pre-quant
-#   emb clustered, 4) continuous-model emb clustered (k = #discrete codes).
+# For each branch (cell, niche) it scores 3 representations vs ground-truth
+# labels (NMI/ARI) + integration (iLISI/MMD), across the 5 training seeds:
+#   1) SQUINT discrete codes (level-0, used directly),
+#   2) SQUINT Leiden (the headline model's emb, Leiden-clustered to K=30),
+#   3) Continuous Leiden (the continuous counterpart's emb, Leiden to K=30).
 # Reports mean/std + per-seed points + pairwise significance. CPU-only (reads
-# each run's predicted_adata.h5ad and runs k-means; no GPU, no model reload).
+# each run's predicted_adata.h5ad and runs Leiden; no GPU, no model reload).
 #
-# Usage:
+# Usage (no args = the paper defaults below):
+#   bash submit_compare_discrete_vs_continuous.sh
 #   bash submit_compare_discrete_vs_continuous.sh \
-#       --discrete-runs   <s49_v23 sweep dir | seed_run_index.csv | run dirs...> \
-#       --continuous-runs <s53_v1 sweep dir | seed_run_index.csv | run dirs...>
+#       --discrete-runs   <s57_v19 sweep dir | seed_run_index.csv | run dirs...> \
+#       --continuous-runs <s57_v33 sweep dir | seed_run_index.csv | run dirs...>
 #
-# --continuous-runs is REQUIRED; --discrete-runs defaults to the 5 s49_v23 seed
-# dirs baked into the .py (dedupe-on-load). Each path may be a run dir, a
+# Both default (baked into the .py): discrete = s57_v19 (headline), continuous
+# = s57_v33 (its exact continuous counterpart). Each path may be a run dir, a
 # multiseed sweep dir / seed_run_index.csv (auto-expanded), or a variant parent
 # dir. Any extra flags (--match, --test, --out-dir, ...) are forwarded verbatim.
 #
@@ -27,7 +29,7 @@
 #   LSF_QUEUE   normal
 #   LSF_CORES   8
 #   LSF_MEM_MB  128000
-#   LSF_WALL    4:00      (4 folds x up to 10 runs of k-means)
+#   LSF_WALL    4:00      (3 folds x up to 10 runs of Leiden binary-search)
 #   DRY_RUN     0
 # -----------------------------------------------------------------------------
 set -euo pipefail
@@ -60,7 +62,7 @@ EOF
 
 echo "Submitting discrete-vs-continuous comparison:"
 echo "  script : $PY_SCRIPT"
-echo "  py args: ${PY_ARGS[*]:-<defaults: s49_v23 @20260513_223846 vs s53_v1 @20260627_074514>}"
+echo "  py args: ${PY_ARGS[*]:-<defaults: s57_v19 (discrete) vs s57_v33 (continuous), __multiseed sweeps>}"
 echo "  queue  : $LSF_QUEUE   group: $LSF_GROUP   cores: $LSF_CORES   mem: ${LSF_MEM_MB}MB   wall: $LSF_WALL"
 echo "  logs   : $LOG_DIR/{out,err}.log"
 
