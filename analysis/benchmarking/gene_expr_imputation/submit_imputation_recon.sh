@@ -55,6 +55,13 @@ PREDICTED_ADATA="${PREDICTED_ADATA:-$ART/$DATASET/dualvq+rvq-both+decoder-cov+no
 # the source species of adata.var_names for the mouse->human ortholog mapping.
 CIFM_REPO="${CIFM_REPO:-/nfs/team361/sb75/models/CIFM}"
 CIFM_SPECIES="${CIFM_SPECIES:-mouse}"
+# Optional: a PINNED mouse->human ortholog map (cols: gene,human_ensembl_id),
+# precomputed on a login node with `run_cifm.py --ortholog-only`. Set this when
+# the compute nodes have no outbound internet (the mygene / Ensembl REST lookup
+# happens at runtime), and for exact reproducibility across runs.
+CIFM_ORTHOLOG_CSV="${CIFM_ORTHOLOG_CSV:-}"
+CIFM_EXTRA=""
+[[ -n "$CIFM_ORTHOLOG_CSV" ]] && CIFM_EXTRA="--ortholog-csv $CIFM_ORTHOLOG_CSV"
 
 NC_SPECIES="${NC_SPECIES:-mouse}"
 NC_ORTHOLOGS="${NC_ORTHOLOGS:-$REPO/analysis/benchmarking/nichecompass/human_mouse_gene_orthologs.csv}"
@@ -87,11 +94,12 @@ method_spec() {
         knn)          echo "squint|gene_expr_imputation/run_knn_spatial.py|" ;;
         mlp)          echo "squint|gene_expr_imputation/run_mlp_spatial.py|" ;;
         # CIFM: pretrained 100M-param foundation model (ynyou/CIFM), evaluated
-        # with the same holdout/metrics as GeST. Needs its own venv (torch 2.1 +
-        # torch-geometric + e3nn) and a local clone of the HF repo. Its gene
+        # with the same holdout/metrics as GeST. Needs its own venv (build it with
+        # install_cifm.sh — same torch 2.2.0/cu121 + PyG pins as the squint venv,
+        # plus e3nn) and a local clone of the HF repo. Its gene
         # vocabulary is HUMAN, so the runner applies the same mouse->human
         # ortholog map used for scGPT / Geneformer (see run_cifm.py).
-        cifm)         echo "cifm|gene_expr_imputation/run_cifm.py|--cifm-repo $CIFM_REPO --species $CIFM_SPECIES" ;;
+        cifm)         echo "cifm|gene_expr_imputation/run_cifm.py|--cifm-repo $CIFM_REPO --species $CIFM_SPECIES $CIFM_EXTRA" ;;
         *) return 1 ;;
     esac
 }
