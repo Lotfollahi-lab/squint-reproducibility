@@ -42,9 +42,9 @@
 # not the device) — it runs a real GPU matmul instead.
 #
 # NETWORK note: run_cifm.py resolves mouse->human orthologs through mygene.info
-# and the Ensembl REST API at runtime. If the COMPUTE nodes have no outbound
-# internet, precompute the mapping on a login node first (see PRECOMPUTE below)
-# and pass --ortholog-csv, otherwise the job dies after loading the data.
+# and the Ensembl REST API at runtime (the compute nodes have internet, so no
+# precompute step is needed). Every run writes the realised map to
+# <out_dir>/ortholog_mapping.csv for auditing.
 #
 # Installs with **uv**, matching squint/pyproject.toml's [tool.uv] setup (the
 # data.pyg.org find-links index + the explicit pytorch-cu121 index). uv will
@@ -176,13 +176,7 @@ echo "  bsub -G s10396 -q training-parallel -gpu 'mode=exclusive_process:num=1:b
 echo "    bash -lc 'source $VENV/bin/activate && python $SCRIPT_DIR/verify_cifm.py'"
 echo "  Expect: sm_90 present, radius_graph OK, ~18289 human ENSG entries, ALL CHECKS PASSED."
 echo
-echo "NEXT 2 (PRECOMPUTE, only if compute nodes lack internet) — on a LOGIN node:"
-echo "  source $VENV/bin/activate"
-echo "  python analysis/benchmarking/gene_expr_imputation/run_cifm.py \\"
-echo "      --cifm-repo $CIFM_REPO --write-ortholog-csv orthologs_mmb.csv --ortholog-only"
-echo "  then pass --ortholog-csv orthologs_mmb.csv to the real run."
-echo
-echo "NEXT 3 — smoke test the full pipeline (4k cells, minutes):"
+echo "NEXT 2 — smoke test the full pipeline (4k cells, minutes):"
 echo "  python analysis/benchmarking/gene_expr_imputation/run_cifm.py \\"
 echo "      --cifm-repo $CIFM_REPO --smoke --seeds 0"
 echo "  CHECK the coordinate diagnostic line: CIFM assumes MICROMETRES (r=20)."

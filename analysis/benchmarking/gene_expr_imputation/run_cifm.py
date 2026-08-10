@@ -33,8 +33,9 @@ PROTOCOL PARITY — every one of these mirrors GeST exactly
    Ensembl → Ensembl REST homology → mygene human DB → NCBI HomoloGene.) This
    is the same mapping `submit_all_benchmarks.sh:337-339` applies to scGPT,
    scGPT-spatial and Geneformer for `mmb0-1b_smb1-1b_1p`. The realised map is
-   written to `<out_dir>/ortholog_mapping.csv` so the run is auditable and can
-   be pinned/diffed later (the helper hits live APIs and is NOT cached).
+   written to `<out_dir>/ortholog_mapping.csv` on every run, so the map is
+   auditable and can be reused via --ortholog-csv (the helper hits live APIs and
+   is NOT cached, so pinning is the only way to guarantee two runs share a map).
 3. METRICS. `add_neighborhood_layers(..., n_neighs=16)` then
    `build_pearson_dataframe(..., log1p=True, n_hvg=50)` then
    `write_pearson_outputs` — the shared implementation, so Pearson/Spearman/
@@ -89,7 +90,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 import time
 from datetime import datetime
@@ -203,9 +203,8 @@ def build_channel_map(
 
     If ``ortholog_csv`` is given, the mapping is READ from that file instead of
     being re-derived. The helper queries mygene.info and the Ensembl REST API
-    live and is not cached, so pinning the map (a) makes the run reproducible
-    and (b) allows compute nodes with no outbound internet. Precompute it on a
-    login node with ``--write-ortholog-csv ... --ortholog-only``.
+    live and is not cached, so pointing this at a previous run's
+    ``ortholog_mapping.csv`` is the way to guarantee two runs share one map.
     """
     if ortholog_csv is not None:
         m = pd.read_csv(ortholog_csv)
@@ -219,8 +218,8 @@ def build_channel_map(
         if missing:
             raise SystemExit(
                 f"--ortholog-csv is missing {len(missing)} of {len(genes)} genes "
-                f"in this panel (e.g. {missing[:5]}). Regenerate it for this "
-                f"dataset with --write-ortholog-csv --ortholog-only.")
+                f"in this panel (e.g. {missing[:5]}) — it was built for a "
+                f"different dataset. Drop the flag to resolve the map freshly.")
         raw = np.array([lut[g] for g in genes], dtype=object)
         adata.var["human_ensembl_id"] = raw
         print(f"  ortholog map: loaded from {ortholog_csv} (no network call)")
@@ -454,16 +453,11 @@ def main(argv=None):
     p.add_argument("--species", default="mouse",
                    help="Source species of adata.var_names, for the ortholog map.")
     p.add_argument("--ortholog-csv", type=Path, default=None,
-                   help="Read a PINNED mouse->human map (cols: gene, "
-                        "human_ensembl_id) instead of querying mygene/Ensembl. "
-                        "Use on compute nodes without internet, and for exact "
-                        "reproducibility (the helper is not cached).")
-    p.add_argument("--write-ortholog-csv", type=Path, default=None,
-                   help="Also write the realised map here (in addition to "
-                        "<out_dir>/ortholog_mapping.csv).")
-    p.add_argument("--ortholog-only", action="store_true",
-                   help="Resolve + write the ortholog map, then exit without "
-                        "loading CIFM. Run this on a login node with internet.")
+                   help="Optional: reuse a previous run's "
+                        "<out_dir>/ortholog_mapping.csv instead of re-querying "
+                        "mygene/Ensembl, so repeated runs share an identical map "
+                        "(the helper hits live APIs and is not cached). Not "
+                        "required — every run writes its own map.")
     p.add_argument("--apply-dropout-gate", action="store_true",
                    help="Reproduce CIFM's native hard gate (expr[p_drop<=0.5]=0). "
                         "OFF by default: GeST/kNN are ungated and the harness "
@@ -514,22 +508,14 @@ def main(argv=None):
 
     print("\n=== Gene IDs: mouse -> human orthologs "
           "(same helper + args as run_scgpt.py) ===")
-    _map_csv = args.out_dir / "ortholog_mapping.csv"
     channel2ensembl_target, map_stats = build_channel_map(
-        adata, species=args.species, out_csv=_map_csv,
+        adata, species=args.species,
+        out_csv=args.out_dir / "ortholog_mapping.csv",
         ortholog_csv=args.ortholog_csv)
-    if args.write_ortholog_csv:
-        Path(args.write_ortholog_csv).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(_map_csv, args.write_ortholog_csv)
-        print(f"  pinned map also written -> {args.write_ortholog_csv}")
     if map_stats["n_mapped"] == 0:
         raise SystemExit(
             "No gene mapped to a human Ensembl ID — CIFM would be all-zero. "
             "Check --species and that mygene / Ensembl REST are reachable.")
-    if args.ortholog_only:
-        print("\n--ortholog-only: map resolved and written; exiting before "
-              "loading CIFM. Pass --ortholog-csv <that file> on the compute node.")
-        return 0
 
     print("\n=== Loading CIFM ===")
     model = load_cifm(args.cifm_repo, device)

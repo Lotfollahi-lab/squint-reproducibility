@@ -55,10 +55,9 @@ PREDICTED_ADATA="${PREDICTED_ADATA:-$ART/$DATASET/dualvq+rvq-both+decoder-cov+no
 # the source species of adata.var_names for the mouse->human ortholog mapping.
 CIFM_REPO="${CIFM_REPO:-$REPO/analysis/benchmarking/cifm}"
 CIFM_SPECIES="${CIFM_SPECIES:-mouse}"
-# Optional: a PINNED mouse->human ortholog map (cols: gene,human_ensembl_id),
-# precomputed on a login node with `run_cifm.py --ortholog-only`. Set this when
-# the compute nodes have no outbound internet (the mygene / Ensembl REST lookup
-# happens at runtime), and for exact reproducibility across runs.
+# Optional: reuse a previous run's <out_dir>/ortholog_mapping.csv so repeated
+# runs share an identical mouse->human map (the mygene / Ensembl REST lookup runs
+# at job time and is not cached). Leave empty to resolve it fresh each run.
 CIFM_ORTHOLOG_CSV="${CIFM_ORTHOLOG_CSV:-}"
 CIFM_EXTRA=""
 [[ -n "$CIFM_ORTHOLOG_CSV" ]] && CIFM_EXTRA="--ortholog-csv $CIFM_ORTHOLOG_CSV"
