@@ -51,6 +51,11 @@ NBR_NEIGHS="${NBR_NEIGHS:-}"
 # gestarch frozen stage-1 predicted_adata (FiLM-scale region-holdout, seed0):
 PREDICTED_ADATA="${PREDICTED_ADATA:-$ART/$DATASET/dualvq+rvq-both+decoder-cov+no-batch-int+enc-deeper+dec-w32+knn16+sampler16+cell-w1+bs512+lr7e-4+within-sec+decoupled-enc+diversity-w10+filmscale+crossmnn-wt10-k1+region-holdout+$DATASET/20260629_023326_seed0/predicted_adata.h5ad}"
 # NicheCompass GP args (mmb = mouse). Match submit_all_benchmarks.sh defaults.
+# CIFM (pretrained foundation model): local clone of the ynyou/CIFM HF repo, and
+# the source species of adata.var_names for the mouse->human ortholog mapping.
+CIFM_REPO="${CIFM_REPO:-/nfs/team361/sb75/models/CIFM}"
+CIFM_SPECIES="${CIFM_SPECIES:-mouse}"
+
 NC_SPECIES="${NC_SPECIES:-mouse}"
 NC_ORTHOLOGS="${NC_ORTHOLOGS:-$REPO/analysis/benchmarking/nichecompass/human_mouse_gene_orthologs.csv}"
 NC_MEBOCOST="${NC_MEBOCOST:-$REPO/analysis/benchmarking/nichecompass/metabolite_enzyme_sensor_gps}"
@@ -81,6 +86,12 @@ method_spec() {
         # is a near-zero comparator) — kept wired for running/inspection.
         knn)          echo "squint|gene_expr_imputation/run_knn_spatial.py|" ;;
         mlp)          echo "squint|gene_expr_imputation/run_mlp_spatial.py|" ;;
+        # CIFM: pretrained 100M-param foundation model (ynyou/CIFM), evaluated
+        # with the same holdout/metrics as GeST. Needs its own venv (torch 2.1 +
+        # torch-geometric + e3nn) and a local clone of the HF repo. Its gene
+        # vocabulary is HUMAN, so the runner applies the same mouse->human
+        # ortholog map used for scGPT / Geneformer (see run_cifm.py).
+        cifm)         echo "cifm|gene_expr_imputation/run_cifm.py|--cifm-repo $CIFM_REPO --species $CIFM_SPECIES" ;;
         *) return 1 ;;
     esac
 }
@@ -92,7 +103,7 @@ neighs_flag() {
     [[ -z "$NBR_NEIGHS" ]] && { echo ""; return 0; }
     case "$1" in
         scvi-nbr|vanilla-nbr|nichecompass)     echo "--n-spatial-neighs $NBR_NEIGHS" ;;
-        gest|gestarch|scvi|vanilla-cell|knn|mlp) echo "--nbr-neighs $NBR_NEIGHS" ;;
+        gest|gestarch|scvi|vanilla-cell|knn|mlp|cifm) echo "--nbr-neighs $NBR_NEIGHS" ;;
         *) echo "" ;;
     esac
 }

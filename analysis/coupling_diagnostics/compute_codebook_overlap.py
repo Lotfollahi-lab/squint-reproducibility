@@ -64,10 +64,30 @@ clusters -- relevant for the `composite` views (~2000 leaf codes) and for
 annotations with 49/63/167 classes. AMI corrects for chance; if the
 specialization pattern holds under both, it is not an artefact of cluster count.
 
+DATASET GOTCHA -- pick the SAME label columns the paper used
+------------------------------------------------------------
+The primary cell-type label is the first entry of DEFAULT_CELL_LABEL_KEYS that is
+present in `obs`, and that is NOT always the column the paper scored against:
+
+  * mmb0-1b_smb1-1b_1p : cell_type (49)   + Sub_molecular_tissue_region / ccf_region_name  -> defaults OK
+  * chl59-2b_1p        : cell_type (10)   + niche (12)                                     -> defaults OK
+  * xhs1000            : THREE cell-type-like columns are present -- cell_type (40),
+                         annotation (46) and new_annotation (21). Table 1 used
+                         **new_annotation** (+ niche_type). The default order would
+                         silently select `cell_type` and NOT reproduce the paper, so run
+                         xhs1000 with:  --cell-label-keys new_annotation
+
+Verified: with new_annotation/niche_type the Level-1 diagonal reproduces Table 1's
+xhs1000 entries exactly (cell 0.5927/0.3216, niche 0.5143/0.2071).
+
 Usage
 -----
   # multiseed sweep (default): one predicted_adata per seed -> mean +/- sd
   python compute_codebook_overlap.py --variant s57_v19_ --dataset mmb0-1b_smb1-1b_1p
+
+  # xhs1000 MUST pin the cell-type label to match the paper
+  python compute_codebook_overlap.py --variant s57_v19_ --dataset xhs1000 \
+      --cell-label-keys new_annotation --niche-label-keys niche_type
 
   # a single run
   python compute_codebook_overlap.py --predicted-adata /path/to/predicted_adata.h5ad
@@ -521,7 +541,10 @@ def main(argv=None):
                          "weighted average, identical to the paper. 'merged' = "
                          "one concatenated label vector (NB: also encodes section "
                          "identity when sections use disjoint vocabularies).")
-    ap.add_argument("--cell-label-keys", default=",".join(DEFAULT_CELL_LABEL_KEYS))
+    ap.add_argument("--cell-label-keys", default=",".join(DEFAULT_CELL_LABEL_KEYS),
+                    help="Comma-separated cell-type label columns; the FIRST one present "
+                         "becomes the primary axis. NOTE: xhs1000 needs "
+                         "'new_annotation' to match Table 1 (see DATASET GOTCHA above).")
     ap.add_argument("--niche-label-keys", default=",".join(DEFAULT_NICHE_LABEL_KEYS))
     ap.add_argument("--out", default=None)
     args = ap.parse_args(argv)
