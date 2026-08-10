@@ -17,9 +17,11 @@
 #     in torch-cluster, dispatched via torch_geometric.nn. Without torch-cluster
 #     the model imports fine and then dies at graph construction. It is
 #     REQUIRED, not optional.
-#  3. model.safetensors is 569 MB behind git-lfs. A plain `git clone` yields a
-#     ~130-byte pointer file and `from_pretrained` fails with a confusing
-#     safetensors header error. git-lfs must be installed BEFORE cloning.
+#  3. model.safetensors is 569 MB behind git-lfs, and `git clone` on the farm
+#     tends to leave a ~130-byte pointer file (no git-lfs module, or the smudge
+#     step dies behind a proxy) -> a confusing safetensors header error later.
+#     We therefore fetch it with huggingface_hub via download_cifm.py, which
+#     needs no git at all, resumes partial transfers, and verifies the result.
 #
 # TORCH VERSION — deliberately the FARM's version, not CIFM's card.
 # CIFM's model card suggests torch==2.1.0/2.0.1, but every other method in this
@@ -32,10 +34,12 @@
 # 2.2.0 is safe; override with TORCH=2.1.0 if a future release needs it (the PyG
 # find-links URL follows TORCH automatically).
 #
-# H200 note: unlike scGPT (see ../cell_type_identification/install_scgpt_h200.sh,
-# which is capped at torch 2.3.0 by torchtext), CIFM has no such ceiling, and
-# torch 2.2.0+cu121 ships sm_90 kernels — so the default training-parallel/s10396
-# (H200) queue works and no A100 fallback is needed. The verifier asserts sm_90.
+# GPU note: unlike scGPT (see ../cell_type_identification/install_scgpt_h200.sh,
+# which is capped at torch 2.3.0 by torchtext), CIFM has no such ceiling. The
+# default training-parallel/s10396 queue serves both L40S (sm_89) and H200
+# (sm_90); torch 2.2.0+cu121 covers both, so no A100 fallback is needed. The
+# verifier does NOT assert a specific sm_XX (arch_list describes the torch build,
+# not the device) — it runs a real GPU matmul instead.
 #
 # NETWORK note: run_cifm.py resolves mouse->human orthologs through mygene.info
 # and the Ensembl REST API at runtime. If the COMPUTE nodes have no outbound
@@ -59,7 +63,7 @@ SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 VENV="${VENV:-/nfs/team361/sb75/.venvs/cifm}"   # name must match submit_imputation_recon.sh
 PYTHON="${PYTHON:-python3.10}"        # squint/pyproject.toml: requires-python >=3.10,<3.13
-CUDA="${CUDA:-cu121}"                 # cu121 has sm_90 (H200) kernels
+CUDA="${CUDA:-cu121}"                 # covers L40S (sm_89) and H200 (sm_90)
 TORCH="${TORCH:-2.2.0}"               # == squint/pyproject.toml (farm parity)
 # exact PyG companion pins from squint/pyproject.toml — must match TORCH's ABI
 PYG_LIB="${PYG_LIB:-0.4.0}"
@@ -139,74 +143,10 @@ uv pip install --python "$PY" "e3nn" "pytorch-lightning>=2.2,<2.5" \
     "transformers" "huggingface_hub" "scanpy>=1.10" "anndata>=0.10" "pandas" \
     "scikit-learn" "mygene" "requests" "h5py>=3.10"
 
-# ---- write the verifier BEFORE the download -------------------------------
-# ORDERING MATTERS: the checkpoint download is the step most likely to fail on
-# the farm, and if it aborts the script the verifier must already be on disk —
-# otherwise you are left with a venv and no way to test it (which is exactly
-# what happened on the first run of this script).
-# ---- an end-to-end verifier to run ON A GPU NODE ---------------------------
-cat > "$VENV/verify_cifm.py" <<PYEOF
-import importlib, sys, numpy as np, torch
-CIFM_REPO = "$CIFM_REPO"
-EXPECT_TORCH = "$TORCH"
-
-# ---- 0. every module run_cifm.py imports must be present -------------------
-missing = []
-for mod in ("torch", "torch_geometric", "torch_cluster", "torch_scatter",
-            "torch_sparse", "e3nn", "scanpy", "anndata", "pandas", "sklearn",
-            "mygene", "huggingface_hub", "h5py"):
-    try:
-        importlib.import_module(mod)
-    except Exception as e:  # noqa: BLE001
-        missing.append(f"{mod} ({type(e).__name__}: {e})")
-print("dependency import check:", "ALL OK" if not missing else "MISSING")
-for m in missing:
-    print("   !!", m)
-assert not missing, "install incomplete — see above"
-
-print("torch", torch.__version__, "| built for CUDA", torch.version.cuda)
-assert torch.__version__.startswith(EXPECT_TORCH), (
-    f"torch {torch.__version__} != farm pin {EXPECT_TORCH} — the PyG companion "
-    f"wheels are ABI-matched to the pin, so this WILL break at radius_graph")
-assert torch.cuda.is_available(), "no CUDA visible — run this on a GPU node"
-print("device:", torch.cuda.get_device_name(0), "| capability", torch.cuda.get_device_capability(0))
-print("arch_list:", torch.cuda.get_arch_list())
-assert "sm_90" in torch.cuda.get_arch_list(), "torch has no sm_90 kernel (H200 will fail)"
-
-# radius_graph is the op CIFM needs on every forward pass -> proves torch-cluster
-from torch_geometric.nn import radius_graph
-xyz = torch.randn(500, 3, device="cuda")
-ei = radius_graph(xyz, r=1.0, max_num_neighbors=10000, loop=True)
-print("radius_graph OK, edges:", int(ei.shape[1]))
-
-sys.path.insert(0, CIFM_REPO)
-from models_cifm.cifm import CIFM
-args_model = torch.load(CIFM_REPO + "/models_cifm/args.pt")
-model = CIFM.from_pretrained("ynyou/CIFM", args=args_model).to("cuda")
-src = torch.load(CIFM_REPO + "/models_cifm/channel2ensembl.pt")
-model.channel2ensembl_ids_source = src
-model.eval()
-print("CIFM loaded | radius_spatial_graph =", model.radius_spatial_graph,
-      "| source channels =", len(src))
-n_h = sum(1 for e in src for x in e if str(x).startswith("ENSG"))
-print("source vocabulary is human ENSG entries:", n_h, "(expect ~18289)")
-
-# channel_matching onto a tiny 3-gene 'panel' taken from the source vocab
-tgt = [e[:1] for e in src[:3]]
-model.channel_matching(tgt, src)
-G = len(tgt)
-import anndata as ad
-X = np.abs(np.random.RandomState(0).randn(200, G)).astype("float32")
-a = ad.AnnData(X=X)
-a.obsm["spatial"] = (np.random.RandomState(1).rand(200, 2) * 200.0)  # ~200um field
-with torch.no_grad():
-    out = model.predict_cells_at_locations(a, np.array([[50.0, 50.0], [90.0, 30.0]]))
-print("predict_cells_at_locations OK -> shape", tuple(out.shape), "(expect (2,", G, "))")
-assert out.shape == (2, G)
-assert torch.isfinite(out).all(), "non-finite predictions"
-print("ALL CHECKS PASSED")
-PYEOF
-echo "verifier written: $VENV/verify_cifm.py"
+# ---- the verifier is a REAL FILE in the repo (verify_cifm.py) --------------
+# It used to be written here as a heredoc, which meant a fix required
+# rebuilding the venv. It now lives beside this script so it can be edited
+# and re-run independently. Nothing to do at install time.
 
 # ---- fetch the released checkpoint (NO git-lfs; see pitfall 3) --------------
 # huggingface_hub.snapshot_download resumes partial transfers and needs neither
@@ -233,7 +173,7 @@ echo "DONE building $VENV"
 echo
 echo "NEXT 1 — verify on a GPU node (tiny bsub):"
 echo "  bsub -G s10396 -q training-parallel -gpu 'mode=exclusive_process:num=1:block=yes' -W 0:20 \\"
-echo "    bash -lc 'source $VENV/bin/activate && python $VENV/verify_cifm.py'"
+echo "    bash -lc 'source $VENV/bin/activate && python $SCRIPT_DIR/verify_cifm.py'"
 echo "  Expect: sm_90 present, radius_graph OK, ~18289 human ENSG entries, ALL CHECKS PASSED."
 echo
 echo "NEXT 2 (PRECOMPUTE, only if compute nodes lack internet) — on a LOGIN node:"
