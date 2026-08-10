@@ -48,9 +48,13 @@ CIFM-SPECIFIC HANDLING (the parts that needed a decision)
 * INPUT FORMAT. Per the official `test.ipynb`, CIFM consumes
   `normalize_total(target_sum=1e4)` + `log1p` of raw counts, and
   `obsm['spatial']` **in micrometres** (it builds `radius_graph(r=20)`).
-  We normalise a working copy only, and print a coordinate diagnostic (median
-  nearest-neighbour distance + the mean neighbour count at r=20) so a unit
-  mismatch cannot pass silently. `--coord-scale` rescales if needed.
+  We normalise a working copy only. CRUCIALLY, this dataset is NOT in
+  micrometres and its two sections differ in scale (measured on the full data:
+  median NN ~58 for batch 15 vs ~10 for batch 82), so a fixed-radius graph would
+  be empty at r=20. `--coord-scale auto` (the DEFAULT) therefore rescales EACH
+  section so its median NN distance is `--coord-target-nn` (10), and prints the
+  factor and the resulting mean degree. SQUINT/GeST are unaffected: their graphs
+  are k-NN (rank-based), hence scale-free. Report this rescaling with any result.
 * LEAK-FREE READ DEPTH. CIFM emits a log-normalised profile, NOT counts, so it
   needs a depth to become count-scale. We port `_neighbor_read_depth` verbatim
   from `squint/examples/stage2_decode_pearson.py:415-448`: a held-out cell's
@@ -287,24 +291,55 @@ def load_cifm(cifm_repo: Path, device: str):
 # ---------------------------------------------------------------------------
 # Coordinate diagnostic — a unit mismatch must not pass silently
 # ---------------------------------------------------------------------------
-def coord_diagnostic(coords: np.ndarray, batch: np.ndarray, radius: float) -> None:
+def resolve_coord_scales(coords: np.ndarray, batch: np.ndarray, radius: float,
+                         coord_scale: str, target_nn: float) -> Dict:
+    """
+    Per-section coordinate scale factors.
+
+    CIFM's graph is a FIXED-radius graph (r=20 in its training units, nominally
+    micrometres), so unlike our own k-NN graph it is NOT scale-free: get the unit
+    wrong and the graph is either empty (no context reaches the masked cell, so
+    predictions are meaningless) or fully connected.
+
+    On this dataset the two sections are NOT on the same scale — measured on the
+    FULL data, batch 82 has a median nearest-neighbour distance of ~10 (which is
+    micrometre-like for cells) while batch 15 is ~58, i.e. ~6x coarser. A single
+    global factor therefore cannot fix both, which is why the default is
+    ``auto``: each section is scaled so its median NN distance equals
+    ``target_nn``, giving CIFM a comparable, realistically-sized neighbourhood in
+    both sections. This is a deliberate, documented deviation — report it with
+    any result, and note that SQUINT/GeST are unaffected because their graphs are
+    k-NN (rank-based) rather than radius-based.
+
+    Pass a number instead of ``auto`` to apply one global factor.
+    """
     from sklearn.neighbors import NearestNeighbors
 
-    print(f"\n=== Coordinate diagnostic (CIFM expects micrometres, r={radius}) ===")
+    print(f"\n=== Coordinate scaling (CIFM r={radius}; target median NN "
+          f"= {target_nn} when auto) ===")
+    scales: Dict = {}
     for b in np.unique(batch):
         c = coords[batch == b]
         nn = NearestNeighbors(n_neighbors=2).fit(c)
         d, _ = nn.kneighbors(c)
         med = float(np.median(d[:, 1]))
-        span = (float(c[:, 0].ptp()), float(c[:, 1].ptp()))
-        n_within = NearestNeighbors(radius=radius).fit(c).radius_neighbors(
-            c[: min(500, len(c))], return_distance=False)
-        mean_deg = float(np.mean([len(x) - 1 for x in n_within]))
-        flag = "" if 1.0 <= med <= 100.0 else "   <-- SUSPICIOUS: not micrometre-like"
-        print(f"  batch {b}: n={len(c)}  median NN dist={med:.2f}  "
-              f"xy span={span[0]:.0f}x{span[1]:.0f}  mean deg @r={radius}: "
-              f"{mean_deg:.1f}{flag}")
-    print("  (a mean degree near 0 or in the thousands means the unit is wrong)")
+        if coord_scale == "auto":
+            f = (target_nn / med) if med > 0 else 1.0
+        else:
+            f = float(coord_scale)
+        scales[b] = f
+        span = (float(c[:, 0].ptp()) * f, float(c[:, 1].ptp()) * f)
+        cs = c * f
+        nb = NearestNeighbors(radius=radius).fit(cs).radius_neighbors(
+            cs[: min(500, len(cs))], return_distance=False)
+        deg = float(np.mean([len(x) - 1 for x in nb]))
+        flag = "" if 1.0 <= deg <= 200.0 else "   <-- CHECK: empty or saturated graph"
+        print(f"  section {b}: n={len(c)}  median NN={med:.2f} -> x{f:.4g} "
+              f"(NN becomes {med*f:.2f})  span={span[0]:.0f}x{span[1]:.0f}  "
+              f"mean deg @r={radius}: {deg:.1f}{flag}")
+    print("  (mean degree ~0 => no context reaches the masked cell; "
+          "~1000s => everything is a neighbour)")
+    return scales
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +383,7 @@ def _predict_chunk(model, ctx_X, ctx_xy, q_xy, device, apply_gate: bool):
 
 def predict_all_cells(
         model, adata: ad.AnnData, batch_key: str, device: str,
-        apply_gate: bool, train_chunk: int, coord_scale: float,
+        apply_gate: bool, train_chunk: int, coord_scales: Dict,
     ) -> np.ndarray:
     """
     Log-space predictions for EVERY cell, leak-free, section by section.
@@ -370,8 +405,10 @@ def predict_all_cells(
     Xn = np.asarray(work.X.todense() if hasattr(work.X, "todense") else work.X,
                     dtype=np.float32)
 
-    xy = np.asarray(adata.obsm["spatial"], dtype=np.float64)[:, :2] * coord_scale
+    xy = np.asarray(adata.obsm["spatial"], dtype=np.float64)[:, :2].copy()
     batch = adata.obs[batch_key].to_numpy()
+    for _b, _f in coord_scales.items():          # per-section scaling
+        xy[batch == _b] *= _f
     is_train = (adata.obs["data_split"].to_numpy() == "train")
 
     G = Xn.shape[1]
@@ -392,10 +429,16 @@ def predict_all_cells(
             print(f"     test  : {te_idx.size} cells in {time.time()-t0:.1f}s")
 
         # ---- train cells: chunked, chunk excluded from its own context ----
-        n_chunks = int(np.ceil(tr_idx.size / max(1, train_chunk)))
+        # At least TWO chunks: with one chunk the chunk IS the whole train set,
+        # so its complement is empty and the train predictions would silently be
+        # left at zero (this bit the smoke run, where n_train < train_chunk).
+        if tr_idx.size >= 2:
+            n_chunks = max(2, int(np.ceil(tr_idx.size / max(1, train_chunk))))
+            chunks = np.array_split(tr_idx, n_chunks)
+        else:
+            n_chunks, chunks = (1, [tr_idx]) if tr_idx.size else (0, [])
         t0 = time.time()
-        for ci in range(n_chunks):
-            q = tr_idx[ci * train_chunk:(ci + 1) * train_chunk]
+        for q in chunks:
             if q.size == 0:
                 continue
             ctx = np.setdiff1d(tr_idx, q, assume_unique=False)
@@ -469,8 +512,15 @@ def main(argv=None):
     p.add_argument("--train-chunk", type=int, default=4096,
                    help="Train cells predicted per forward pass (each chunk is "
                         "removed from its own context to stay leak-free).")
-    p.add_argument("--coord-scale", type=float, default=1.0,
-                   help="Multiply obsm['spatial'] by this to reach micrometres.")
+    p.add_argument("--coord-scale", default="auto",
+                   help="'auto' (default) scales EACH section so its median "
+                        "nearest-neighbour distance equals --coord-target-nn, "
+                        "because CIFM's graph is fixed-radius and this dataset's "
+                        "two sections are on different scales. Or pass a number "
+                        "for one global factor (1.0 = leave as-is).")
+    p.add_argument("--coord-target-nn", type=float, default=10.0,
+                   help="Target median NN distance in CIFM's units when "
+                        "--coord-scale auto (10 um is typical cell spacing).")
     args = p.parse_args(argv)
 
     seeds = [int(s) for s in str(args.seeds).split(",") if str(s).strip() != ""]
@@ -490,6 +540,12 @@ def main(argv=None):
     adata = load_silver_concat(Path(args.silver_dir), batch_key=args.batch_key)
     print(f"AnnData: n_obs={adata.n_obs}, n_vars={adata.n_vars}")
     adata.obs[args.batch_key] = adata.obs[args.batch_key].astype("category")
+    # Scales are measured on the FULL data: --smoke thins the section ~20x,
+    # which inflates nearest-neighbour distances ~sqrt(20)x and would otherwise
+    # produce wrong factors.
+    _full_xy = np.asarray(adata.obsm["spatial"], dtype=np.float64)[:, :2]
+    _full_batch = adata.obs[args.batch_key].to_numpy()
+
     if args.smoke:
         sub = np.random.default_rng(0).choice(adata.n_obs,
                                              size=min(4000, adata.n_obs),
@@ -521,16 +577,16 @@ def main(argv=None):
     model = load_cifm(args.cifm_repo, device)
     model.channel_matching(channel2ensembl_target, model.channel2ensembl_ids_source)
 
-    coord_diagnostic(
-        np.asarray(adata.obsm["spatial"], dtype=np.float64)[:, :2] * args.coord_scale,
-        adata.obs[args.batch_key].to_numpy(),
-        float(getattr(model, "radius_spatial_graph", 20.0)))
+    coord_scales = resolve_coord_scales(
+        _full_xy, _full_batch,
+        radius=float(getattr(model, "radius_spatial_graph", 20.0)),
+        coord_scale=args.coord_scale, target_nn=args.coord_target_nn)
 
     print("\n=== CIFM inference (leak-free, per section) ===")
     pred_log = predict_all_cells(
         model, adata, batch_key=args.batch_key, device=device,
         apply_gate=args.apply_dropout_gate, train_chunk=args.train_chunk,
-        coord_scale=args.coord_scale)
+        coord_scales=coord_scales)
 
     print("\n=== Leak-free read depth (k=%d, observed neighbours only) ==="
           % args.read_depth_neighs)
@@ -593,6 +649,8 @@ def main(argv=None):
             "read_depth_neighs": args.read_depth_neighs,
             "train_chunk": args.train_chunk,
             "coord_scale": args.coord_scale,
+            "coord_target_nn": args.coord_target_nn,
+            "per_section_scales": {str(k): float(v) for k, v in coord_scales.items()},
             "deterministic_seed_replicates": len(seeds) > 1,
             "holdout": "DEFAULT_HOLDOUT_REGIONS (identical to SQUINT/GeST)",
             "nbr_neighs": args.nbr_neighs,

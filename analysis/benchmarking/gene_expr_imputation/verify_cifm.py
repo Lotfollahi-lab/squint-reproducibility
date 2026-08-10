@@ -43,7 +43,7 @@ from pathlib import Path
 DEFAULT_CIFM_REPO = Path(__file__).resolve().parents[1] / "cifm"
 NEEDED = ("torch", "torch_geometric", "torch_cluster", "torch_scatter",
           "torch_sparse", "e3nn", "scanpy", "anndata", "pandas", "sklearn",
-          "mygene", "huggingface_hub", "h5py", "scipy")
+          "mygene", "huggingface_hub", "h5py", "scipy", "squidpy")
 
 
 def main(argv=None) -> int:

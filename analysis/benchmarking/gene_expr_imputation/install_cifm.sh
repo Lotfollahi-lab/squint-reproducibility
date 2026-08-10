@@ -139,9 +139,12 @@ uv pip install --python "$PY" "torch-geometric>=2.5,<2.7"
 #    - mygene/requests : the mouse->human ortholog lookup (same helper as scGPT)
 #    - scikit-learn    : NearestNeighbors, for the leak-free read depth
 #    - scanpy/anndata  : normalize_total/log1p + the AnnData plumbing
+#    - squidpy         : REQUIRED — _holdout_utils.spatial_knn_per_batch builds
+#                        the niche-branch graph with sq.gr.spatial_neighbors, so
+#                        scoring dies without it (same pin as the squint venv)
 uv pip install --python "$PY" "e3nn" "pytorch-lightning>=2.2,<2.5" \
     "transformers" "huggingface_hub" "scanpy>=1.10" "anndata>=0.10" "pandas" \
-    "scikit-learn" "mygene" "requests" "h5py>=3.10"
+    "scikit-learn" "mygene" "requests" "h5py>=3.10" "squidpy>=1.5"
 
 # ---- the verifier is a REAL FILE in the repo (verify_cifm.py) --------------
 # It used to be written here as a heredoc, which meant a fix required
