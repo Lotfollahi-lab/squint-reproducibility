@@ -42,13 +42,20 @@
 # internet, precompute the mapping on a login node first (see PRECOMPUTE below)
 # and pass --ortholog-csv, otherwise the job dies after loading the data.
 #
-# RUN ON THE FARM, on a node that can pip-install (ideally a login node with
-# internet). I cannot test this from the dev box — run the verifier on a GPU
-# node before submitting the real job.
+# Installs with **uv**, matching squint/pyproject.toml's [tool.uv] setup (the
+# data.pyg.org find-links index + the explicit pytorch-cu121 index). uv will
+# fetch a managed CPython if the node has no python3.10. It ALSO downloads the
+# checkpoint at the end (via download_cifm.py — no git-lfs needed).
 #
-# Env knobs: VENV, PYTHON, CUDA (cu121|cu118), TORCH, CIFM_REPO, PYG_INDEX.
+# RUN ON THE FARM, on a node with internet (a login node). I cannot test this
+# from the dev box — run the verifier on a GPU node before the real job.
+#
+# Env knobs: VENV, PYTHON, CUDA (cu121|cu118), TORCH, CIFM_REPO, PYG_INDEX,
+#   PYG_LIB, TORCH_CLUSTER, TORCH_SCATTER, TORCH_SPARSE, TORCH_SPLINE.
 # =============================================================================
 set -euo pipefail
+
+SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
 VENV="${VENV:-/nfs/team361/sb75/.venvs/cifm}"   # name must match submit_imputation_recon.sh
 PYTHON="${PYTHON:-python3.10}"        # squint/pyproject.toml: requires-python >=3.10,<3.13
@@ -60,7 +67,11 @@ TORCH_CLUSTER="${TORCH_CLUSTER:-1.6.3}"
 TORCH_SCATTER="${TORCH_SCATTER:-2.1.2}"
 TORCH_SPARSE="${TORCH_SPARSE:-0.6.18}"
 TORCH_SPLINE="${TORCH_SPLINE:-1.2.2}"
-CIFM_REPO="${CIFM_REPO:-/nfs/team361/sb75/models/CIFM}"
+# Checkpoint lives beside the other benchmarked models, i.e.
+# analysis/benchmarking/cifm — same convention as geneformer / nicheformer /
+# scGPT / uce_model, and already covered by .gitignore so the 569 MB weight file
+# is never committed.
+CIFM_REPO="${CIFM_REPO:-$( cd -- "$SCRIPT_DIR/.." &> /dev/null && pwd )/cifm}"
 PYG_INDEX="${PYG_INDEX:-https://data.pyg.org/whl/torch-${TORCH}+${CUDA}.html}"
 
 echo "=========================================================="
@@ -70,29 +81,48 @@ echo "  pyg wheels: $PYG_INDEX"
 echo "  checkpoint: $CIFM_REPO"
 echo "=========================================================="
 
-"$PYTHON" -m venv "$VENV"
-# shellcheck disable=SC1091
-source "$VENV/bin/activate"
-pip install --upgrade pip wheel setuptools
+# ---- uv ---------------------------------------------------------------------
+# We install with uv, the same tool squint/pyproject.toml is configured for
+# ([tool.uv] find-links + the explicit pytorch-cu121 index). The flags below are
+# the CLI equivalents of those blocks, so this venv resolves from exactly the
+# same two wheel sources as the squint venv.
+if ! command -v uv >/dev/null 2>&1; then
+    echo "ERROR: uv not found. Install it with one of:" >&2
+    echo "  curl -LsSf https://astral.sh/uv/install.sh | sh   # then re-open the shell" >&2
+    echo "  pip install --user uv" >&2
+    exit 1
+fi
+echo "uv: $(uv --version)"
 
-# 1. torch FIRST, from the CUDA index, so the PyG wheels in step 2 can match it.
-#    Do NOT pass --no-deps: torch's CUDA runtime ships as separate nvidia-*-cu12
-#    wheels (cudnn/cublas/...) and skipping them breaks the import.
-pip install "torch==${TORCH}" --index-url "https://download.pytorch.org/whl/${CUDA}"
+# uv fetches a managed CPython if $PYTHON is not on the system, so this works on
+# nodes without a system python3.10.
+uv venv --python "${PYTHON#python}" "$VENV"
+PY="$VENV/bin/python"
+
+# 1. torch FIRST, from the CUDA index, so the PyG wheels in step 3 can match its
+#    ABI. == [tool.uv.sources] torch -> index "pytorch-cu121" in the squint
+#    pyproject. Do NOT add --no-deps: torch's CUDA runtime ships as separate
+#    nvidia-*-cu12 wheels (cudnn/cublas/...) and skipping them breaks the import.
+uv pip install --python "$PY" "torch==${TORCH}" \
+    --index-url "https://download.pytorch.org/whl/${CUDA}"
 
 # 2. numpy<2 BEFORE the compiled extensions — same bound as squint/pyproject.toml
 #    ("numpy>=1.24,<2"; CIFM's card asks for 1.26.4, which is inside it). numpy 2
 #    changed the C ABI and the prebuilt scatter/sparse/cluster wheels were
 #    compiled against 1.x ("numpy.dtype size changed" at import).
-pip install "numpy>=1.24,<2"
+uv pip install --python "$PY" "numpy>=1.24,<2"
 
-# 3. The compiled PyG extensions, at the SAME pins as the squint venv, from the
-#    version-matched wheel index (pitfalls 1/2 above). torch-cluster is what
-#    provides radius_graph, which CIFM calls on every forward pass.
-pip install "pyg-lib==${PYG_LIB}" "torch-cluster==${TORCH_CLUSTER}" \
-            "torch-scatter==${TORCH_SCATTER}" "torch-sparse==${TORCH_SPARSE}" \
-            "torch-spline-conv==${TORCH_SPLINE}" -f "$PYG_INDEX"
-pip install "torch-geometric>=2.5,<2.7"
+# 3. The compiled PyG extensions, at the SAME pins as the squint venv, resolved
+#    from the version-matched wheel index (== [tool.uv] find-links). See pitfalls
+#    1/2 in the header: torch-cluster is what provides radius_graph, which CIFM
+#    calls on every forward pass. --no-build-isolation only matters if no wheel
+#    matches and uv falls back to a source build (their setup.py imports torch,
+#    which is already installed by step 1).
+uv pip install --python "$PY" --find-links "$PYG_INDEX" --no-build-isolation \
+    "pyg-lib==${PYG_LIB}" "torch-cluster==${TORCH_CLUSTER}" \
+    "torch-scatter==${TORCH_SCATTER}" "torch-sparse==${TORCH_SPARSE}" \
+    "torch-spline-conv==${TORCH_SPLINE}"
+uv pip install --python "$PY" "torch-geometric>=2.5,<2.7"
 
 # 4. Everything else CIFM + run_cifm.py import. Version ranges follow
 #    squint/pyproject.toml where they overlap, so behaviour matches GeST.
@@ -101,40 +131,20 @@ pip install "torch-geometric>=2.5,<2.7"
 #                        the squint venv; CIFM's card says lightning==2.1.0, but
 #                        cifm.py itself does not import it)
 #    - transformers    : pulled in by the PyTorchModelHubMixin paths
-#    - huggingface_hub : from_pretrained('ynyou/CIFM')
+#    - huggingface_hub : from_pretrained() + the checkpoint download
 #    - mygene/requests : the mouse->human ortholog lookup (same helper as scGPT)
 #    - scikit-learn    : NearestNeighbors, for the leak-free read depth
 #    - scanpy/anndata  : normalize_total/log1p + the AnnData plumbing
-pip install "e3nn" "pytorch-lightning>=2.2,<2.5" "transformers" \
-            "huggingface_hub" "scanpy>=1.10" "anndata>=0.10" "pandas" \
-            "scikit-learn" "mygene" "requests" "h5py>=3.10"
+uv pip install --python "$PY" "e3nn" "pytorch-lightning>=2.2,<2.5" \
+    "transformers" "huggingface_hub" "scanpy>=1.10" "anndata>=0.10" "pandas" \
+    "scikit-learn" "mygene" "requests" "h5py>=3.10"
 
-# ---- fetch the released checkpoint (git-lfs; see pitfall 3) -----------------
-if [[ -d "$CIFM_REPO/.git" ]]; then
-    echo "Checkpoint already cloned at $CIFM_REPO — pulling lfs objects"
-    ( cd "$CIFM_REPO" && git lfs install --local && git lfs pull )
-else
-    mkdir -p "$(dirname "$CIFM_REPO")"
-    if ! command -v git-lfs >/dev/null 2>&1 && ! git lfs version >/dev/null 2>&1; then
-        echo "ERROR: git-lfs is not available. Install it (module load git-lfs, or"
-        echo "       conda install git-lfs) and re-run — a plain clone gives a"
-        echo "       pointer file and the model will not load." >&2
-        exit 1
-    fi
-    git lfs install
-    git clone "https://huggingface.co/ynyou/CIFM" "$CIFM_REPO"
-fi
-
-# fail loudly now rather than mid-job if lfs did not materialise the weights
-_W="$CIFM_REPO/model.safetensors"
-if [[ ! -f "$_W" ]] || [[ "$(stat -c%s "$_W" 2>/dev/null || stat -f%z "$_W")" -lt 100000000 ]]; then
-    echo "ERROR: $_W is missing or too small (git-lfs pointer?). Run:" >&2
-    echo "       cd $CIFM_REPO && git lfs install --local && git lfs pull" >&2
-    exit 1
-fi
-echo "checkpoint OK: $(du -h "$_W" | cut -f1) $_W"
-
-# ---- write an end-to-end verifier to run ON A GPU NODE ---------------------
+# ---- write the verifier BEFORE the download -------------------------------
+# ORDERING MATTERS: the checkpoint download is the step most likely to fail on
+# the farm, and if it aborts the script the verifier must already be on disk —
+# otherwise you are left with a venv and no way to test it (which is exactly
+# what happened on the first run of this script).
+# ---- an end-to-end verifier to run ON A GPU NODE ---------------------------
 cat > "$VENV/verify_cifm.py" <<PYEOF
 import importlib, sys, numpy as np, torch
 CIFM_REPO = "$CIFM_REPO"
@@ -196,6 +206,27 @@ assert out.shape == (2, G)
 assert torch.isfinite(out).all(), "non-finite predictions"
 print("ALL CHECKS PASSED")
 PYEOF
+echo "verifier written: $VENV/verify_cifm.py"
+
+# ---- fetch the released checkpoint (NO git-lfs; see pitfall 3) --------------
+# huggingface_hub.snapshot_download resumes partial transfers and needs neither
+# git nor git-lfs, both of which are unreliable here. download_cifm.py also
+# verifies the result (size + that the vocabulary really is human ENSG), so a
+# truncated weight file is caught now instead of inside a GPU job.
+echo
+echo "=== Downloading checkpoint -> $CIFM_REPO ==="
+if "$PY" "$SCRIPT_DIR/download_cifm.py" --dest "$CIFM_REPO"; then
+    echo "checkpoint OK"
+else
+    echo >&2
+    echo "WARNING: checkpoint download failed — the VENV AND VERIFIER ARE STILL" >&2
+    echo "         USABLE. Retry just the download (it resumes) with:" >&2
+    echo "  source $VENV/bin/activate" >&2
+    echo "  python $SCRIPT_DIR/download_cifm.py --dest $CIFM_REPO" >&2
+    echo "If the farm has no outbound internet on this node, run that on a login" >&2
+    echo "node, or fetch the files manually from https://huggingface.co/ynyou/CIFM" >&2
+    exit 1
+fi
 
 echo
 echo "DONE building $VENV"

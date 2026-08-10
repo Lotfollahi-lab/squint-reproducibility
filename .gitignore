@@ -3,6 +3,7 @@ logs/
 
 *.pyc
 
+/analysis/benchmarking/cifm
 /analysis/benchmarking/geneformer
 /analysis/benchmarking/nichecompass
 /analysis/benchmarking/nicheformer

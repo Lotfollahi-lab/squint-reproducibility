@@ -53,7 +53,7 @@ PREDICTED_ADATA="${PREDICTED_ADATA:-$ART/$DATASET/dualvq+rvq-both+decoder-cov+no
 # NicheCompass GP args (mmb = mouse). Match submit_all_benchmarks.sh defaults.
 # CIFM (pretrained foundation model): local clone of the ynyou/CIFM HF repo, and
 # the source species of adata.var_names for the mouse->human ortholog mapping.
-CIFM_REPO="${CIFM_REPO:-/nfs/team361/sb75/models/CIFM}"
+CIFM_REPO="${CIFM_REPO:-$REPO/analysis/benchmarking/cifm}"
 CIFM_SPECIES="${CIFM_SPECIES:-mouse}"
 # Optional: a PINNED mouse->human ortholog map (cols: gene,human_ensembl_id),
 # precomputed on a login node with `run_cifm.py --ortholog-only`. Set this when

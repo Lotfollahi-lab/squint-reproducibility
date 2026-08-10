@@ -78,7 +78,7 @@ CIFM-SPECIFIC HANDLING (the parts that needed a decision)
 Usage
 -----
   python run_cifm.py --use-default-holdout-regions --seeds 0,1,2,3,4 \
-      --cifm-repo /nfs/team361/sb75/models/CIFM
+      --cifm-repo <repo>/analysis/benchmarking/cifm   # (the default)
 
 Requires (own venv): torch, torch-geometric (+scatter/sparse/cluster), e3nn,
 scanpy, mygene, huggingface_hub, and the `models_cifm/` package from the CIFM
@@ -116,6 +116,9 @@ if str(_CT_DIR) not in sys.path:
     sys.path.insert(0, str(_CT_DIR))
 
 DEFAULT_VARIANT_TAG = "baseline-cifm+region-holdout"
+# The checkpoint lives beside the other benchmarked models
+# (analysis/benchmarking/cifm; gitignored, like geneformer / scGPT / uce_model).
+DEFAULT_CIFM_REPO = _THIS.parent / "cifm"
 DEFAULT_READ_DEPTH_NEIGHS = 16          # == SQUINT's --read-depth-neighs
 CIFM_HF_REPO = "ynyou/CIFM"
 
@@ -267,7 +270,13 @@ def load_cifm(cifm_repo: Path, device: str):
     from models_cifm.cifm import CIFM  # noqa: E402
 
     args_model = torch.load(repo / "models_cifm" / "args.pt")
-    model = CIFM.from_pretrained(CIFM_HF_REPO, args=args_model).to(device)
+    # Prefer the LOCAL weights so the compute node needs no internet; fall back
+    # to the Hub only if download_cifm.py has not been run.
+    src = str(repo) if (repo / "model.safetensors").is_file() else CIFM_HF_REPO
+    if src == CIFM_HF_REPO:
+        print("  NOTE: model.safetensors not found locally -> fetching from the "
+              "Hub (this node needs internet). Run download_cifm.py to avoid it.")
+    model = CIFM.from_pretrained(src, args=args_model).to(device)
     model.channel2ensembl_ids_source = torch.load(
         repo / "models_cifm" / "channel2ensembl.pt")
     model.eval()
@@ -437,9 +446,11 @@ def main(argv=None):
     p.add_argument("--device", default="auto")
     p.add_argument("--smoke", action="store_true")
     # --- CIFM-specific ---
-    p.add_argument("--cifm-repo", type=Path, required=True,
-                   help="Local clone of the ynyou/CIFM HF repo (must contain "
-                        "models_cifm/{cifm.py,args.pt,channel2ensembl.pt}).")
+    p.add_argument("--cifm-repo", type=Path, default=DEFAULT_CIFM_REPO,
+                   help=f"Local copy of the ynyou/CIFM repo (must contain "
+                        f"models_cifm/{{cifm.py,args.pt,channel2ensembl.pt}} and, "
+                        f"for offline runs, model.safetensors). Default: "
+                        f"{DEFAULT_CIFM_REPO} — populate it with download_cifm.py.")
     p.add_argument("--species", default="mouse",
                    help="Source species of adata.var_names, for the ortholog map.")
     p.add_argument("--ortholog-csv", type=Path, default=None,
