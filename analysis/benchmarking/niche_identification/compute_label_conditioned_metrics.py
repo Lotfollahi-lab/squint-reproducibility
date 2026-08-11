@@ -2,112 +2,187 @@
 """
 compute_label_conditioned_metrics.py — the scIB label-conditioned scores R2 asked for.
 =============================================================================
-R2-W1b: "MMD is useful but can be sensitive to representation scaling and does not
-by itself establish preservation of cell-type-specific biology; label-conditioned
-integration metrics would be preferable."
+R2-W1b: "MMD ... does not by itself establish preservation of cell-type-specific
+biology; label-conditioned integration metrics would be preferable."
 
-Table 1 reports MMD and iLISI, which measure batch mixing but say nothing about
-whether cell-type structure survives it. Those published metrics are computed on
-the DISCRETE representation (author, 2026-08-11), not on the continuous pre-VQ
-encoder output, so the label-conditioned scores must be computed on the same
-representation to be comparable. Which obsm key that is gets settled empirically
-by the reproduction gate below rather than assumed: the mouse-brain file offers
-six candidates (cell/neighborhood x emb/latent/code_indices) and Table 1 publishes
-two iLISI anchors (niche 0.609, cell 0.739), so both keys are identifiable. The metrics that answer this are already
-implemented in `vqniche.metrics.benchmarking` through `scib_metrics`, and
-`scib-metrics>=0.5` is already a dependency. Nothing needs retraining: these are
-computed on the saved `predicted_adata.h5ad` latents.
-
-WHAT IS COMPUTED
-  kbet   `scib_metrics.kbet_per_label` — batch mixing evaluated WITHIN each cell
-         type. This is literally the label-conditioned integration metric R2
-         asked for, and the one that answers the objection directly.
-  clisi  cell-type LISI. The bio-conservation mirror of the iLISI we already
-         report, so it drops straight into Table 1's existing columns.
+Computed on the SAVED latents, no retraining:
+  kbet   scib_metrics.kbet_per_label — batch mixing WITHIN each cell type. This is
+         the label-conditioned integration metric R2 asked for.
+  clisi  cell-type LISI. Bio-conservation mirror of the iLISI in Table 1.
   casw   cell-type silhouette. A second bio-conservation view.
-  blisi  `scib_metrics.ilisi_knn`, i.e. OUR REPORTED iLISI. Not a new result —
-         it is the REPRODUCTION GATE (see below).
+  ilisi  scib_metrics.ilisi_knn. This IS the iLISI Table 1 reports; recomputed as a
+         REPRODUCTION GATE, not as a new result.
 
-THE REPRODUCTION GATE, READ THIS BEFORE TRUSTING ANY NUMBER
-Choosing the wrong `--latent-key` or `--cell-type-key` produces plausible numbers
-silently; we have been bitten by exactly that before (a sibling script defaulted
-to a 40-class `cell_type` column where the paper used `new_annotation`). So this
-script recomputes `blisi` alongside the new metrics and compares it against the
-paper's published iLISI for the same representation. If blisi does not land near
-that value, the keys are wrong and the new metrics are meaningless. Pass
-`--expect-blisi 0.609` (mouse-brain niche latent, Table 1) to make the check
-explicit; the script reports the discrepancy and exits non-zero on a bad match.
+WHY THIS CALLS scib_metrics DIRECTLY INSTEAD OF compute_benchmarking_metrics
+That function cannot compute these in the current environment. It passes raw sparse
+obsp matrices to the LISI family:
 
-Run `--inspect` first. It prints every obsm key with its shape and every obs
-column that looks like a label or batch with its cardinality, and computes
-nothing. Pick the keys from that output rather than trusting the defaults.
+    scib_metrics.clisi_knn(X=adata.obsp[f"{latent_key}_90knng_distances"], ...)
+
+but scib-metrics 0.5.6 requires `X: NeighborsResults(indices, distances)`. Observed
+on the mouse-brain file: kbet raises ValueError ("Length of batches does not match
+number of cells"), while clisi and blisi sit inside a bare `except:` that assigns
+0.0, so they fail SILENTLY and return a plausible zero. casw is unaffected, since
+silhouette_label takes the embedding directly.
+
+One implication, about the published numbers rather than this script: Table 1's iLISI
+(niche 0.609, cell 0.739) cannot be reproduced through that path in this venv, since
+it would return the 0.0 sentinel. Either the venv's scib-metrics was upgraded after
+those runs, or the numbers came from elsewhere. Worth settling before the
+camera-ready, and it means the gate below can disagree with 0.609 for reasons that
+have nothing to do with the representation.
+
+benchmarking.py is deliberately NOT modified: it produced the published numbers. We
+reuse only its graph builder, compute_knn_graph_connectivities_and_distances, so the
+neighbour graph is exactly the paper's (same k, same random_state).
+
+SELF-LOOP CONVENTION
+scib-metrics' own builders return k neighbours INCLUDING the query point (column 0 is
+self at distance 0), so NeighborsResults is built that way here. scanpy-style graphs
+exclude self, hence --include-self (default) prepends it. If the gate disagrees with
+a published anchor, try --no-include-self before concluding the representation is
+wrong: this convention shifts every LISI value.
 
 USAGE
-  # 1. look before you leap
-  python compute_label_conditioned_metrics.py --inspect \\
-      --adata /nfs/.../20260628_145939_seed0/predicted_adata.h5ad
+  # 1. look first; computes nothing
+  python compute_label_conditioned_metrics.py --inspect --adata .../predicted_adata.h5ad
 
-  # 2. one seed, with the gate armed
-  python compute_label_conditioned_metrics.py \\
-      --adata /nfs/.../seed0/predicted_adata.h5ad \\
-      --latent-keys H_adj --cell-type-key cell_type --batch-key adata_batch_id \\
-      --expect-blisi 0.609
+  # 2. identify which obsm key reproduces which published anchor (seed 0 is enough)
+  python compute_label_conditioned_metrics.py --adata .../seed0/predicted_adata.h5ad \\
+      --expect-ilisi neighborhood_latent=0.609,cell_latent=0.739 --out /tmp/ident.csv
 
-  # 3. all five seeds -> CSV
+  # 3. then the real run: five seeds, the two identified keys
   python compute_label_conditioned_metrics.py --method SQUINT \\
-      --adata /nfs/.../seed0/predicted_adata.h5ad \\
-      --adata /nfs/.../seed1/predicted_adata.h5ad ... \\
-      --out label_conditioned_metrics_mmb.csv
+      --latent-keys neighborhood_latent,cell_latent \\
+      --adata .../seed0/... --adata .../seed1/... --out .../lcm_SQUINT.csv
 
-Needs the squint venv (the one that can `import vqniche`).
+Needs the squint venv (the one that can import vqniche).
 """
 
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 import numpy as np
 
-METRICS = ["blisi", "kbet", "clisi", "casw"]
-LABEL_HINTS = ("cell_type", "cell_types", "celltype", "annotation", "new_annotation",
-               "niche", "region", "domain", "leiden", "cluster")
+METRICS = ["ilisi", "kbet", "clisi", "casw"]
+K_LISI, K_KBET = 90, 50          # the k's benchmarking.py uses for these metrics
+LABEL_HINTS = ("cell_type", "cell_types", "celltype", "annotation", "niche",
+               "region", "domain", "leiden", "cluster")
 BATCH_HINTS = ("batch", "section", "sample", "donor", "slide", "assay")
 
 
 def inspect(path: Path) -> None:
     import anndata as ad
     a = ad.read_h5ad(path, backed="r")
-    print(f"\n=== {path} ===")
-    print(f"  n_obs={a.n_obs}  n_vars={a.n_vars}")
+    print(f"\n=== {path} ===\n  n_obs={a.n_obs}  n_vars={a.n_vars}")
     print("\n  obsm keys (candidates for --latent-keys):")
     for k in a.obsm.keys():
         try:
-            shp = a.obsm[k].shape
-        except Exception:                                        # noqa: BLE001
-            shp = "?"
-        print(f"    {k:32s} {shp}")
+            print(f"    {k:32s} {a.obsm[k].shape}")
+        except Exception:                                          # noqa: BLE001
+            print(f"    {k:32s} ?")
     print("\n  obs columns that look like labels or batches:")
     for c in a.obs.columns:
         lc = c.lower()
         tag = ("LABEL" if any(h in lc for h in LABEL_HINTS) else
                "BATCH" if any(h in lc for h in BATCH_HINTS) else None)
-        if tag is None:
-            continue
-        col = a.obs[c]
-        n = col.nunique(dropna=True)
-        nan = int(col.isna().sum())
-        print(f"    [{tag}] {c:30s} {n:6d} classes, {nan} NaN")
-    print("\n  Pick --latent-keys / --cell-type-key / --batch-key from the above.")
-    print("  The cell-type key MUST be the one Table 1 used, or the numbers are")
-    print("  not comparable with the published columns.")
+        if tag:
+            col = a.obs[c]
+            print(f"    [{tag}] {c:30s} {col.nunique(dropna=True):6d} classes, "
+                  f"{int(col.isna().sum())} NaN")
+    print("\n  A label column with NaNs is unusable here: kbet and clisi need a label")
+    print("  for every cell, and dropping cells would change the scored cell set.")
+
+
+def knn_arrays(D, k: int, include_self: bool):
+    """Sparse kNN distance matrix -> (indices, distances) of shape (n, k[+1])."""
+    from scipy.sparse import csr_matrix
+    D = csr_matrix(D)
+    n = D.shape[0]
+    width = k + 1 if include_self else k
+    idx = np.zeros((n, width), dtype=np.int64)
+    dst = np.zeros((n, width), dtype=np.float64)
+    short = 0
+    for i in range(n):
+        s, e = D.indptr[i], D.indptr[i + 1]
+        cols, vals = D.indices[s:e], D.data[s:e]
+        keep = cols != i                              # drop any stored self-edge
+        cols, vals = cols[keep], vals[keep]
+        order = np.argsort(vals, kind="stable")[:k]
+        c, v = cols[order], vals[order]
+        if c.size < k:                                # pad by repeating the last
+            short += 1
+            if c.size == 0:
+                c, v = np.array([i]), np.array([0.0])
+            c = np.concatenate([c, np.full(k - c.size, c[-1])])
+            v = np.concatenate([v, np.full(k - v.size, v[-1])])
+        if include_self:
+            idx[i] = np.concatenate([[i], c]); dst[i] = np.concatenate([[0.0], v])
+        else:
+            idx[i] = c; dst[i] = v
+    if short:
+        print(f"      note: {short}/{n} rows had fewer than {k} neighbours and were "
+              f"padded; consider --fully-connected if that fraction is large")
+    return idx, dst
+
+
+def self_test() -> int:
+    """
+    Validate knn_arrays against sklearn on synthetic data. This is the only
+    genuinely new logic here and the likeliest place for an off-by-one, so it is
+    checked in the target environment before any metric number is trusted.
+    """
+    from scipy.sparse import csr_matrix
+    from sklearn.neighbors import NearestNeighbors
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(60, 5)); k = 4
+    d, i = NearestNeighbors(n_neighbors=k + 1).fit(X).kneighbors(X)
+    # a scanpy-style graph: k neighbours per row, self EXCLUDED
+    rows = np.repeat(np.arange(60), k)
+    D = csr_matrix((d[:, 1:].ravel(), (rows, i[:, 1:].ravel())), shape=(60, 60))
+
+    ok = True
+    idx, dst = knn_arrays(D, k, include_self=True)
+    checks = [
+        (f"include_self shape == (60,{k+1})", idx.shape == (60, k + 1)),
+        ("column 0 is the query point", bool((idx[:, 0] == np.arange(60)).all())),
+        ("column 0 distance is 0", bool((dst[:, 0] == 0).all())),
+        ("neighbours match sklearn", bool((idx[:, 1:] == i[:, 1:]).all())),
+        ("distances ascending", bool((np.diff(dst, axis=1) >= -1e-12).all())),
+    ]
+    idx2, _ = knn_arrays(D, k, include_self=False)
+    checks += [
+        (f"no_include_self shape == (60,{k})", idx2.shape == (60, k)),
+        ("no_include_self matches sklearn", bool((idx2 == i[:, 1:]).all())),
+    ]
+    lil = D.tolil(); lil[7, :] = 0
+    D2 = lil.tocsr(); D2.eliminate_zeros()
+    try:
+        o, _ = knn_arrays(D2, k, include_self=True)
+        checks.append(("empty row padded, no crash", o.shape == (60, k + 1)))
+    except Exception as ex:                                        # noqa: BLE001
+        checks.append((f"empty row padded, no crash ({ex})", False))
+
+    print("=== knn_arrays self-test ===")
+    for name, good in checks:
+        ok &= good
+        print(f"  {'PASS' if good else 'FAIL'}  {name}")
+    print("\n  " + ("all checks passed; the NeighborsResults conversion is sound."
+                    if ok else
+                    "*** A CHECK FAILED. Do not trust any LISI/kbet number until "
+                    "this is fixed: the conversion feeds every one of them. ***"))
+    return 0 if ok else 1
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--adata", type=Path, action="append", required=True,
-                   help="Repeat once per seed.")
+    p.add_argument("--adata", type=Path, action="append",
+                   help="Repeat once per seed. Not needed with --self-test.")
+    p.add_argument("--self-test", action="store_true",
+                   help="Validate the sparse->NeighborsResults conversion against "
+                        "sklearn and exit. Run this once before trusting metrics.")
     p.add_argument("--inspect", action="store_true",
                    help="Print available keys and exit without computing.")
     p.add_argument("--method", default="SQUINT")
@@ -115,140 +190,151 @@ def main(argv=None) -> int:
                    default=("cell_code_indices,cell_latent,cell_emb,"
                             "neighborhood_code_indices,neighborhood_latent,"
                             "neighborhood_emb"),
-                   help="Comma list. Default is every candidate in the mouse-brain "
-                        "file, for the identification run. Once the gate names the "
-                        "two Table 1 used, pass just those two.")
+                   help="Comma list. The default is every candidate in the "
+                        "mouse-brain file, for the identification run.")
     p.add_argument("--cell-type-key", default="cell_type")
     p.add_argument("--batch-key", default="adata_batch_id")
-    p.add_argument("--spatial-key", default="spatial")
-    p.add_argument("--k", type=int, default=8,
-                   help="Matches compute_benchmarking_metrics' default; the "
-                        "metric-specific neighbour counts (50 for kbet, 90 for "
-                        "LISI) are added internally, as in the paper's runs.")
-    p.add_argument("--expect-blisi", default=None,
-                   help="Arms the reproduction gate. Either a bare float applied "
-                        "to every latent, or comma-separated key=value pairs, e.g. "
-                        "'neighborhood_latent=0.609,cell_latent=0.739' (the two "
-                        "mouse-brain iLISI values published in Table 1). Latents "
-                        "with no expectation are reported but not gated, which is "
-                        "how you IDENTIFY which obsm key Table 1 used: pass all "
-                        "candidates and see which reproduces which anchor.")
-    p.add_argument("--blisi-tol", type=float, default=0.05,
-                   help="Absolute tolerance for the gate.")
+    p.add_argument("--include-self", dest="include_self", action="store_true",
+                   default=True, help="Prepend the query point as neighbour 0, "
+                                      "matching scib-metrics' own builders.")
+    p.add_argument("--no-include-self", dest="include_self", action="store_false")
+    p.add_argument("--fully-connected", action="store_true")
+    p.add_argument("--expect-ilisi", default=None,
+                   help="Arms the gate. Bare float, or key=value pairs such as "
+                        "'neighborhood_latent=0.609,cell_latent=0.739'. Keys with no "
+                        "expectation are reported ungated, which is how you identify "
+                        "which obsm key Table 1 used.")
+    p.add_argument("--tol", type=float, default=0.05)
     p.add_argument("--out", type=Path, default=None,
-                   help="CSV to write. Default: "
-                        "label_conditioned_metrics_<method>.csv in the CWD. The "
-                        "script REFUSES to overwrite an existing file (use "
-                        "--force), so no previously computed table can be lost.")
-    p.add_argument("--force", action="store_true",
-                   help="Permit overwriting an existing --out file.")
+                   help="CSV to write. Default label_conditioned_metrics_<method>.csv "
+                        "in the CWD. Never overwrites an existing file (see --force).")
+    p.add_argument("--force", action="store_true")
     a = p.parse_args(argv)
+
+    if a.self_test:
+        return self_test()
+    if not a.adata:
+        p.error("--adata is required (or use --self-test)")
 
     if a.inspect:
         for f in a.adata:
             inspect(f)
         return 0
 
-    # Resolve and guard the output BEFORE computing anything: a name clash should
-    # cost a second, not a full metric run.
+    # Guard the output BEFORE computing: a name clash should cost a second.
     out = a.out or Path(f"label_conditioned_metrics_{a.method}.csv")
     if out.exists() and not a.force:
-        raise SystemExit(
-            f"{out} already exists. This script never overwrites results.\n"
-            f"  Pass a different --out, or --force if you really mean to replace it.")
+        raise SystemExit(f"{out} already exists. This script never overwrites "
+                         f"results. Use a different --out, or --force.")
 
     import anndata as ad
     import pandas as pd
     try:
-        from vqniche.metrics.benchmarking import compute_benchmarking_metrics
-    except ImportError as ex:                                     # noqa: BLE001
-        raise SystemExit(
-            f"cannot import vqniche ({ex}). Activate the squint venv: the same "
-            f"one that produced Table 1, so the metric code is identical.")
+        import scib_metrics
+        from scib_metrics.nearest_neighbors import NeighborsResults
+        from vqniche.metrics.utils import (
+            compute_knn_graph_connectivities_and_distances as build_knng)
+    except ImportError as ex:                                      # noqa: BLE001
+        raise SystemExit(f"cannot import scib_metrics or vqniche ({ex}). Activate "
+                         f"the squint venv, i.e. the one that produced Table 1.")
+    print(f"scib_metrics {scib_metrics.__version__}; calling it directly because "
+          f"benchmarking.py passes raw sparse matrices where 0.5.x wants "
+          f"NeighborsResults")
 
     latent_keys = [s.strip() for s in a.latent_keys.split(",") if s.strip()]
     rows = []
     for f in a.adata:
-        seed = next((part.split("seed")[-1] for part in f.parts[::-1]
-                     if "seed" in part), "?")
+        seed = next((q.split("seed")[-1] for q in f.parts[::-1] if "seed" in q), "0")
         adata = ad.read_h5ad(f)
-        for key in ("cell_type_key", "batch_key"):
-            col = getattr(a, key)
+        for nm, col in (("cell-type-key", a.cell_type_key),
+                        ("batch-key", a.batch_key)):
             if col not in adata.obs.columns:
+                raise SystemExit(f"{f}\n  --{nm} {col!r} not in obs. Run --inspect.")
+            if adata.obs[col].isna().any():
                 raise SystemExit(
-                    f"{f}\n  --{key.replace('_','-')} {col!r} is not in obs. "
-                    f"Present: {sorted(adata.obs.columns)[:25]} ...\n"
-                    f"  Run with --inspect and pick the column Table 1 used.")
+                    f"{f}\n  --{nm} {col!r} has {int(adata.obs[col].isna().sum())} "
+                    f"NaN. kbet and clisi need a label for every cell; pick a "
+                    f"complete column (--inspect).")
+        labels = np.asarray(adata.obs[a.cell_type_key].astype(str))
+        batches = np.asarray(adata.obs[a.batch_key].astype(str))
+
         for lk in latent_keys:
             if lk not in adata.obsm:
-                raise SystemExit(
-                    f"{f}\n  --latent-keys {lk!r} is not in obsm. "
-                    f"Present: {list(adata.obsm.keys())}")
-            print(f"\n--- seed {seed} | latent {lk} ---")
+                raise SystemExit(f"{f}\n  --latent-keys {lk!r} not in obsm.")
+            print(f"\n--- seed {seed} | {lk} ---")
             row = {"method": a.method, "seed": seed, "latent_key": lk,
                    "cell_type_key": a.cell_type_key, "batch_key": a.batch_key,
-                   "n_cells": int(adata.n_obs), "path": str(f), "error": ""}
+                   "include_self": a.include_self, "n_cells": int(adata.n_obs),
+                   "scib_version": scib_metrics.__version__, "path": str(f),
+                   "error": ""}
+            row.update({m: float("nan") for m in METRICS})
             try:
-                d = compute_benchmarking_metrics(
-                    adata=adata, metrics=METRICS,
-                    cell_type_key=a.cell_type_key, batch_key=a.batch_key,
-                    spatial_key=a.spatial_key, latent_key=lk,
-                    k=a.k, seed=int(seed) if str(seed).isdigit() else 0)
-                row.update({m: float(d.get(m, float("nan"))) for m in METRICS})
+                X = np.asarray(adata.obsm[lk], dtype=np.float64)
+                sd = int(seed) if str(seed).isdigit() else 0
+                for k in (K_LISI, K_KBET):
+                    if f"{lk}_{k}knng_distances" not in adata.obsp:
+                        print(f"      building {k}-NN graph on {lk} ...")
+                        build_knng(adata=adata, feature_key=lk,
+                                   knng_key=f"{lk}_{k}knng",
+                                   fully_connected=a.fully_connected,
+                                   n_neighbors=k, random_state=sd)
+                nr = {k: NeighborsResults(*(lambda t: (t[0], t[1]))(
+                          knn_arrays(adata.obsp[f"{lk}_{k}knng_distances"], k,
+                                     a.include_self)))
+                      for k in (K_LISI, K_KBET)}
+
+                row["ilisi"] = float(scib_metrics.ilisi_knn(nr[K_LISI], batches))
+                row["clisi"] = float(scib_metrics.clisi_knn(nr[K_LISI], labels))
+                row["kbet"] = float(scib_metrics.kbet_per_label(
+                    nr[K_KBET], batches=batches, labels=labels))
+                row["casw"] = float(scib_metrics.silhouette_label(X, labels))
                 print("    " + "  ".join(f"{m}={row[m]:.4f}" for m in METRICS))
-            except Exception as ex:                               # noqa: BLE001
-                # Deliberate: this is a sweep over CANDIDATE representations, and
-                # some are not valid metric inputs (integer code indices have only
-                # 30x90 distinct values, so neighbour graphs degenerate). One bad
-                # candidate must not kill the identification run. The failure is
-                # printed and recorded, never silently dropped.
-                row.update({m: float("nan") for m in METRICS})
+            except Exception as ex:                                # noqa: BLE001
+                # A sweep over CANDIDATE representations: integer code indices give
+                # degenerate neighbour graphs, so one failing candidate must not end
+                # the run. The failure is printed and stored, never swallowed.
                 row["error"] = f"{type(ex).__name__}: {ex}"
-                print(f"    FAILED -> {row['error'][:160]}")
+                print(f"    FAILED -> {row['error'][:170]}")
             rows.append(row)
+            for k in (K_LISI, K_KBET):        # free graphs before the next key
+                adata.obsp.pop(f"{lk}_{k}knng_distances", None)
+                adata.obsp.pop(f"{lk}_{k}knng_connectivities", None)
 
     df = pd.DataFrame(rows)
-    print("\n" + "=" * 78 + "\nMEAN +/- SD ACROSS SEEDS\n" + "=" * 78)
-    print(f"  {'latent':22s}" + "".join(f"{m:>18s}" for m in METRICS))
+    print("\n" + "=" * 84 + "\nMEAN +/- SD ACROSS SEEDS\n" + "=" * 84)
+    print(f"  {'latent':26s}" + "".join(f"{m:>17s}" for m in METRICS))
     for lk, g in df.groupby("latent_key"):
-        cells = "".join(f"{g[m].mean():>10.4f}+/-{g[m].std(ddof=1):<7.4f}"
+        cells = "".join(f"{g[m].mean():>9.4f}+/-{g[m].std(ddof=1):<7.4f}"
                         for m in METRICS)
-        note = "  [all seeds FAILED]" if g[METRICS].isna().all().all() else ""
-        print(f"  {lk:22s}{cells}{note}")
+        print(f"  {lk:26s}{cells}" +
+              ("   [all FAILED]" if g[METRICS].isna().all().all() else ""))
 
     ok = True
-    if a.expect_blisi is not None:
-        exp = {}
-        if "=" in a.expect_blisi:
-            for part in a.expect_blisi.split(","):
-                k, v = part.split("=", 1)
-                exp[k.strip()] = float(v)
-        else:
-            exp = {lk: float(a.expect_blisi) for lk in latent_keys}
-        print("\n" + "=" * 78 + "\nREPRODUCTION GATE\n" + "=" * 78)
+    if a.expect_ilisi:
+        exp = ({k.strip(): float(v) for k, v in
+                (kv.split("=", 1) for kv in a.expect_ilisi.split(","))}
+               if "=" in a.expect_ilisi
+               else {lk: float(a.expect_ilisi) for lk in latent_keys})
+        print("\n" + "=" * 84 +
+              "\nREPRODUCTION GATE (recomputed ilisi vs published Table 1)\n" +
+              "=" * 84)
         for lk, g in df.groupby("latent_key"):
-            got = g["blisi"].mean()
+            got = g["ilisi"].mean()
             if lk not in exp:
-                print(f"  {lk:22s} blisi {got:.4f}   (no expectation given; "
-                      f"compare against the published anchors yourself)")
+                print(f"  {lk:26s} ilisi {got:.4f}   (ungated; compare yourself)")
                 continue
             d = abs(got - exp[lk])
-            verdict = "PASS" if d <= a.blisi_tol else "FAIL"
-            ok &= (d <= a.blisi_tol)
-            print(f"  {lk:22s} blisi {got:.4f} vs published iLISI "
-                  f"{exp[lk]:.4f}  |diff| {d:.4f}  {verdict}")
+            ok &= d <= a.tol
+            print(f"  {lk:26s} ilisi {got:.4f} vs {exp[lk]:.4f}  |diff| {d:.4f}  "
+                  f"{'PASS' if d <= a.tol else 'FAIL'}")
         if not ok:
-            print("\n  *** The gate FAILED. blisi is our own reported iLISI, so a")
-            print("  mismatch means the latent or label keys differ from the ones")
-            print("  Table 1 used. kbet/clisi/casw above are therefore NOT")
-            print("  comparable with the published columns. Re-run --inspect and")
-            print("  fix the keys before quoting anything. ***")
-        else:
-            print("\n  Gate passed: the keys reproduce our published iLISI, so the")
-            print("  label-conditioned columns are on the same footing as Table 1.")
+            print("\n  Gate failed. Before concluding the representation is wrong,")
+            print("  try --no-include-self: the self-loop convention shifts every")
+            print("  LISI value. And note the docstring caveat, that the published")
+            print("  iLISI may not be reproducible in this venv at all.")
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    if out.exists() and not a.force:      # re-check: a concurrent run may have won
+    if out.exists() and not a.force:
         raise SystemExit(f"{out} appeared while computing; refusing to overwrite.")
     df.to_csv(out, index=False)
     print(f"\nwrote {out}  ({len(df)} rows)")
