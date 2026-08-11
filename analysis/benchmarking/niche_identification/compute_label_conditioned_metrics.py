@@ -7,7 +7,13 @@ by itself establish preservation of cell-type-specific biology; label-conditione
 integration metrics would be preferable."
 
 Table 1 reports MMD and iLISI, which measure batch mixing but say nothing about
-whether cell-type structure survives it. The metrics that answer this are already
+whether cell-type structure survives it. Those published metrics are computed on
+the DISCRETE representation (author, 2026-08-11), not on the continuous pre-VQ
+encoder output, so the label-conditioned scores must be computed on the same
+representation to be comparable. Which obsm key that is gets settled empirically
+by the reproduction gate below rather than assumed: the mouse-brain file offers
+six candidates (cell/neighborhood x emb/latent/code_indices) and Table 1 publishes
+two iLISI anchors (niche 0.609, cell 0.739), so both keys are identifiable. The metrics that answer this are already
 implemented in `vqniche.metrics.benchmarking` through `scib_metrics`, and
 `scib-metrics>=0.5` is already a dependency. Nothing needs retraining: these are
 computed on the saved `predicted_adata.h5ad` latents.
@@ -105,9 +111,13 @@ def main(argv=None) -> int:
     p.add_argument("--inspect", action="store_true",
                    help="Print available keys and exit without computing.")
     p.add_argument("--method", default="SQUINT")
-    p.add_argument("--latent-keys", default="H_adj",
-                   help="Comma list. Table 1 reports cell AND niche columns, so "
-                        "pass both representations to fill both.")
+    p.add_argument("--latent-keys",
+                   default=("cell_code_indices,cell_latent,cell_emb,"
+                            "neighborhood_code_indices,neighborhood_latent,"
+                            "neighborhood_emb"),
+                   help="Comma list. Default is every candidate in the mouse-brain "
+                        "file, for the identification run. Once the gate names the "
+                        "two Table 1 used, pass just those two.")
     p.add_argument("--cell-type-key", default="cell_type")
     p.add_argument("--batch-key", default="adata_batch_id")
     p.add_argument("--spatial-key", default="spatial")
@@ -115,9 +125,14 @@ def main(argv=None) -> int:
                    help="Matches compute_benchmarking_metrics' default; the "
                         "metric-specific neighbour counts (50 for kbet, 90 for "
                         "LISI) are added internally, as in the paper's runs.")
-    p.add_argument("--expect-blisi", type=float, default=None,
-                   help="Published iLISI for this representation. Arms the "
-                        "reproduction gate. Mouse-brain niche latent = 0.609.")
+    p.add_argument("--expect-blisi", default=None,
+                   help="Arms the reproduction gate. Either a bare float applied "
+                        "to every latent, or comma-separated key=value pairs, e.g. "
+                        "'neighborhood_latent=0.609,cell_latent=0.739' (the two "
+                        "mouse-brain iLISI values published in Table 1). Latents "
+                        "with no expectation are reported but not gated, which is "
+                        "how you IDENTIFY which obsm key Table 1 used: pass all "
+                        "candidates and see which reproduces which anchor.")
     p.add_argument("--blisi-tol", type=float, default=0.05,
                    help="Absolute tolerance for the gate.")
     p.add_argument("--out", type=Path, default=None,
@@ -170,17 +185,27 @@ def main(argv=None) -> int:
                     f"{f}\n  --latent-keys {lk!r} is not in obsm. "
                     f"Present: {list(adata.obsm.keys())}")
             print(f"\n--- seed {seed} | latent {lk} ---")
-            d = compute_benchmarking_metrics(
-                adata=adata, metrics=METRICS,
-                cell_type_key=a.cell_type_key, batch_key=a.batch_key,
-                spatial_key=a.spatial_key, latent_key=lk,
-                k=a.k, seed=int(seed) if str(seed).isdigit() else 0)
             row = {"method": a.method, "seed": seed, "latent_key": lk,
                    "cell_type_key": a.cell_type_key, "batch_key": a.batch_key,
-                   "n_cells": int(adata.n_obs), "path": str(f)}
-            row.update({m: float(d.get(m, float("nan"))) for m in METRICS})
+                   "n_cells": int(adata.n_obs), "path": str(f), "error": ""}
+            try:
+                d = compute_benchmarking_metrics(
+                    adata=adata, metrics=METRICS,
+                    cell_type_key=a.cell_type_key, batch_key=a.batch_key,
+                    spatial_key=a.spatial_key, latent_key=lk,
+                    k=a.k, seed=int(seed) if str(seed).isdigit() else 0)
+                row.update({m: float(d.get(m, float("nan"))) for m in METRICS})
+                print("    " + "  ".join(f"{m}={row[m]:.4f}" for m in METRICS))
+            except Exception as ex:                               # noqa: BLE001
+                # Deliberate: this is a sweep over CANDIDATE representations, and
+                # some are not valid metric inputs (integer code indices have only
+                # 30x90 distinct values, so neighbour graphs degenerate). One bad
+                # candidate must not kill the identification run. The failure is
+                # printed and recorded, never silently dropped.
+                row.update({m: float("nan") for m in METRICS})
+                row["error"] = f"{type(ex).__name__}: {ex}"
+                print(f"    FAILED -> {row['error'][:160]}")
             rows.append(row)
-            print("    " + "  ".join(f"{m}={row[m]:.4f}" for m in METRICS))
 
     df = pd.DataFrame(rows)
     print("\n" + "=" * 78 + "\nMEAN +/- SD ACROSS SEEDS\n" + "=" * 78)
@@ -188,18 +213,30 @@ def main(argv=None) -> int:
     for lk, g in df.groupby("latent_key"):
         cells = "".join(f"{g[m].mean():>10.4f}+/-{g[m].std(ddof=1):<7.4f}"
                         for m in METRICS)
-        print(f"  {lk:22s}{cells}")
+        note = "  [all seeds FAILED]" if g[METRICS].isna().all().all() else ""
+        print(f"  {lk:22s}{cells}{note}")
 
     ok = True
     if a.expect_blisi is not None:
+        exp = {}
+        if "=" in a.expect_blisi:
+            for part in a.expect_blisi.split(","):
+                k, v = part.split("=", 1)
+                exp[k.strip()] = float(v)
+        else:
+            exp = {lk: float(a.expect_blisi) for lk in latent_keys}
         print("\n" + "=" * 78 + "\nREPRODUCTION GATE\n" + "=" * 78)
         for lk, g in df.groupby("latent_key"):
             got = g["blisi"].mean()
-            d = abs(got - a.expect_blisi)
+            if lk not in exp:
+                print(f"  {lk:22s} blisi {got:.4f}   (no expectation given; "
+                      f"compare against the published anchors yourself)")
+                continue
+            d = abs(got - exp[lk])
             verdict = "PASS" if d <= a.blisi_tol else "FAIL"
             ok &= (d <= a.blisi_tol)
             print(f"  {lk:22s} blisi {got:.4f} vs published iLISI "
-                  f"{a.expect_blisi:.4f}  |diff| {d:.4f}  {verdict}")
+                  f"{exp[lk]:.4f}  |diff| {d:.4f}  {verdict}")
         if not ok:
             print("\n  *** The gate FAILED. blisi is our own reported iLISI, so a")
             print("  mismatch means the latent or label keys differ from the ones")
