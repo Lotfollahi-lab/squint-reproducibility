@@ -10,9 +10,15 @@ expression from its surrounding microenvironment. Reviewers asked for it as a
 Table 2 comparator, so this runner evaluates the RELEASED checkpoint
 (`ynyou/CIFM`) under the IDENTICAL protocol used for SQUINT / GeST / kNN.
 
-Nothing here is re-implemented: we call the released weights. What this file
-does is (a) put our data in the format CIFM expects, (b) keep the split, the
-leak-freedom and the metric panel bit-identical to the other baselines.
+We call the released weights, but the FORWARD PATH IS RE-IMPLEMENTED:
+`_predict_chunk` reproduces `encode_decode` so that (a) both decoder heads can be
+exposed for `--output`, and (b) the context can be restricted per section to stay
+leak-free -- neither of which `predict_cells_at_locations` permits. A
+re-implementation can drift, so `verify_native_equivalence` runs both paths on a
+small problem at startup and RAISES unless they agree to 1e-4. Everything else
+this file does is (a) put our data in the format CIFM expects and (b) leave the
+split, the cell set, the gene panel and the metric panel exactly as the other
+baselines have them.
 
 PROTOCOL PARITY — every one of these mirrors GeST exactly
 ---------------------------------------------------------
@@ -43,157 +49,92 @@ PROTOCOL PARITY — every one of these mirrors GeST exactly
 4. OUTPUT CONTRACT. `layers["X_hat"]` = (n_obs, n_vars) float32 on the RAW
    COUNT scale for ALL cells (train and test), same row/var order as loaded.
 
-RECEPTIVE FIELD -- READ THIS BEFORE REPORTING ANY NUMBER
---------------------------------------------------------
-From the checkpoint's own args.pt: num_layer=2 and radius_spatial_graph=20. The
-encoder is a 2-layer VIEGNN and `mask_cell_decoder` is another 2-layer VIEGNN,
-and `edge_index` is built ONCE with every edge <= 20 um. So a masked cell's
-prediction can depend on observed expression only within 4 hops x 20 um =
-**80 um**. Our held-out rectangles are 25% x 25% of each section's bbox, i.e.
-~1.3-1.7 mm across, so only ~18-22% of held-out cells sit within 80 um of
-observed tissue. For the other ~80% the output is a function of `mask_embedding`
-and local point geometry alone -- a near-constant profile whose only per-cell
-signal is the harness-supplied neighbour read depth.
+FIDELITY TO THE PUBLISHED METHOD
+--------------------------------
+Everything below is sourced from the paper (You et al., "Building Foundation
+Models to Characterize Cellular Interactions via Geometric Self-Supervised
+Learning on Spatial Genomics", MLGenX 2025 workshop version) or from the released
+code, with the location given. Earlier revisions of this docstring carried
+several speculative explanations for CIFM's low scores -- receptive-field limits,
+panel size, the ortholog map -- which were either unverified or refuted. They
+have been deleted rather than corrected; do not reintroduce them.
 
-That is consistent with the radius and k-NN arms returning nearly identical
-scores (test cell-wise 0.0813 vs 0.0775): interior cells are unreachable under
-both. It is TEMPTING to stop there and call the receptive field the cause. Do
-not -- an earlier version of this docstring did, and our own numbers refute it.
+WHAT WE MATCH
+  * PREPROCESSING (Appdx B.1). Raw counts, "coordinates measured in
+    micrometers", then "normalize gene counts and conduct log1p-transformation".
+    We apply normalize_total(target_sum=1e4)+log1p. NOTE the paper does NOT state
+    a target_sum; 1e4 comes from the official test.ipynb, the only concrete
+    guidance available.
+  * GRAPH RADIUS (Appdx B.1). "the radius threshold r_thres set to 20um for
+    Visium-HD, Xenium-V1 and Xenium-Prime and 150um for Visium-Spatial". Our data
+    is single-cell resolution, so r=20um (the checkpoint's own
+    radius_spatial_graph) is correct. This is why `--coord-scale dataset` matters:
+    it applies the published per-assay unit conversion to reach TRUE micrometres
+    (median NN 74.72 x 0.194 = 14.50um for batch 15, 10.99 x 1.0 = 10.99um for
+    batch 82), both comfortably inside r=20um.
+  * EVALUATION GEOMETRY (Appdx B.1, Fig. 2A). Their in-sample evaluation is a
+    CONTIGUOUS REGIONAL split: train if x <= x_thres, test if x > x_thres and
+    y < y_thres, with x_thres = x_min + 0.6*(x_max-x_min) and
+    y_thres = y_min + 0.5*(y_max-y_min), a ~3:1:1 cell ratio. Their test region is
+    therefore a contiguous rectangle spanning ~40% x 50% of the slide bbox --
+    LARGER than our 25% x 25% held-out rectangles. Contiguous-region in-painting
+    is thus the authors' own protocol, not a mismatch we introduced.
+  * SINGLE-SHOT INFERENCE. `predict_cells_at_locations` -> `encode_decode` masks
+    all query cells at once and never feeds a prediction back. That is what their
+    benchmark uses, so `--infill-steps 1` is the DEFAULT. (The autoregressive
+    procedure in their Sec. 5 / Fig. 4 is a perturbation-response *simulation*
+    utility, not their expression-inference benchmark. `--infill-steps 12` exists
+    to test parity with SQUINT's 12-step MaskGIT decoder; it is a DEVIATION.)
+  * THE HARD GATE IS THEIR INFERENCE. `encode_decode` ends with
+    `expressions_dec[dropouts_dec <= 0.5] = 0`, so `--output gate` is the
+    authors' released procedure and is the DEFAULT here. Their loss (Appdx B.3,
+    Eq. 15) is a *balanced MSE* on the reconstruction -- equally weighting
+    entries where X>0 and where X=0 -- and contains NO dropout term at all, so
+    the second head is an implementation detail absent from the paper. Treat
+    `--output marginal` (m*p) and `--output magnitude` (m alone) as OUR
+    deviations, documented in the config stub and the variant tag.
 
-RESOLVED 2026-08-11, and NOT in geometry's favour. The geometry argument
-predicts a large train>test gap, since train cells keep observed tissue all
-around them. Measured (--output marginal, radius):
+WHAT WE DELIBERATELY DO NOT COPY -- THE BENCHMARK SETUP IS SQUINT'S/GeST'S
+  Appdx B.1 also removes mitochondrial genes, drops "void cells (those without
+  detected gene expression)" and keeps only cells annotated "in tissue". We do
+  NOT apply any of that. The held-out split, the cell set, the gene panel and the
+  metric panel must stay bit-identical to SQUINT / GeST / the kNN floor, so that
+  the comparison is between METHODS and not between preprocessing pipelines.
+  Faithfulness here means the model is CALLED the way its authors call it; it does
+  not extend to re-filtering the benchmark data underneath it.
 
-                        train-chunk-order=index   =random
-  cell-wise train                    0.0783        0.0610
-  cell-wise test                     0.0813        0.0813   (unchanged: test is
-  AUROC(zero) train                  0.6127        0.6149    never chunked)
-
-Scattered chunks give every train cell its neighbours back, yet the score FELL.
-Giving CIFM more context makes it worse under this metric, so the 80 um
-receptive field is not what limits it here. The consistent explanation is that
-a masked cell with no reachable context emits a near-constant profile
-(mask_embedding + geometry), and that profile scores HIGHER on cell-wise
-Pearson than CIFM's genuine context-conditioned output -- which also explains
-test (0.0813, mostly context-free) > train (0.0610, mostly context-rich). The
-same ordering holds on CIFM's OWN demo data, where a constant train-mean
-profile scores 0.4211 against CIFM's 0.3954.
-
-Do NOT recycle the receptive-field argument in a submission: it is contradicted
-by our own numbers. Note also the metric is not degenerate: on the demo data
-16-NN (0.4565) does beat the constant profile (0.4211), so it does reward
-spatial information; CIFM simply lands below both.
-
-CHANNEL MAPPING: WHAT IS VERIFIED, AND WHAT IS NOT
-(`cifm_channel_integrity.py`, `cifm_panel_ablation.py`)
-
-VERIFIED -- gene ORDER is honoured on the output. Permutation test: shuffle the
-target gene order, re-match, predict, un-shuffle -> reproduces the unshuffled
-prediction to max|diff| 8.6e-06 against magnitudes of mean 2.97, i.e. float32
-noise. run_cifm.py's gene assignment is CORRECT. Worth having tested: the demo
-data's var order equals the vocabulary order for all 18,289 positions, so
-reproducing `embed()` could never have caught an ordering bug.
-
-VERIFIED -- `channel_matching`'s structure. It replaces three layers with
-zero-initialised `nn.Linear(len(target), ...)` copies and fills column/row
-idx_target from the matched source channel:
-    self.gene_encoder.layers[0]            <- linear_in    (len(target) inputs)
-    self.mask_cell_expression.layers[-1]   <- linear_out1
-    self.mask_cell_dropout.layers[-1]      <- linear_out2
-So the cell embedding is a LINEAR SUM OVER THE INPUT GENES, and a target entry of
-`[]` leaves that gene's column at zero.
-
-VERIFIED -- unmapped genes cost TWICE. Their expression never enters the model
-(zero column in linear_in) AND their output column is exactly 0 (checked
-all-zero). Blanking 86 of 431 entries moved the MATCHED columns by max|diff|
-0.243, which is expected -- the shared embedding changes -- but it means the
-unmapped fraction is not a harmless dilution. Drop them before scoring and
-report the count.
-
-*** RETRACTED -- "panel size is the root cause". *** An earlier version of this
-docstring reported magnitude r falling 0.811 -> 0.104 when the demo data was cut
-to 431 genes and called that the root cause. That measurement was CONFOUNDED
-(normalize_total applied AFTER subsetting, so full and subset truth lived in
-different spaces, scored with pooled ENTRYWISE Pearson which is provably
-sensitive to per-cell rescaling; uniformly-drawn genes unlike any curated panel;
-no baselines on those genes; and subsetting emptied some cells outright). Do not
-quote it.
-
-RESOLVED PROPERLY (`cifm_panel_ablation.py`, 2026-08-11). Cell-wise Pearson
-(exactly invariant to per-cell rescaling) plus cell-wise Spearman (invariant to
-ANY monotone per-cell transform, which closes the remaining log1p/normalisation
-gap), one common cell set drawn once, cells empty in any panel dropped, and each
-panel scored TWICE -- fed only its own genes vs fed all 18,289 with the
-prediction restricted to the SAME columns against the SAME truth and cells.
-
-1. PANEL SIZE IS NOT THE CAUSE. The coverage effect -- the only number that
-   isolates it -- is only -0.0145 (random), -0.0262 (HVG), -0.0980
-   (top-expressed) cell-wise. Far too small to explain a drop from ~0.40 to the
-   0.068-0.081 we measure on our data.
-
-2. CELL-WISE PEARSON DOES NOT REWARD CIFM EVEN AT HOME. With ALL 18,289 genes,
-   on CIFM's own demo data, dense context, no ortholog step:
-
-     panel           CIFM full   CONSTANT   16-NN
-     random             0.2249     0.2600   0.2934
-     HVG                0.1563     0.1792   0.2095
-     top-expressed      0.4015     0.3807   0.4947
-
-   Below 16-NN in 3/3 panels and below a constant train-mean profile in 2/3. So
-   our low number is mostly NOT an artefact of our adaptation. (Caveat: random
-   single-cell holdout with every neighbour present is maximally favourable to
-   16-NN and is not our contiguous-region task, so do not over-read that column.)
-
-3. CIFM IS GOOD AT WHAT IT ACTUALLY PREDICTS -- the zero pattern. AUROC, same
-   runs: CIFM 0.8771 / 0.8451 / 0.7778 vs CONSTANT 0.8531 / 0.7994 / 0.6669 and
-   16-NN 0.7648 / 0.7690 / 0.7825. Best or tied-best in all three panels. CIFM
-   predicts WHICH genes are expressed well and adds little over a mean profile
-   for the magnitude ranking Pearson measures. Reporting AUROC/AP from `p` is
-   therefore the substantive metric improvement, not a consolation prize.
-
-4. COMPOSITION MATTERS AND CUTS TOWARD US. Truth nonzero fraction is 0.021
-   (random) / 0.024 (HVG) / 0.229 (top-expressed), and the coverage effect is
-   LARGEST (-0.0980) on the dense, curated top-expressed panel -- the one most
-   like our real marker panel. So coverage may cost us more than the random/HVG
-   rows suggest. Re-run with --panel-csv <out_dir>/ortholog_mapping.csv to
-   measure it on our ACTUAL realised panel; that run also finally reports how
-   many of the 431 genes map.
-
-STILL NOT DECOMPOSED. Our data gives cell-wise 0.068-0.081 and AUROC 0.57 against
-panel-input 0.13-0.30 and AUROC 0.65-0.81 here, so a residual gap specific to our
-data remains -- mouse orthologs, unmapped genes, contiguous hole. It has NOT been
-attributed. Do not claim a cause for it.
-
-ITERATIVE PARITY, TESTED (2026-08-11). SQUINT's stage-2 fills the hole over 12
-MaskGIT steps with committed cells fed back as context, so `--infill-steps` was
-added to give CIFM the same budget, the same cosine schedule and (with
-`--graph knn`) the same k=16 graph. It does not help -- held-out cells, knn arm:
-
-                          1-shot    infill-12
-  cell  cell-wise         0.0775       0.0678
-  cell  gene-wise         0.0368       0.0284
-  niche cell-wise         0.1363       0.1209
-  cell  AUROC(zero)       0.5704       0.5695
-
-So three independent manipulations that all ADD context -- scattered train
-chunks, 12-step boundary-inward in-painting, and (on CIFM's demo data) full
-dense context -- each make CIFM's score go DOWN or stay flat. The reading:
-iterative in-painting pays off only when the per-cell predictor is good, because
-every committed cell becomes context for the next step. SQUINT gains from its 12
-steps; CIFM's per-cell predictions on this panel are weak (sparsity-head AUROC
-0.57), so feeding them back compounds error instead of propagating signal.
-
-The upshot for reporting: the protocol asymmetry is now CLOSED (matched graph,
-matched iterations, matched schedule, correct head collapse) and CIFM does not
-benefit from closing it -- so "we tested CIFM under matched protocol" is now an
-honest claim. The aggregate is still not a clean measure of CIFM's imputation
-ability, because the ortholog adaptation degrades it (AUROC 0.877 -> 0.57).
-Report the >=80 um-band subset alongside any aggregate. (Claims about CIFM's
-pretraining mask fraction and autoregressive multi-cell inference were previously
-asserted here from the preprint; bioRxiv now 403s, so they are UNVERIFIED -- do
-not put them in a submission without re-checking. What IS verified from the
-search record: pretraining spans ~100 samples / 23M cells / 32k genes across
-Visium AND Xenium platforms, so targeted panels are IN distribution for CIFM.)
+WHAT WE CANNOT MATCH, AND MUST DISCLOSE
+  * SPECIES. Appdx B.1 filters "Human" under Species; the pretraining corpus is
+    human-only (Fig. 1A: Visium-HD 18,070 genes / Xenium-Prime 5,091 /
+    Visium-Spatial 32,978 / Xenium-V1 1,814; ~100 slides, 23,139,655 cells,
+    32,986 genes). Cross-species transfer is never evaluated by the authors, so
+    our mouse panel reached through a human ortholog map is outside their tested
+    envelope.
+  * SMALL PANELS NEED FINETUNING, PER THE AUTHORS. Sec. 3, p.5: CIFM
+    "underperforms in the Xenium-V1 samples ... possibly due to the huge
+    discrepancies in the gene measurement scale: around 17K genes on average in
+    Visium-HD, 300 genes in Xenium-V1, and 5K genes in Xenium-Prime. This can be
+    remedied with further finetuning: we further finetune CIFM on Xenium-V1,
+    which results in the best correlation across all 38 slides." Our panel is 431
+    genes -- the Xenium-V1 regime. No training/finetuning code is released
+    (HF repo: checkpoint + test.ipynb only), so zero-shot is the only option the
+    release supports. State this with any number.
+  * THEIR CORRELATION METRIC IS SPEARMAN. Sec. 3: "correlation assesses whether
+    the model ranks gene expression correctly"; Fig. 2B/2C axes read "Spearman
+    Correlation r". Their published in-sample Visium-HD figures (read off
+    Fig. 2B) are Spearman ~0.212 for CIFM vs ~0.17 for NeighborAvg, and MSE 0.144
+    vs 0.205 -- i.e. a ~0.04 margin over a naive neighbourhood mean on their BEST
+    platform. Their baseline set is UnifRnd / BernRnd / NeighborAvg, the last
+    being "a naive neighborhood average approach that computes the mean
+    expressions of the neighboring cells" -- our kNN floor. Report Spearman
+    alongside Pearson when comparing to their published numbers.
+  * COUNT ROUND TRIP. They score in the normalised log space directly and never
+    return to counts. Our shared harness requires raw-count `X_hat`, so
+    `to_counts` adds expm1 -> renormalise -> x(neighbour read depth). That step is
+    our harness's requirement, not part of their evaluation.
+  * PRETRAINING MASK. Appdx B.3: "we remove 5% of the nodes for masking",
+    randomly and uniformly. So pretraining masks a scattered 5%, while both their
+    evaluation and ours use a contiguous region.
 
 CIFM-SPECIFIC HANDLING (the parts that needed a decision)
 ---------------------------------------------------------
@@ -218,21 +159,17 @@ CIFM-SPECIFIC HANDLING (the parts that needed a decision)
   section; train cells keep their own. It never reads a held-out cell's own
   counts. Using the cell's own depth would silently corrupt RMSE / AUROC / AP
   while leaving Pearson plausible.
-  !! UNVERIFIED PARITY (checked 2026-08-11). This bullet used to assert "the
-  same rule SQUINT (MC) uses". That is NOT established. In
-  `squint/examples/submit_stage2_mc_sweep.sh:68` the default is
-  READ_DEPTH_MODE="true" -- the held-out cell's OWN library size -- and
-  `stage2_decode_pearson.py`'s own help calls that mode "leaks the target's
-  depth -- valid only for the reconstruction sanity-check", with "USE THIS for
-  imputation" pointing at `neighbor`. The same script's comment says "Use
-  READ_DEPTH_MODE=neighbor for the reported imputation numbers", but no run
-  record in either repo shows it was actually set. If the paper's SQUINT bar was
-  produced with `true`, SQUINT saw each held-out cell's real depth while CIFM,
-  GeST and the kNN floor did not -- and because the metric is computed on
-  log1p(counts), a per-cell scale factor does NOT cancel out of Pearson (and
-  matters even more for RMSE / AUROC / AP). VERIFY on the farm before reporting
-  any cross-method comparison: grep the stage-2 decode logs for the echoed
-  "read-depth :" line.
+  PARITY CONFIRMED (author, 2026-08-11): the paper's SQUINT imputed numbers were
+  produced with READ_DEPTH_MODE=neighbor, i.e. the leak-free rule, matching CIFM,
+  GeST and the kNN floor. Note this is NOT the script default --
+  `submit_stage2_mc_sweep.sh` defaults to READ_DEPTH_MODE="true", which
+  `stage2_decode_pearson.py`'s own help calls "leaks the target's depth -- valid
+  only for the reconstruction sanity-check". So a future re-run WITHOUT an explicit
+  override would silently produce a leaky SQUINT number that is not comparable
+  with these baselines. It matters because the harness scores log1p(counts), and a
+  per-cell scale factor does not cancel out of Pearson in log space (nor from
+  RMSE/AUROC/AP). Always pass READ_DEPTH_MODE=neighbor explicitly, and confirm via
+  the echoed "[decode] [read-depth]" log line.
 * PREDICTING TRAIN CELLS, LEAK-FREE. The harness needs `X_hat` everywhere
   (train rows feed the train/all splits and the niche aggregation at test
   cells). We predict train cells in chunks with the chunk itself removed from
@@ -375,6 +312,7 @@ def _neighbor_read_depth_fallback(coords, batch, gidx, L, k=DEFAULT_READ_DEPTH_N
     rd = np.empty(gidx.size, dtype=np.float32)
     pos = {int(g): i for i, g in enumerate(gidx)}
     global_obs_mean = float(L[~held].mean()) if (~held).any() else float(L.mean())
+
 
     for b in np.unique(batch):
         in_b = (batch == b)
@@ -565,7 +503,7 @@ def resolve_coord_scales(coords: np.ndarray, batch: np.ndarray, radius: float,
         else:
             f = float(coord_scale)
         scales[b] = f
-        span = (float(c[:, 0].ptp()) * f, float(c[:, 1].ptp()) * f)
+        span = (float(np.ptp(c[:, 0])) * f, float(np.ptp(c[:, 1])) * f)
         cs = c * f
         nb = NearestNeighbors(radius=radius).fit(cs).radius_neighbors(
             cs[: min(500, len(cs))], return_distance=False)
@@ -705,7 +643,10 @@ def _predict_chunk(model, ctx_X, ctx_xy, q_xy, device, output: str,
         # relative positions, so the published unit conversion is applied in
         # both modes.
         if graph == "knn":
-            edge_index = knn_graph(coords, k=knn_k, loop=True)
+            # k+1: torch_cluster calls knn(x, x, k if loop else k+1), so with
+            # loop=True the self-edge eats one slot. k=16 alone would give 15
+            # spatial neighbours + self, not the harness's 16 + self.
+            edge_index = knn_graph(coords, k=knn_k + 1, loop=True)
         else:
             edge_index = radius_graph(coords, r=model.radius_spatial_graph,
                                       max_num_neighbors=10000, loop=True)
@@ -747,6 +688,57 @@ def _predict_chunk(model, ctx_X, ctx_xy, q_xy, device, output: str,
         return out, conf
 
 
+def verify_native_equivalence(model, Xn, xy, tr_idx, device, tol: float = 1e-4,
+                             n_ctx: int = 300, n_q: int = 8) -> None:
+    """
+    Prove our forward path equals the authors' own `predict_cells_at_locations`.
+
+    `_predict_chunk` RE-IMPLEMENTS CIFM's inference rather than calling it -- we
+    need the two heads exposed (for --output) and per-section leak-free context,
+    neither of which their API allows. A re-implementation can silently diverge,
+    and nothing else in this file would catch it: the tutorial reproduction
+    exercises `embed()`, not the decoder.
+
+    So run both on the same small problem and require agreement. Uses
+    `--output gate`, since that is exactly what `encode_decode` returns
+    (`expressions_dec[dropouts_dec <= 0.5] = 0`). Raises on mismatch -- a
+    divergence here invalidates every number the run would produce.
+    """
+    import anndata as _ad
+    import torch
+    from scipy.sparse import csr_matrix
+
+    if tr_idx.size < n_ctx + n_q:
+        print("  (section too small for the native-equivalence check; skipped)")
+        return
+    ctx = tr_idx[:n_ctx]
+    qry = tr_idx[n_ctx:n_ctx + n_q]
+
+    # their API: an AnnData of context + an array of query locations
+    ad_ctx = _ad.AnnData(X=csr_matrix(Xn[ctx].astype(np.float32)))
+    ad_ctx.obsm["spatial"] = xy[ctx].astype(np.float32)
+    with torch.no_grad():
+        native = model.predict_cells_at_locations(
+            ad_ctx, xy[qry].astype(np.float32)).cpu().numpy()
+    ours = _predict_chunk(model, Xn[ctx], xy[ctx], xy[qry], device,
+                          output="gate", graph="radius")
+
+    if native.shape != ours.shape:
+        raise RuntimeError(
+            f"native-equivalence check: shape {native.shape} vs {ours.shape}")
+    d = float(np.abs(native - ours).max())
+    scale = float(np.abs(native).max())
+    print(f"  native-equivalence check: max|diff| = {d:.3g} "
+          f"(value scale {scale:.3g}, nonzero frac "
+          f"{float((native > 0).mean()):.4f})")
+    if not np.isfinite(d) or d > tol:
+        raise RuntimeError(
+            f"_predict_chunk DIVERGES from CIFM.predict_cells_at_locations: "
+            f"max|diff|={d:.6g} > tol={tol}. Our re-implementation of "
+            f"encode_decode is not faithful -- fix before trusting any number.")
+    print("  -> our forward path is identical to the released inference.")
+
+
 def predict_all_cells(
         model, adata: ad.AnnData, batch_key: str, device: str,
         output: str, train_chunk: int, coord_scales: Dict,
@@ -754,6 +746,7 @@ def predict_all_cells(
         infill_steps: int = 1, infill_schedule: str = "cosine",
         infill_rank: str = "confidence",
         graph: str = "radius", knn_k: int = 16, seed: int = 0,
+        verify_native: bool = True,
     ) -> np.ndarray:
     """
     Log-space predictions for EVERY cell, leak-free, section by section.
@@ -784,12 +777,16 @@ def predict_all_cells(
     G = Xn.shape[1]
     out = np.zeros((adata.n_obs, G), dtype=np.float32)
 
+    _verified = False
     for b in np.unique(batch):
         m = (batch == b)
         tr_idx = np.where(m & is_train)[0]
         te_idx = np.where(m & ~is_train)[0]
         print(f"\n  -- section {b}: {tr_idx.size} train (context), "
               f"{te_idx.size} held out --")
+        if verify_native and not _verified:
+            verify_native_equivalence(model, Xn, xy, tr_idx, device)
+            _verified = True
 
         # ---- held-out cells: full train context, single pass -------------
         if te_idx.size:
@@ -835,7 +832,13 @@ def predict_all_cells(
             else:
                 chunks = np.array_split(tr_idx, n_chunks)
         else:
-            n_chunks, chunks = (1, [tr_idx]) if tr_idx.size else (0, [])
+            # A lone train cell has an empty complement, so it cannot be
+            # predicted leak-free; leaving it at zero would silently enter the
+            # metrics as a NaN-dropped row while n_cells still counted it.
+            if tr_idx.size == 1:
+                print(f"     WARNING: section {b} has 1 train cell; it cannot be "
+                      f"predicted leak-free and is left unpredicted")
+            n_chunks, chunks = (0, [])
         t0 = time.time()
         for q in chunks:
             if q.size == 0:
@@ -931,17 +934,22 @@ def main(argv=None):
                         "AnnData row order, which on FOV/tile-ordered data "
                         "carves out contiguous blocks and turns train cells "
                         "into hole-filling cases as well; kept for diagnosis.")
-    p.add_argument("--output", default="marginal",
-                   choices=["marginal", "gate", "magnitude"],
+    p.add_argument("--output", default="gate",
+                   choices=["gate", "marginal", "magnitude"],
                    help="How to collapse CIFM's two decoder heads into one "
-                        "prediction. 'marginal' (DEFAULT) = m*p, the "
-                        "zero-inflated expectation: correct for this decoder, "
-                        "continuous like GeST/kNN, and best in every space on "
-                        "CIFM's demo data. 'gate' = m*(p>0.5), CIFM's native "
-                        "inference. 'magnitude' = m alone, the pre-2026-08 "
-                        "default — a DEFECT that discards the only head "
-                        "carrying sparsity information (AUROC 0.877 vs 0.461); "
-                        "kept only to reproduce the superseded numbers.")
+                        "prediction. 'gate' (DEFAULT) = m*(p>0.5), which is "
+                        "verbatim what the released encode_decode does "
+                        "(`expressions_dec[dropouts_dec<=0.5]=0`) and therefore "
+                        "the FAITHFUL choice. 'marginal' = m*p, the zero-inflated "
+                        "expectation: a DEVIATION, though it measured better on "
+                        "CIFM's own demo data (harness-space cell-wise Pearson "
+                        "0.3954 vs 0.2705 for the gate). 'magnitude' = m alone, "
+                        "which discards the sparsity head entirely and is simply "
+                        "wrong; kept only to reproduce superseded numbers. The "
+                        "paper's loss (Appdx B.3 Eq. 15) is a balanced MSE with "
+                        "no dropout term, so the second head is undocumented "
+                        "there -- the released code is the only authority, and it "
+                        "gates.")
     p.add_argument("--graph", default="radius", choices=["radius", "knn"],
                    help="'radius' (default) = CIFM's native fixed-radius graph. "
                         "'knn' swaps in the same k-NN connectivity SQUINT/GeST "
@@ -981,12 +989,18 @@ def main(argv=None):
     # default — an explicit --variant-tag is respected verbatim.
     if args.variant_tag == DEFAULT_VARIANT_TAG:
         args.variant_tag = f"{DEFAULT_VARIANT_TAG}+{args.graph}"
-        if args.output != "marginal":
+        if args.output != "gate":
             args.variant_tag += f"+out-{args.output}"
         if args.train_chunk_order != "random":
             args.variant_tag += f"+tco-{args.train_chunk_order}"
         if args.infill_steps > 1:
             args.variant_tag += f"+infill{args.infill_steps}-{args.infill_rank}"
+            if args.infill_schedule != "cosine":
+                args.variant_tag += f"-{args.infill_schedule}"
+        if args.graph == "knn" and args.knn_k != 16:
+            args.variant_tag += f"+k{args.knn_k}"
+        if args.train_chunk != 4096:
+            args.variant_tag += f"+tc{args.train_chunk}"
         if args.coord_scale != "dataset":
             args.variant_tag += f"+cs-{args.coord_scale}"
         print(f"Variant : {args.variant_tag}  (auto-derived from --graph/"
@@ -1078,6 +1092,17 @@ def main(argv=None):
             seed=seed)
 
         X_hat = to_counts(pred_log, depth)
+        if not np.isfinite(X_hat).all():
+            n_bad = int((~np.isfinite(X_hat)).sum())
+            raise RuntimeError(
+                f"X_hat contains {n_bad} non-finite values. float32 expm1 "
+                f"overflows above ~88.7, so an extreme magnitude-head output "
+                f"turns the row sum to inf and the row to NaN. Do not report "
+                f"these numbers.")
+        _zero_rows = int((X_hat.sum(axis=1) == 0).sum())
+        if _zero_rows:
+            print(f"  NOTE {_zero_rows} all-zero X_hat rows; the harness drops "
+                  f"them as NaN while still reporting the full n_cells")
         if X_hat.shape != (adata_s.n_obs, adata_s.n_vars):
             raise RuntimeError(f"X_hat shape {X_hat.shape} != "
                                f"({adata_s.n_obs}, {adata_s.n_vars})")
@@ -1094,12 +1119,19 @@ def main(argv=None):
     print("\n=== Writing outputs ===")
     _nuniq = per_seed.drop(columns=["seed"]).drop_duplicates().shape[0]
     _nrows = per_seed.shape[0] // max(1, len(seeds))
-    print(f"  NOTE: CIFM is a frozen checkpoint with deterministic inference. "
-          f"Every seed ran a FULL inference pass ({len(seeds)} passes), and the "
-          f"results are identical by construction "
-          f"({_nuniq}/{_nrows} distinct metric rows). Report CIFM as a "
-          f"deterministic baseline (like the kNN floor) — NOT as {len(seeds)} "
-          f"independent replicates.")
+    print(
+        f"\nSeeds run: {len(seeds)}. CIFM's forward pass is deterministic "
+        f"(frozen weights, model.eval(), no sampling), so TEST-cell predictions "
+        f"do not vary with the seed. "
+        + ("Train-cell predictions DO vary: --train-chunk-order random "
+           "permutes the chunk partition per seed, so train/all rows differ "
+           "across seeds by protocol, not by model noise."
+           if args.train_chunk_order == "random" else
+           "--train-chunk-order index makes the train partition seed-independent "
+           "too, so all rows are identical across seeds.")
+        + f" Distinct metric rows: {_nuniq}/{_nrows}."
+        + " Report CIFM as a deterministic baseline (like the kNN floor), NOT as"
+        + f" {len(seeds)} independent replicates.")
     write_pearson_outputs(args.out_dir, per_seed)
 
     (args.out_dir / "user_specified_config.yaml").write_text(
