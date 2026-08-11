@@ -112,28 +112,57 @@ report the count.
 
 *** RETRACTED -- "panel size is the root cause". *** An earlier version of this
 docstring reported magnitude r falling 0.811 -> 0.104 when the demo data was cut
-to 431 genes, and called that the root cause. That measurement is CONFOUNDED and
-must not be quoted:
-  (a) normalize_total(1e4) was applied AFTER subsetting, so full and subset truth
-      live in different spaces (mean log1p 0.069 vs 0.153), and the metric used
-      -- pooled ENTRYWISE Pearson -- is provably sensitive to per-cell rescaling,
-      i.e. to precisely that confound;
-  (b) the 431 genes were drawn UNIFORMLY, so they are dominated by lowly
-      expressed genes, unlike any real curated panel;
-  (c) there were NO baselines on those same 431 genes, so the number could
-      equally reflect a dynamic-range ceiling every method would hit;
-  (d) subsetting emptied some cells outright ("Some cells have zero counts"),
-      injecting degenerate context and targets absent from our real panel.
-`cifm_panel_ablation.py` re-runs this properly: cell-wise Pearson (exactly
-invariant to per-cell rescaling), each panel scored BOTH with panel-only input
-and with full 18,289-gene input restricted to the same columns against the same
-truth and the same cells (which isolates coverage), three equal-size panels of
-differing composition plus the real ortholog panel, CONSTANT/16-NN controls, one
-common cell set drawn once, and truth dynamic range reported.
+to 431 genes and called that the root cause. That measurement was CONFOUNDED
+(normalize_total applied AFTER subsetting, so full and subset truth lived in
+different spaces, scored with pooled ENTRYWISE Pearson which is provably
+sensitive to per-cell rescaling; uniformly-drawn genes unlike any curated panel;
+no baselines on those genes; and subsetting emptied some cells outright). Do not
+quote it.
 
-UNTIL THAT RUNS, THE CAUSE OF CIFM'S LOW SCORE ON OUR DATA IS UNKNOWN. What is
-solid is only the measurement itself (cell-wise 0.068-0.081 on held-out cells)
-and the three verified facts above.
+RESOLVED PROPERLY (`cifm_panel_ablation.py`, 2026-08-11). Cell-wise Pearson
+(exactly invariant to per-cell rescaling) plus cell-wise Spearman (invariant to
+ANY monotone per-cell transform, which closes the remaining log1p/normalisation
+gap), one common cell set drawn once, cells empty in any panel dropped, and each
+panel scored TWICE -- fed only its own genes vs fed all 18,289 with the
+prediction restricted to the SAME columns against the SAME truth and cells.
+
+1. PANEL SIZE IS NOT THE CAUSE. The coverage effect -- the only number that
+   isolates it -- is only -0.0145 (random), -0.0262 (HVG), -0.0980
+   (top-expressed) cell-wise. Far too small to explain a drop from ~0.40 to the
+   0.068-0.081 we measure on our data.
+
+2. CELL-WISE PEARSON DOES NOT REWARD CIFM EVEN AT HOME. With ALL 18,289 genes,
+   on CIFM's own demo data, dense context, no ortholog step:
+
+     panel           CIFM full   CONSTANT   16-NN
+     random             0.2249     0.2600   0.2934
+     HVG                0.1563     0.1792   0.2095
+     top-expressed      0.4015     0.3807   0.4947
+
+   Below 16-NN in 3/3 panels and below a constant train-mean profile in 2/3. So
+   our low number is mostly NOT an artefact of our adaptation. (Caveat: random
+   single-cell holdout with every neighbour present is maximally favourable to
+   16-NN and is not our contiguous-region task, so do not over-read that column.)
+
+3. CIFM IS GOOD AT WHAT IT ACTUALLY PREDICTS -- the zero pattern. AUROC, same
+   runs: CIFM 0.8771 / 0.8451 / 0.7778 vs CONSTANT 0.8531 / 0.7994 / 0.6669 and
+   16-NN 0.7648 / 0.7690 / 0.7825. Best or tied-best in all three panels. CIFM
+   predicts WHICH genes are expressed well and adds little over a mean profile
+   for the magnitude ranking Pearson measures. Reporting AUROC/AP from `p` is
+   therefore the substantive metric improvement, not a consolation prize.
+
+4. COMPOSITION MATTERS AND CUTS TOWARD US. Truth nonzero fraction is 0.021
+   (random) / 0.024 (HVG) / 0.229 (top-expressed), and the coverage effect is
+   LARGEST (-0.0980) on the dense, curated top-expressed panel -- the one most
+   like our real marker panel. So coverage may cost us more than the random/HVG
+   rows suggest. Re-run with --panel-csv <out_dir>/ortholog_mapping.csv to
+   measure it on our ACTUAL realised panel; that run also finally reports how
+   many of the 431 genes map.
+
+STILL NOT DECOMPOSED. Our data gives cell-wise 0.068-0.081 and AUROC 0.57 against
+panel-input 0.13-0.30 and AUROC 0.65-0.81 here, so a residual gap specific to our
+data remains -- mouse orthologs, unmapped genes, contiguous hole. It has NOT been
+attributed. Do not claim a cause for it.
 
 ITERATIVE PARITY, TESTED (2026-08-11). SQUINT's stage-2 fills the hole over 12
 MaskGIT steps with committed cells fed back as context, so `--infill-steps` was

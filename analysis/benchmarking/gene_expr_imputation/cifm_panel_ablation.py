@@ -82,6 +82,42 @@ def genewise_pearson(T, P):
     return cellwise_pearson(np.asarray(T).T, np.asarray(P).T)
 
 
+def _rank_rows(A):
+    """Average-rank transform per row (ties averaged), vectorised."""
+    A = np.asarray(A, np.float64)
+    n, g = A.shape
+    order = np.argsort(A, axis=1, kind="stable")
+    ranks = np.empty_like(A)
+    np.put_along_axis(ranks, order,
+                      np.broadcast_to(np.arange(1.0, g + 1.0), (n, g)), axis=1)
+    # average ties so the transform is a true Spearman rank
+    for i in range(n):
+        v = A[i][order[i]]
+        r = ranks[i][order[i]]
+        j = 0
+        while j < g:
+            k = j
+            while k + 1 < g and v[k + 1] == v[j]:
+                k += 1
+            if k > j:
+                r[j:k + 1] = r[j:k + 1].mean()
+            j = k + 1
+        ranks[i][order[i]] = r
+    return ranks
+
+
+def cellwise_spearman(T, P):
+    """
+    Mean per-cell Spearman. Invariant to ANY monotone per-cell transform, so it
+    removes the last confound in the coverage comparison: full-input predictions
+    live on the whole-transcriptome scale while truth is panel-normalised, and
+    log1p under two different normalisations is not a per-cell affine map (which
+    cell-wise Pearson would require). If Pearson and Spearman agree on the sign
+    and rough size of the coverage effect, that effect is real.
+    """
+    return cellwise_pearson(_rank_rows(T), _rank_rows(P))
+
+
 def entrywise_pooled(T, P, mask=None):
     """The RETRACTED metric, kept only for side-by-side comparison."""
     t = np.asarray(T, np.float64); p = np.asarray(P, np.float64)
@@ -236,7 +272,8 @@ def main(argv=None) -> int:
             row[label] = (cellwise_pearson(truth, pred),
                           genewise_pearson(truth, pred),
                           roc_auc_score(y, pp.ravel()),
-                          entrywise_pooled(truth, mm, expressed))
+                          entrywise_pooled(truth, mm, expressed),
+                          cellwise_spearman(truth, pred))
 
         const = np.repeat(Xp[keep].mean(0, keepdims=True), sel.size, axis=0)
         _, nb = NearestNeighbors(n_neighbors=16).fit(
@@ -246,26 +283,32 @@ def main(argv=None) -> int:
             row[label] = (cellwise_pearson(truth, pred),
                           genewise_pearson(truth, pred),
                           roc_auc_score(y, pred.ravel()),
-                          entrywise_pooled(truth, pred, expressed))
+                          entrywise_pooled(truth, pred, expressed),
+                          cellwise_spearman(truth, pred))
 
-        print(f"\n  {'method':26s}{'cell-wise':>11s}{'gene-wise':>11s}"
-              f"{'AUROC':>9s}{'entry(retr)':>13s}")
+        print(f"\n  {'method':26s}{'cell-wise':>11s}{'spearman':>10s}"
+              f"{'gene-wise':>11s}{'AUROC':>9s}{'entry(retr)':>13s}")
         for k, v in row.items():
-            print(f"  {k:26s}{v[0]:>11.4f}{v[1]:>11.4f}{v[2]:>9.4f}{v[3]:>13.4f}")
+            print(f"  {k:26s}{v[0]:>11.4f}{v[4]:>10.4f}{v[1]:>11.4f}"
+                  f"{v[2]:>9.4f}{v[3]:>13.4f}")
         d = row["CIFM panel-input"][0] - row["CIFM full-input"][0]
-        print(f"  COVERAGE EFFECT (panel-input − full-input, cell-wise): {d:+.4f}")
+        ds = row["CIFM panel-input"][4] - row["CIFM full-input"][4]
+        print(f"  COVERAGE EFFECT (panel-input − full-input): "
+              f"cell-wise {d:+.4f}   spearman {ds:+.4f}")
+        print("    Spearman is the confound-free version; trust it if they differ.")
         results[pname] = row
 
     print("\n" + "=" * 78 + "\nSUMMARY — cell-wise Pearson (same cells, same truth)\n"
           + "=" * 78)
     print(f"  {'panel':16s}{'CIFM panel':>12s}{'CIFM full':>11s}"
-          f"{'CONSTANT':>10s}{'16-NN':>9s}{'coverage':>10s}")
+          f"{'CONSTANT':>10s}{'16-NN':>9s}{'covΔ r':>10s}{'covΔ ρ':>10s}")
     for pn, row in results.items():
         print(f"  {pn:16s}{row['CIFM panel-input'][0]:>12.4f}"
               f"{row['CIFM full-input'][0]:>11.4f}"
               f"{row['CONSTANT (train mean)'][0]:>10.4f}"
               f"{row['16-NN spatial'][0]:>9.4f}"
-              f"{row['CIFM panel-input'][0]-row['CIFM full-input'][0]:>+10.4f}")
+              f"{row['CIFM panel-input'][0]-row['CIFM full-input'][0]:>+10.4f}"
+              f"{row['CIFM panel-input'][4]-row['CIFM full-input'][4]:>+10.4f}")
     print("\n  ACROSS panels of equal size -> composition vs count.")
     print("  WITHIN a panel vs controls -> model failure vs dynamic-range ceiling.")
     print("  'coverage' column is the ONLY number that isolates panel size.")
