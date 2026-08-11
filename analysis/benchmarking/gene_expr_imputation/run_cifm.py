@@ -89,12 +89,33 @@ CIFM-SPECIFIC HANDLING (the parts that needed a decision)
   (`gest/train.py:193`). Test cells never appear in any context.
 * PER-SECTION GRAPHS. Every forward pass is restricted to one section, so no
   edge ever crosses sections — matching our convention everywhere else.
-* DROPOUT GATE. CIFM's `encode_decode` hard-gates its output
-  (`expressions_dec[dropouts_dec <= 0.5] = 0`). GeST and the kNN floor are
-  ungated continuous means, and the harness derives AUROC/AP from the
-  magnitude of `X_hat`, so gating would both disadvantage CIFM and break
-  comparability. DEFAULT IS UNGATED; `--apply-dropout-gate` reproduces CIFM's
-  native behaviour. Whichever is used is recorded in the config stub.
+* TWO HEADS -> ONE PREDICTION (`--output`). CIFM's decoder is FACTORISED and
+  zero-inflated: `relu(mask_cell_expression)` is a CONDITIONAL magnitude `m`,
+  and `sigmoid(mask_cell_dropout)` is P(EXPRESSED) `p` — note the polarity, the
+  head's name is misleading. CIFM's own `encode_decode` keeps entries with
+  p > 0.5 (`expressions_dec[dropouts_dec <= 0.5] = 0`), and measured on CIFM's
+  own demo data `p` scores AUROC 0.877 / AP 0.221 for (truth > 0) against a
+  0.024 prevalence, while `m` alone scores AUROC 0.461 — i.e. chance.
+  So the sparsity information lives ENTIRELY in `p`:
+      magnitude  m          99.8% dense against a 2.4%-dense truth. Because
+                            `to_counts()` row-normalises, that splits each
+                            cell's depth across ~18.3k entries instead of ~440
+                            and dilutes exactly the genes Pearson rewards.
+      gate       m*(p>0.5)  CIFM's native inference.
+      marginal   m*p        E[expression] under a zero-inflated likelihood.
+  DEFAULT IS `marginal`: it is the correct point prediction for this decoder,
+  it stays a continuous mean (so it remains comparable with GeST and the kNN
+  floor, which was the reason the old default avoided the hard gate), and it
+  measured best in every space on CIFM's demo data — cell-wise Pearson in the
+  harness's counts space 0.3954 (marginal) vs 0.2705 (gate) vs 0.1521
+  (magnitude). `--output magnitude` reproduces the pre-2026-08 default, which
+  was a DEFECT: it discarded the only informative head. The choice is recorded
+  in the config stub AND in the variant tag, so runs made under different
+  settings can never be averaged together.
+  Separately: the magnitude head is already in the model's INPUT space,
+  log1p(1e4-normalised) — on truly-expressed entries it matches truth with
+  entrywise Pearson 0.813 and a mean ratio of 1.023 — so no recalibration
+  transform is applied or needed. See `cifm_marginal_vs_gate.py`.
 * SEEDS. Every requested seed runs a FULL inference pass (no row copying), so
   the per-seed CSV is genuinely produced per seed. But CIFM is a frozen
   checkpoint with deterministic inference (model.eval(), no sampling), so those
@@ -406,7 +427,7 @@ def resolve_coord_scales(coords: np.ndarray, batch: np.ndarray, radius: float,
 # ---------------------------------------------------------------------------
 # Prediction
 # ---------------------------------------------------------------------------
-def _predict_chunk(model, ctx_X, ctx_xy, q_xy, device, apply_gate: bool,
+def _predict_chunk(model, ctx_X, ctx_xy, q_xy, device, output: str,
                    graph: str = "radius", knn_k: int = 16):
     """
     Faithful re-implementation of CIFM.predict_cells_at_locations that also
@@ -446,17 +467,27 @@ def _predict_chunk(model, ctx_X, ctx_xy, q_xy, device, apply_gate: bool,
             torch.zeros(1, dtype=torch.int64, device=device))
         emb_dec = model.mask_cell_decoder(emb, coords, edge_index)[0][mapping]
 
-        pred = model.relu(model.mask_cell_expression(emb_dec))
-        if apply_gate:
-            drop = model.sigmoid(model.mask_cell_dropout(emb_dec))
-            pred = pred.clone()
-            pred[drop <= 0.5] = 0.0
+        # Two heads. `m` is a CONDITIONAL magnitude; `p` is P(EXPRESSED) —
+        # confirmed both by CIFM's own gate direction and empirically
+        # (AUROC 0.877 for truth>0 vs 0.461 for `m`). See the module docstring.
+        m = model.relu(model.mask_cell_expression(emb_dec))
+        if output == "magnitude":
+            pred = m                                    # pre-2026-08 default
+        else:
+            p = model.sigmoid(model.mask_cell_dropout(emb_dec))
+            if output == "gate":                        # CIFM's native inference
+                pred = m.clone()
+                pred[p <= 0.5] = 0.0
+            elif output == "marginal":                  # E[expr], the default
+                pred = m * p
+            else:
+                raise ValueError(f"unknown --output {output!r}")
         return pred.detach().cpu().numpy().astype(np.float32)
 
 
 def predict_all_cells(
         model, adata: ad.AnnData, batch_key: str, device: str,
-        apply_gate: bool, train_chunk: int, coord_scales: Dict,
+        output: str, train_chunk: int, coord_scales: Dict,
         graph: str = "radius", knn_k: int = 16, seed: int = 0,
     ) -> np.ndarray:
     """
@@ -499,7 +530,7 @@ def predict_all_cells(
         if te_idx.size:
             t0 = time.time()
             out[te_idx] = _predict_chunk(model, Xn[tr_idx], xy[tr_idx],
-                                         xy[te_idx], device, apply_gate,
+                                         xy[te_idx], device, output,
                                          graph=graph, knn_k=knn_k)
             print(f"     test  : {te_idx.size} cells in {time.time()-t0:.1f}s")
 
@@ -529,7 +560,7 @@ def predict_all_cells(
                 print("     WARNING: empty context for a train chunk; skipping")
                 continue
             out[q] = _predict_chunk(model, Xn[ctx], xy[ctx], xy[q],
-                                    device, apply_gate, graph=graph, knn_k=knn_k)
+                                    device, output, graph=graph, knn_k=knn_k)
         print(f"     train : {tr_idx.size} cells in {n_chunks} chunk(s), "
               f"{time.time()-t0:.1f}s")
     return out
@@ -584,10 +615,17 @@ def main(argv=None):
                         "mygene/Ensembl, so repeated runs share an identical map "
                         "(the helper hits live APIs and is not cached). Not "
                         "required — every run writes its own map.")
-    p.add_argument("--apply-dropout-gate", action="store_true",
-                   help="Reproduce CIFM's native hard gate (expr[p_drop<=0.5]=0). "
-                        "OFF by default: GeST/kNN are ungated and the harness "
-                        "derives AUROC/AP from prediction magnitude.")
+    p.add_argument("--output", default="marginal",
+                   choices=["marginal", "gate", "magnitude"],
+                   help="How to collapse CIFM's two decoder heads into one "
+                        "prediction. 'marginal' (DEFAULT) = m*p, the "
+                        "zero-inflated expectation: correct for this decoder, "
+                        "continuous like GeST/kNN, and best in every space on "
+                        "CIFM's demo data. 'gate' = m*(p>0.5), CIFM's native "
+                        "inference. 'magnitude' = m alone, the pre-2026-08 "
+                        "default — a DEFECT that discards the only head "
+                        "carrying sparsity information (AUROC 0.877 vs 0.461); "
+                        "kept only to reproduce the superseded numbers.")
     p.add_argument("--graph", default="radius", choices=["radius", "knn"],
                    help="'radius' (default) = CIFM's native fixed-radius graph. "
                         "'knn' swaps in the same k-NN connectivity SQUINT/GeST "
@@ -620,6 +658,19 @@ def main(argv=None):
     device = args.device
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Encode the settings that change the NUMBERS into the variant tag, so
+    # `plot_imputation_benchmark.py` can never average runs made under different
+    # graphs or head-collapses into one bar. Only done when the tag is the
+    # default — an explicit --variant-tag is respected verbatim.
+    if args.variant_tag == DEFAULT_VARIANT_TAG:
+        args.variant_tag = f"{DEFAULT_VARIANT_TAG}+{args.graph}"
+        if args.output != "marginal":
+            args.variant_tag += f"+out-{args.output}"
+        if args.coord_scale != "dataset":
+            args.variant_tag += f"+cs-{args.coord_scale}"
+        print(f"Variant : {args.variant_tag}  (auto-derived from --graph/"
+              f"--output/--coord-scale)")
 
     if args.out_dir is None:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -698,7 +749,7 @@ def main(argv=None):
 
         pred_log = predict_all_cells(
             model, adata_s, batch_key=args.batch_key, device=device,
-            apply_gate=args.apply_dropout_gate, train_chunk=args.train_chunk,
+            output=args.output, train_chunk=args.train_chunk,
             coord_scales=coord_scales, graph=args.graph, knn_k=args.knn_k,
             seed=seed)
 
@@ -742,7 +793,7 @@ def main(argv=None):
             "radius_spatial_graph": float(getattr(model, "radius_spatial_graph", -1)),
             "graph": args.graph,
             "knn_k": args.knn_k,
-            "apply_dropout_gate": bool(args.apply_dropout_gate),
+            "output": args.output,
             "read_depth_mode": "neighbor(observed only)",
             "read_depth_neighs": args.read_depth_neighs,
             "train_chunk": args.train_chunk,

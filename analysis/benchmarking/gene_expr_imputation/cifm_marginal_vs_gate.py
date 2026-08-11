@@ -186,6 +186,26 @@ def main(argv=None) -> int:
           "; ".join(f"{s.strip()} -> {v[0].split()[0]} ({v[1]:.4f})"
                     for s, v in best.items()))
 
+    # ---- 3. log-space vs linear-space marginal ------------------------------
+    # `m*p` is the marginal in LOG space, and it is exact: log1p(0) = 0, so
+    # E[log1p(x)] = (1-p)*0 + p*m = p*m. But `to_counts()` then does expm1 and
+    # renormalises in LINEAR space, where the marginal is p*expm1(m) instead.
+    # These are different predictions; whichever scores better in the harness
+    # space is the one run_cifm.py should emit.
+    print("\n" + "=" * 78 +
+          "\n3. LOG-SPACE vs LINEAR-SPACE MARGINAL (harness counts space)\n"
+          + "=" * 78)
+    T = np.log1p(truth_cnt)
+    for nm, lin in (("log-space  expm1(m*p)   ", np.expm1(m * p)),
+                    ("linear-sp. p*expm1(m)   ", p * np.expm1(m)),
+                    ("linear-sp. p*expm1(m*p) ", p * np.expm1(m * p))):
+        Q = np.log1p(unit(lin) * depth[:, None])
+        print(f"  {nm}  cell-wise {pearson(T, Q, 1):.4f}   "
+              f"gene-wise {pearson(T, Q, 0):.4f}")
+    print("  (Pearson is invariant to a per-cell affine shift, so these differ\n"
+          "   only through the row-normalisation -- but that is exactly the step\n"
+          "   the panel makes matter, so it is worth pinning down.)")
+
     print("\n  If MARGINAL/HARD beat UNGATED by a wide margin, run_cifm.py's "
           "\n  ungated default is the bug and the mmb numbers must be recomputed."
           "\n  If all three still trail CONSTANT, the metric -- not our code -- "
