@@ -226,6 +226,16 @@ def main(argv=None) -> int:
     if dev == "cuda":
         torch.cuda.empty_cache()
 
+    # The tutorial's cell 11 does exp(pred)-1 then divides by the row sum ("you
+    # can convert it into normalize counts"), i.e. renormalisation IS their
+    # intended post-processing. Our raw gated output is ~9x too large in total
+    # mass, which wrecks MSE while leaving the ranking intact. This transform is
+    # per-cell monotone, so cell-wise SPEARMAN IS EXACTLY UNCHANGED by it -- only
+    # the magnitude-sensitive metric moves.
+    _lin = np.expm1(np.clip(cifm, 0.0, None))
+    _rs = _lin.sum(1, keepdims=True); _rs = np.where(_rs > 0, _rs, 1.0)
+    cifm_rn = np.log1p(_lin / _rs * 1e4).astype(np.float32)
+
     # ---- their baselines, parameters fitted on OBSERVED cells only ---------
     Xc = X[ctx]
     nn = NearestNeighbors(n_neighbors=min(a.knn_k, ctx.size)).fit(xy[ctx])
@@ -242,13 +252,30 @@ def main(argv=None) -> int:
     print(f"  NeighborAvg: {has.mean():.3f} of masked cells have an observed "
           f"neighbour within {r:.0f}um (rest fall back to the observed mean)")
 
+    # Their "parameterized uniform and Bernoulli distributions (with parameters
+    # learned from the data)" is under-specified, so score several readings and
+    # let their published values (UnifRnd 0.022/0.409, BernRnd 0.013/0.400) pick
+    # the right one. Note 0.409 is almost exactly 1/3, which is E[U(0,1)^2] --
+    # i.e. their UnifRnd looks like a per-entry Uniform[0,1], carrying NO
+    # gene-level information, hence its ~0 Spearman.
     gmax = Xc.max(0)
-    unif = rng.uniform(0.0, np.maximum(gmax, 1e-12),
-                       size=(n_q, G)).astype(np.float32)
     pg = (Xc > 0).mean(0)
-    nzsum = Xc.sum(0); nzcnt = (Xc > 0).sum(0)
-    mean_nz = np.divide(nzsum, np.maximum(nzcnt, 1)).astype(np.float32)
-    bern = ((rng.random((n_q, G)) < pg) * mean_nz).astype(np.float32)
+    nzcnt = (Xc > 0).sum(0)
+    mean_nz = np.divide(Xc.sum(0), np.maximum(nzcnt, 1)).astype(np.float32)
+    p_glob = float((Xc > 0).mean())
+    mean_nz_glob = float(Xc[Xc > 0].mean()) if (Xc > 0).any() else 0.0
+    rand_variants = [
+        ("UnifRnd", rng.uniform(0.0, 1.0, size=(n_q, G)).astype(np.float32)),
+        ("UnifRnd per-gene", rng.uniform(
+            0.0, np.maximum(gmax, 1e-12), size=(n_q, G)).astype(np.float32)),
+        ("BernRnd", ((rng.random((n_q, G)) < 0.5) * 1.0).astype(np.float32)),
+        ("BernRnd glob p x1", ((rng.random((n_q, G)) < p_glob) * 1.0
+                               ).astype(np.float32)),
+        ("BernRnd glob p x mu", ((rng.random((n_q, G)) < p_glob) * mean_nz_glob
+                                 ).astype(np.float32)),
+        ("BernRnd per-gene", ((rng.random((n_q, G)) < pg) * mean_nz
+                              ).astype(np.float32)),
+    ]
 
     # ---- score -------------------------------------------------------------
     print("\n" + "=" * 78)
@@ -256,9 +283,9 @@ def main(argv=None) -> int:
     print("=" * 78)
     print(f"  {'method':22s}{'Spearman':>10s}{'target':>9s}"
           f"{'MSE':>10s}{'target':>9s}")
-    rows = [("CIFM", cifm), ("NeighborAvg", navg), ("UnifRnd", unif),
-            ("BernRnd", bern), (f"{a.knn_k}-NN mean", knn),
-            ("CONSTANT (obs mean)", const)]
+    rows = ([("CIFM", cifm), ("CIFM (renorm 1e4)", cifm_rn),
+             ("NeighborAvg", navg)] + rand_variants +
+            [(f"{a.knn_k}-NN mean", knn), ("CONSTANT (obs mean)", const)])
     for nm, P in rows:
         sp = _corr(_rank_rows(truth), _rank_rows(P))
         mse = float(np.mean((truth - P) ** 2))
@@ -272,9 +299,9 @@ def main(argv=None) -> int:
           f"(ratio {np.median(cifm.sum(1))/max(1e-9,np.median(truth.sum(1))):.2f}x); "
           f"nonzero frac truth {float((truth>0).mean()):.4f} "
           f"CIFM {float((cifm>0).mean()):.4f}")
-    print("\n  If CIFM lands near 0.212 / 0.144 here, the implementation "
-          "reproduces the paper.\n  If UnifRnd ~0.022 and BernRnd ~0.013, our "
-          "reading of their random baselines is right too.")
+    print("\n  Spearman is invariant to the renormalisation, so the two CIFM"
+          "\n  rows MUST agree on it; if they differ, the transform is buggy."
+          "\n  MSE is the only column it should move.")
     return 0
 
 
