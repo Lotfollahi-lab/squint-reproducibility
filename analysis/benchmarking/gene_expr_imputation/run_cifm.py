@@ -88,25 +88,53 @@ is not degenerate: on the demo data 16-NN (0.4565) does beat the constant
 profile (0.4211), so it does reward spatial information; CIFM simply lands
 below both.
 
-The aggregate is therefore NOT a clean measure of CIFM's imputation ability.
-Report the >=80 um-band subset alongside any aggregate, and note that SQUINT's
-stage-2 prior in-paints ITERATIVELY while CIFM here gets one shot. (Claims about
-CIFM's pretraining mask fraction and autoregressive multi-cell inference were
-previously asserted here from the preprint; bioRxiv now 403s, so they are
-UNVERIFIED -- do not put them in a submission without re-checking.)
+ITERATIVE PARITY, TESTED (2026-08-11). SQUINT's stage-2 fills the hole over 12
+MaskGIT steps with committed cells fed back as context, so `--infill-steps` was
+added to give CIFM the same budget, the same cosine schedule and (with
+`--graph knn`) the same k=16 graph. It does not help -- held-out cells, knn arm:
+
+                          1-shot    infill-12
+  cell  cell-wise         0.0775       0.0678
+  cell  gene-wise         0.0368       0.0284
+  niche cell-wise         0.1363       0.1209
+  cell  AUROC(zero)       0.5704       0.5695
+
+So three independent manipulations that all ADD context -- scattered train
+chunks, 12-step boundary-inward in-painting, and (on CIFM's demo data) full
+dense context -- each make CIFM's score go DOWN or stay flat. The reading:
+iterative in-painting pays off only when the per-cell predictor is good, because
+every committed cell becomes context for the next step. SQUINT gains from its 12
+steps; CIFM's per-cell predictions on this panel are weak (sparsity-head AUROC
+0.57), so feeding them back compounds error instead of propagating signal.
+
+The upshot for reporting: the protocol asymmetry is now CLOSED (matched graph,
+matched iterations, matched schedule, correct head collapse) and CIFM does not
+benefit from closing it -- so "we tested CIFM under matched protocol" is now an
+honest claim. The aggregate is still not a clean measure of CIFM's imputation
+ability, because the ortholog adaptation degrades it (AUROC 0.877 -> 0.57).
+Report the >=80 um-band subset alongside any aggregate. (Claims about CIFM's
+pretraining mask fraction and autoregressive multi-cell inference were previously
+asserted here from the preprint; bioRxiv now 403s, so they are UNVERIFIED -- do
+not put them in a submission without re-checking. What IS verified from the
+search record: pretraining spans ~100 samples / 23M cells / 32k genes across
+Visium AND Xenium platforms, so targeted panels are IN distribution for CIFM.)
 
 CIFM-SPECIFIC HANDLING (the parts that needed a decision)
 ---------------------------------------------------------
 * INPUT FORMAT. Per the official `test.ipynb`, CIFM consumes
   `normalize_total(target_sum=1e4)` + `log1p` of raw counts, and
   `obsm['spatial']` **in micrometres** (it builds `radius_graph(r=20)`).
-  We normalise a working copy only. CRUCIALLY, this dataset is NOT in
-  micrometres and its two sections differ in scale (measured on the full data:
-  median NN 74.72 for batch 15 vs 10.99 for batch 82), so a fixed-radius graph would
-  be empty at r=20. `--coord-scale dataset` (the DEFAULT) therefore rescales EACH
-  section so its median NN distance is `--coord-target-nn` (10), and prints the
-  factor and the resulting mean degree. SQUINT/GeST are unaffected: their graphs
-  are k-NN (rank-based), hence scale-free. Report this rescaling with any result.
+  We normalise a working copy only. The two sections are stored in DIFFERENT
+  units (measured on the full data: median NN 74.72 for batch 15 vs 10.99 for
+  batch 82). `--coord-scale dataset` (the DEFAULT) applies the PUBLISHED
+  per-assay conversion, which yields TRUE micrometres — 74.72 x 0.194 = 14.50 um
+  and 10.99 x 1.0 = 10.99 um. Both sit well inside r=20 um, so every cell gets a
+  handful of neighbours: the single-cell spacing regime CIFM was trained on. It
+  does NOT force a target NN distance — that is `--coord-scale auto`, a deviation
+  which density-matches the sections and so erases a real difference in cell
+  density (it picks 0.1338 for batch 15 vs the published 0.194, 31% off).
+  SQUINT/GeST are unaffected either way: their graphs are k-NN (rank-based),
+  hence scale-free.
 * LEAK-FREE READ DEPTH. CIFM emits a log-normalised profile, NOT counts, so it
   needs a depth to become count-scale. We port `_neighbor_read_depth` verbatim
   from `squint/examples/stage2_decode_pearson.py:415-448`: a held-out cell's
@@ -424,17 +452,20 @@ def resolve_coord_scales(coords: np.ndarray, batch: np.ndarray, radius: float,
     wrong and the graph is either empty (no context reaches the masked cell, so
     predictions are meaningless) or fully connected.
 
-    On this dataset the two sections are NOT on the same scale — measured on the
-    FULL data, batch 82 has a median nearest-neighbour distance of ~10 (which is
-    micrometre-like for cells) while batch 15 is ~58, i.e. ~6x coarser. A single
-    global factor therefore cannot fix both, which is why the default is
-    ``auto``: each section is scaled so its median NN distance equals
-    ``target_nn``, giving CIFM a comparable, realistically-sized neighbourhood in
-    both sections. This is a deliberate, documented deviation — report it with
-    any result, and note that SQUINT/GeST are unaffected because their graphs are
-    k-NN (rank-based) rather than radius-based.
+    The two sections are stored in DIFFERENT units — measured on the FULL data,
+    median nearest-neighbour distance is 74.72 for batch 15 (voxels) and 10.99
+    for batch 82 (already micrometres). ``dataset`` (the DEFAULT) applies the
+    PUBLISHED per-assay conversion from DEFAULT_COORD_SCALES, which puts both in
+    true micrometres: 74.72 x 0.194 = 14.50 um and 10.99 x 1.0 = 10.99 um. Both
+    sit comfortably under CIFM's r=20 um, so each cell gets a handful of
+    neighbours — the single-cell spacing regime CIFM was trained on. NOTE this is
+    NOT a rescaling to ``target_nn``; that is ``auto``, which is a deviation
+    (it density-matches the sections and so erases a real biological difference
+    in cell density). ``auto`` chose 0.1338 for batch 15 against the published
+    0.194, i.e. 31% off. SQUINT/GeST are unaffected either way: their graphs are
+    k-NN (rank-based) hence scale-free.
 
-    Pass a number instead of ``auto`` to apply one global factor.
+    Pass a number to apply one global factor instead.
     """
     from sklearn.neighbors import NearestNeighbors
 
