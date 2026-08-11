@@ -43,6 +43,26 @@ PROTOCOL PARITY — every one of these mirrors GeST exactly
 4. OUTPUT CONTRACT. `layers["X_hat"]` = (n_obs, n_vars) float32 on the RAW
    COUNT scale for ALL cells (train and test), same row/var order as loaded.
 
+RECEPTIVE FIELD -- READ THIS BEFORE REPORTING ANY NUMBER
+--------------------------------------------------------
+From the checkpoint's own args.pt: num_layer=2 and radius_spatial_graph=20. The
+encoder is a 2-layer VIEGNN and `mask_cell_decoder` is another 2-layer VIEGNN,
+and `edge_index` is built ONCE with every edge <= 20 um. So a masked cell's
+prediction can depend on observed expression only within 4 hops x 20 um =
+**80 um**. Our held-out rectangles are 25% x 25% of each section's bbox, i.e.
+~1.3-1.7 mm across, so only ~18-22% of held-out cells sit within 80 um of
+observed tissue. For the other ~80% the output is a function of `mask_embedding`
+and local point geometry alone -- a near-constant profile whose only per-cell
+signal is the harness-supplied neighbour read depth.
+
+That is why the radius and k-NN arms return nearly identical scores: interior
+cells are unreachable under both. It is a genuine METHOD/TASK mismatch, not a
+bug -- but it means the aggregate metric is NOT a measure of CIFM's imputation
+ability. CIFM's own paper does multi-cell inference AUTOREGRESSIVELY (Fig. 4C,
+autoregressive.gif) and pretrains on a scattered 5% mask, never a contiguous
+hole. Report the >=80 um-band subset alongside any aggregate, and note that
+SQUINT's stage-2 prior in-paints ITERATIVELY while CIFM here gets one shot.
+
 CIFM-SPECIFIC HANDLING (the parts that needed a decision)
 ---------------------------------------------------------
 * INPUT FORMAT. Per the official `test.ipynb`, CIFM consumes
@@ -50,8 +70,8 @@ CIFM-SPECIFIC HANDLING (the parts that needed a decision)
   `obsm['spatial']` **in micrometres** (it builds `radius_graph(r=20)`).
   We normalise a working copy only. CRUCIALLY, this dataset is NOT in
   micrometres and its two sections differ in scale (measured on the full data:
-  median NN ~58 for batch 15 vs ~10 for batch 82), so a fixed-radius graph would
-  be empty at r=20. `--coord-scale auto` (the DEFAULT) therefore rescales EACH
+  median NN 74.72 for batch 15 vs 10.99 for batch 82), so a fixed-radius graph would
+  be empty at r=20. `--coord-scale dataset` (the DEFAULT) therefore rescales EACH
   section so its median NN distance is `--coord-target-nn` (10), and prints the
   factor and the resulting mean degree. SQUINT/GeST are unaffected: their graphs
   are k-NN (rank-based), hence scale-free. Report this rescaling with any result.
