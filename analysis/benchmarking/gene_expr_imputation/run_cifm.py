@@ -80,13 +80,60 @@ same ordering holds on CIFM's OWN demo data, where a constant train-mean
 profile scores 0.4211 against CIFM's 0.3954.
 
 Do NOT recycle the receptive-field argument in a submission: it is contradicted
-by our own numbers. What IS supported is that our adaptation degrades the model
--- its sparsity head reaches AUROC 0.877 on CIFM's demo data but only 0.57 on
-our ortholog-mapped mouse panel -- so the gap points at the 431-gene mouse->human
-mapping into a human-only vocabulary, not at the hole geometry. Note the metric
-is not degenerate: on the demo data 16-NN (0.4565) does beat the constant
-profile (0.4211), so it does reward spatial information; CIFM simply lands
-below both.
+by our own numbers. Note also the metric is not degenerate: on the demo data
+16-NN (0.4565) does beat the constant profile (0.4211), so it does reward
+spatial information; CIFM simply lands below both.
+
+CHANNEL MAPPING: WHAT IS VERIFIED, AND WHAT IS NOT
+(`cifm_channel_integrity.py`, `cifm_panel_ablation.py`)
+
+VERIFIED -- gene ORDER is honoured on the output. Permutation test: shuffle the
+target gene order, re-match, predict, un-shuffle -> reproduces the unshuffled
+prediction to max|diff| 8.6e-06 against magnitudes of mean 2.97, i.e. float32
+noise. run_cifm.py's gene assignment is CORRECT. Worth having tested: the demo
+data's var order equals the vocabulary order for all 18,289 positions, so
+reproducing `embed()` could never have caught an ordering bug.
+
+VERIFIED -- `channel_matching`'s structure. It replaces three layers with
+zero-initialised `nn.Linear(len(target), ...)` copies and fills column/row
+idx_target from the matched source channel:
+    self.gene_encoder.layers[0]            <- linear_in    (len(target) inputs)
+    self.mask_cell_expression.layers[-1]   <- linear_out1
+    self.mask_cell_dropout.layers[-1]      <- linear_out2
+So the cell embedding is a LINEAR SUM OVER THE INPUT GENES, and a target entry of
+`[]` leaves that gene's column at zero.
+
+VERIFIED -- unmapped genes cost TWICE. Their expression never enters the model
+(zero column in linear_in) AND their output column is exactly 0 (checked
+all-zero). Blanking 86 of 431 entries moved the MATCHED columns by max|diff|
+0.243, which is expected -- the shared embedding changes -- but it means the
+unmapped fraction is not a harmless dilution. Drop them before scoring and
+report the count.
+
+*** RETRACTED -- "panel size is the root cause". *** An earlier version of this
+docstring reported magnitude r falling 0.811 -> 0.104 when the demo data was cut
+to 431 genes, and called that the root cause. That measurement is CONFOUNDED and
+must not be quoted:
+  (a) normalize_total(1e4) was applied AFTER subsetting, so full and subset truth
+      live in different spaces (mean log1p 0.069 vs 0.153), and the metric used
+      -- pooled ENTRYWISE Pearson -- is provably sensitive to per-cell rescaling,
+      i.e. to precisely that confound;
+  (b) the 431 genes were drawn UNIFORMLY, so they are dominated by lowly
+      expressed genes, unlike any real curated panel;
+  (c) there were NO baselines on those same 431 genes, so the number could
+      equally reflect a dynamic-range ceiling every method would hit;
+  (d) subsetting emptied some cells outright ("Some cells have zero counts"),
+      injecting degenerate context and targets absent from our real panel.
+`cifm_panel_ablation.py` re-runs this properly: cell-wise Pearson (exactly
+invariant to per-cell rescaling), each panel scored BOTH with panel-only input
+and with full 18,289-gene input restricted to the same columns against the same
+truth and the same cells (which isolates coverage), three equal-size panels of
+differing composition plus the real ortholog panel, CONSTANT/16-NN controls, one
+common cell set drawn once, and truth dynamic range reported.
+
+UNTIL THAT RUNS, THE CAUSE OF CIFM'S LOW SCORE ON OUR DATA IS UNKNOWN. What is
+solid is only the measurement itself (cell-wise 0.068-0.081 on held-out cells)
+and the three verified facts above.
 
 ITERATIVE PARITY, TESTED (2026-08-11). SQUINT's stage-2 fills the hole over 12
 MaskGIT steps with committed cells fed back as context, so `--infill-steps` was
