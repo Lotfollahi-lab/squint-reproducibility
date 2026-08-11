@@ -191,16 +191,13 @@ CIFM-SPECIFIC HANDLING (the parts that needed a decision)
                             and dilutes exactly the genes Pearson rewards.
       gate       m*(p>0.5)  CIFM's native inference.
       marginal   m*p        E[expression] under a zero-inflated likelihood.
-  DEFAULT IS `marginal`: it is the correct point prediction for this decoder,
-  it stays a continuous mean (so it remains comparable with GeST and the kNN
-  floor, which was the reason the old default avoided the hard gate), and it
-  measured best in every space on CIFM's demo data — cell-wise Pearson in the
-  harness's counts space 0.3954 (marginal) vs 0.2705 (gate) vs 0.1521
-  (magnitude). `--output magnitude` reproduces the pre-2026-08 default, which
-  was a DEFECT: it discarded the only informative head. The choice is recorded
-  in the config stub AND in the variant tag, so runs made under different
-  settings can never be averaged together.
-  Separately: the magnitude head is already in the model's INPUT space,
+  DEFAULT IS `gate`: it is verbatim what the released `encode_decode` returns,
+  so it is the faithful choice. `marginal` (m*p) is the zero-inflated expectation
+  and scored better on CIFM's demo data (harness-space cell-wise Pearson 0.3954
+  vs 0.2705), but it is OUR deviation, not the authors'. `magnitude` discards the
+  sparsity head entirely and is simply wrong; it exists only to reproduce
+  superseded numbers. The choice is recorded in the config stub and the variant
+  tag, so runs made under different settings can never be averaged together.
   log1p(1e4-normalised) — on truly-expressed entries it matches truth with
   entrywise Pearson 0.813 and a mean ratio of 1.023 — so no recalibration
   transform is applied or needed. See `cifm_marginal_vs_gate.py`.
@@ -689,7 +686,9 @@ def _predict_chunk(model, ctx_X, ctx_xy, q_xy, device, output: str,
 
 
 def verify_native_equivalence(model, Xn, xy, tr_idx, device, tol: float = 1e-4,
-                             n_ctx: int = 300, n_q: int = 8) -> None:
+                             n_ctx: int = 300, n_q: int = 8,
+                             run_output: str = "gate",
+                             run_graph: str = "radius") -> bool:
     """
     Prove our forward path equals the authors' own `predict_cells_at_locations`.
 
@@ -709,8 +708,10 @@ def verify_native_equivalence(model, Xn, xy, tr_idx, device, tol: float = 1e-4,
     from scipy.sparse import csr_matrix
 
     if tr_idx.size < n_ctx + n_q:
-        print("  (section too small for the native-equivalence check; skipped)")
-        return
+        print(f"  (section has {tr_idx.size} train cells, need "
+              f"{n_ctx + n_q}; native-equivalence check deferred to a later "
+              f"section)")
+        return False
     ctx = tr_idx[:n_ctx]
     qry = tr_idx[n_ctx:n_ctx + n_q]
 
@@ -731,12 +732,27 @@ def verify_native_equivalence(model, Xn, xy, tr_idx, device, tol: float = 1e-4,
     print(f"  native-equivalence check: max|diff| = {d:.3g} "
           f"(value scale {scale:.3g}, nonzero frac "
           f"{float((native > 0).mean()):.4f})")
+    nz = float((native > 0).mean())
+    if nz == 0.0:
+        raise RuntimeError(
+            "native-equivalence check is VACUOUS: the reference prediction is "
+            "entirely zero, so 'max|diff|=0' proves nothing. The gate zeroed "
+            "every probe entry, which usually means the radius graph is empty -- "
+            "check --coord-scale and the printed mean degree before trusting "
+            "anything downstream.")
     if not np.isfinite(d) or d > tol:
         raise RuntimeError(
             f"_predict_chunk DIVERGES from CIFM.predict_cells_at_locations: "
             f"max|diff|={d:.6g} > tol={tol}. Our re-implementation of "
             f"encode_decode is not faithful -- fix before trusting any number.")
-    print("  -> our forward path is identical to the released inference.")
+    print(f"  -> verified IDENTICAL to the released inference for "
+          f"output=gate, graph=radius (nonzero frac {nz:.4f}).")
+    if run_output != "gate" or run_graph != "radius":
+        print(f"     CAVEAT: this run uses output={run_output}, graph={run_graph}. "
+              f"The released API only exposes gate+radius, so those settings "
+              f"cannot be checked against it. Entries with p<=0.5 (which "
+              f"--output magnitude/marginal do use) and the k-NN edge "
+              f"construction are therefore NOT covered by this check.")
 
 
 def predict_all_cells(
@@ -785,8 +801,9 @@ def predict_all_cells(
         print(f"\n  -- section {b}: {tr_idx.size} train (context), "
               f"{te_idx.size} held out --")
         if verify_native and not _verified:
-            verify_native_equivalence(model, Xn, xy, tr_idx, device)
-            _verified = True
+            _verified = verify_native_equivalence(
+                model, Xn, xy, tr_idx, device,
+                run_output=output, run_graph=graph)
 
         # ---- held-out cells: full train context, single pass -------------
         if te_idx.size:
@@ -851,6 +868,10 @@ def predict_all_cells(
                                     device, output, graph=graph, knn_k=knn_k)
         print(f"     train : {tr_idx.size} cells in {n_chunks} chunk(s), "
               f"{time.time()-t0:.1f}s")
+    if verify_native and not _verified:
+        print("\n  *** WARNING: the native-equivalence check NEVER RAN -- no "
+              "section had enough train cells. The forward path is UNVERIFIED "
+              "for this run. ***")
     return out
 
 
@@ -1051,6 +1072,22 @@ def main(argv=None):
 
     print("\n=== Loading CIFM ===")
     model = load_cifm(args.cifm_repo, device)
+    # channel_matching only PRINTS its match count and returns None, so a total
+    # failure (e.g. version-suffixed Ensembl IDs, which its exact `in` test cannot
+    # match) would leave every weight zero -> m=0, p=sigmoid(0)=0.5 -> an all-zero
+    # X_hat that no shape or finiteness check would catch. Re-derive the count.
+    _src_ids = {e for ents in model.channel2ensembl_ids_source
+                for e in (ents if isinstance(ents, (list, tuple)) else [ents])}
+    _n_match = sum(1 for t in channel2ensembl_target
+                   if t and any(e in _src_ids for e in t))
+    print(f"  vocabulary match: {_n_match}/{len(channel2ensembl_target)} panel "
+          f"genes found in CIFM's channel vocabulary")
+    if _n_match == 0:
+        raise SystemExit(
+            "channel_matching would match ZERO channels: every weight stays "
+            "zero and the run would emit an all-zero X_hat. Check the ortholog "
+            "IDs against channel2ensembl.pt (version suffixes such as "
+            "ENSG00000141510.15 will not match its exact-equality test).")
     model.channel_matching(channel2ensembl_target, model.channel2ensembl_ids_source)
 
     coord_scales = resolve_coord_scales(

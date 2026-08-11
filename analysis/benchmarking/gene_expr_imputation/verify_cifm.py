@@ -16,7 +16,7 @@ Run this BEFORE submitting the real imputation job. It checks, in order:
 Notes
 -----
 * CIFM's `predict_cells_at_locations` calls `adata.X.toarray()`, so X must be
-  SPARSE. (run_cifm.py never uses that method — it feeds dense arrays straight
+  SPARSE. (run_cifm.py re-implements that method in _predict_chunk and checks the two against each other in verify_native_equivalence — it feeds dense arrays straight
   to the model internals — but the released API requires sparse, so we test it
   the way the library expects.)
 * A `[transformers] Disabling PyTorch because PyTorch >= 2.5 is required`
