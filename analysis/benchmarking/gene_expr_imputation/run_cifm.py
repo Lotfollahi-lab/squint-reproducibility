@@ -75,10 +75,14 @@ CIFM-SPECIFIC HANDLING (the parts that needed a decision)
   magnitude of `X_hat`, so gating would both disadvantage CIFM and break
   comparability. DEFAULT IS UNGATED; `--apply-dropout-gate` reproduces CIFM's
   native behaviour. Whichever is used is recorded in the config stub.
-* SEEDS. CIFM is a frozen checkpoint with deterministic inference, so all seeds
-  give identical numbers. We follow the established convention for the
-  deterministic baseline (`run_knn_spatial.py:214-217`): run once and replicate
-  the rows for schema parity, and say so. Do NOT present this as 5 replicates.
+* SEEDS. Every requested seed runs a FULL inference pass (no row copying), so
+  the per-seed CSV is genuinely produced per seed. But CIFM is a frozen
+  checkpoint with deterministic inference (model.eval(), no sampling), so those
+  passes return IDENTICAL numbers, and we deliberately do not inject artificial
+  per-seed noise to manufacture a spread. Report CIFM as a deterministic
+  baseline, like the kNN floor — NOT as N independent replicates. The runner
+  prints how many distinct metric rows were actually produced, so this is
+  visible in the log.
 
 Usage
 -----
@@ -433,7 +437,7 @@ def _predict_chunk(model, ctx_X, ctx_xy, q_xy, device, apply_gate: bool,
 def predict_all_cells(
         model, adata: ad.AnnData, batch_key: str, device: str,
         apply_gate: bool, train_chunk: int, coord_scales: Dict,
-        graph: str = "radius", knn_k: int = 16,
+        graph: str = "radius", knn_k: int = 16, seed: int = 0,
     ) -> np.ndarray:
     """
     Log-space predictions for EVERY cell, leak-free, section by section.
@@ -485,6 +489,14 @@ def predict_all_cells(
         # left at zero (this bit the smoke run, where n_train < train_chunk).
         if tr_idx.size >= 2:
             n_chunks = max(2, int(np.ceil(tr_idx.size / max(1, train_chunk))))
+            # NOTE the partition is deliberately NOT shuffled per seed. CIFM's
+            # forward pass is deterministic (frozen weights, model.eval(), no
+            # sampling), so every seed runs a full inference pass and returns
+            # identical numbers. We do not introduce artificial per-seed noise:
+            # a fabricated spread would misrepresent CIFM as having run-to-run
+            # variance it does not have. `seed` is kept in the signature only so
+            # the per-seed outputs are labelled consistently with the other
+            # baselines.
             chunks = np.array_split(tr_idx, n_chunks)
         else:
             n_chunks, chunks = (1, [tr_idx]) if tr_idx.size else (0, [])
@@ -641,16 +653,11 @@ def main(argv=None):
         radius=float(getattr(model, "radius_spatial_graph", 20.0)),
         coord_scale=args.coord_scale, target_nn=args.coord_target_nn)
 
-    print("\n=== CIFM inference (leak-free, per section) ===")
-    pred_log = predict_all_cells(
-        model, adata, batch_key=args.batch_key, device=device,
-        apply_gate=args.apply_dropout_gate, train_chunk=args.train_chunk,
-        coord_scales=coord_scales, graph=args.graph, knn_k=args.knn_k)
-
+    # Read depth is seed-independent (coords + observed library sizes only),
+    # so resolve it once and reuse it for every seed.
     print("\n=== Leak-free read depth (k=%d, observed neighbours only) ==="
           % args.read_depth_neighs)
-    X = adata.X
-    L_all = np.asarray(X.sum(axis=1), dtype=np.float32).ravel()
+    L_all = np.asarray(adata.X.sum(axis=1), dtype=np.float32).ravel()
     depth = L_all.copy()
     neighbor_read_depth = resolve_neighbor_read_depth(args.squint_examples)
     test_idx = np.where(adata.obs["data_split"].to_numpy() == "test")[0]
@@ -663,31 +670,41 @@ def main(argv=None):
               f"(their true mean would have been {L_all[test_idx].mean():.1f} "
               f"— not used)")
 
-    X_hat = to_counts(pred_log, depth)
-    if X_hat.shape != (adata.n_obs, adata.n_vars):
-        raise RuntimeError(f"X_hat shape {X_hat.shape} != "
-                           f"({adata.n_obs}, {adata.n_vars})")
-    adata.layers["X_hat"] = X_hat
+    per_seed_frames = []
+    for s_idx, seed in enumerate(seeds):
+        print("\n" + "=" * 78 +
+              f"\nSEED {seed}  ({s_idx + 1}/{len(seeds)})\n" + "=" * 78)
+        adata_s = adata.copy()
 
-    print("\n=== Scoring (shared harness) ===")
-    add_neighborhood_layers(adata, batch_key=args.batch_key,
-                            n_neighs=args.nbr_neighs)
-    base = build_pearson_dataframe(adata, seed=seeds[0], log1p=True, n_hvg=50)
+        pred_log = predict_all_cells(
+            model, adata_s, batch_key=args.batch_key, device=device,
+            apply_gate=args.apply_dropout_gate, train_chunk=args.train_chunk,
+            coord_scales=coord_scales, graph=args.graph, knn_k=args.knn_k,
+            seed=seed)
 
-    # CIFM is a frozen checkpoint: inference is deterministic, so replicate the
-    # rows for schema parity exactly as the deterministic kNN floor does.
-    frames = []
-    for s in seeds:
-        d = base.copy()
-        d["seed"] = s
-        frames.append(d)
-    per_seed = pd.concat(frames, ignore_index=True)
-    if len(seeds) > 1:
-        print(f"  NOTE: CIFM inference is deterministic — the {len(seeds)} seed "
-              f"rows are IDENTICAL replicates (schema parity only), not "
-              f"independent runs. Report as such.")
+        X_hat = to_counts(pred_log, depth)
+        if X_hat.shape != (adata_s.n_obs, adata_s.n_vars):
+            raise RuntimeError(f"X_hat shape {X_hat.shape} != "
+                               f"({adata_s.n_obs}, {adata_s.n_vars})")
+        adata_s.layers["X_hat"] = X_hat
 
-    write_predicted_adata(adata, args.out_dir, seeds[0])
+        add_neighborhood_layers(adata_s, batch_key=args.batch_key,
+                                n_neighs=args.nbr_neighs)
+        per_seed_frames.append(
+            build_pearson_dataframe(adata_s, seed=seed, log1p=True, n_hvg=50))
+        write_predicted_adata(adata_s, args.out_dir, seed)
+        del adata_s
+
+    per_seed = pd.concat(per_seed_frames, ignore_index=True)
+    print("\n=== Writing outputs ===")
+    _nuniq = per_seed.drop(columns=["seed"]).drop_duplicates().shape[0]
+    _nrows = per_seed.shape[0] // max(1, len(seeds))
+    print(f"  NOTE: CIFM is a frozen checkpoint with deterministic inference. "
+          f"Every seed ran a FULL inference pass ({len(seeds)} passes), and the "
+          f"results are identical by construction "
+          f"({_nuniq}/{_nrows} distinct metric rows). Report CIFM as a "
+          f"deterministic baseline (like the kNN floor) — NOT as {len(seeds)} "
+          f"independent replicates.")
     write_pearson_outputs(args.out_dir, per_seed)
 
     (args.out_dir / "user_specified_config.yaml").write_text(
