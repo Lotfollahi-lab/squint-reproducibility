@@ -55,13 +55,37 @@ observed tissue. For the other ~80% the output is a function of `mask_embedding`
 and local point geometry alone -- a near-constant profile whose only per-cell
 signal is the harness-supplied neighbour read depth.
 
-That is why the radius and k-NN arms return nearly identical scores: interior
-cells are unreachable under both. It is a genuine METHOD/TASK mismatch, not a
-bug -- but it means the aggregate metric is NOT a measure of CIFM's imputation
-ability. CIFM's own paper does multi-cell inference AUTOREGRESSIVELY (Fig. 4C,
-autoregressive.gif) and pretrains on a scattered 5% mask, never a contiguous
-hole. Report the >=80 um-band subset alongside any aggregate, and note that
-SQUINT's stage-2 prior in-paints ITERATIVELY while CIFM here gets one shot.
+That is consistent with the radius and k-NN arms returning nearly identical
+scores (test cell-wise 0.0813 vs 0.0775): interior cells are unreachable under
+both. BUT DO NOT STATE IT AS THE CAUSE -- the measured numbers do not support
+that yet, and an earlier version of this docstring overreached:
+
+  The geometry argument predicts a LARGE train>test gap, because train cells
+  keep observed tissue all around them. Measured (2026-08-11, --output
+  marginal): cell-wise train 0.0783 vs test 0.0813 -- no gap, slightly
+  REVERSED. AUROC(zero) is 0.6127 train / 0.5722 test, against 0.877 for the
+  same head on CIFM's own demo data. So on this dataset the heads are close to
+  uninformative whether or not context is available.
+
+Two explanations remain open, and they have opposite implications:
+  (a) an artefact of OUR protocol -- until 2026-08-11 train chunks were split in
+      AnnData row order, which on FOV/tile-ordered data carves out SPATIALLY
+      CONTIGUOUS blocks, so train cells were hole-filling cases too and train
+      was never the context-rich control it was meant to be. Fixed:
+      `--train-chunk-order random` is now the default. Rerun before concluding.
+  (b) the dataset itself is off-distribution for the checkpoint (431 MOUSE genes
+      reached through a human ortholog map into a human-only vocabulary),
+      in which case the receptive field is a side issue.
+
+Resolve (a) vs (b) with the rerun: if train jumps well above test, geometry is
+the story; if train stays ~0.08 with scattered chunks, it is the data.
+
+Either way the aggregate is NOT a clean measure of CIFM's imputation ability.
+Report the >=80 um-band subset alongside any aggregate, and note that SQUINT's
+stage-2 prior in-paints ITERATIVELY while CIFM here gets one shot. (Claims about
+CIFM's pretraining mask fraction and autoregressive multi-cell inference were
+previously asserted here from the preprint; bioRxiv now 403s, so they are
+UNVERIFIED -- do not put them in a submission without re-checking.)
 
 CIFM-SPECIFIC HANDLING (the parts that needed a decision)
 ---------------------------------------------------------
@@ -488,6 +512,7 @@ def _predict_chunk(model, ctx_X, ctx_xy, q_xy, device, output: str,
 def predict_all_cells(
         model, adata: ad.AnnData, batch_key: str, device: str,
         output: str, train_chunk: int, coord_scales: Dict,
+        train_chunk_order: str = "random",
         graph: str = "radius", knn_k: int = 16, seed: int = 0,
     ) -> np.ndarray:
     """
@@ -540,15 +565,29 @@ def predict_all_cells(
         # left at zero (this bit the smoke run, where n_train < train_chunk).
         if tr_idx.size >= 2:
             n_chunks = max(2, int(np.ceil(tr_idx.size / max(1, train_chunk))))
-            # NOTE the partition is deliberately NOT shuffled per seed. CIFM's
-            # forward pass is deterministic (frozen weights, model.eval(), no
-            # sampling), so every seed runs a full inference pass and returns
-            # identical numbers. We do not introduce artificial per-seed noise:
-            # a fabricated spread would misrepresent CIFM as having run-to-run
-            # variance it does not have. `seed` is kept in the signature only so
-            # the per-seed outputs are labelled consistently with the other
-            # baselines.
-            chunks = np.array_split(tr_idx, n_chunks)
+            # `tr_idx` is in AnnData row order, and spatial data is very often
+            # stored in FOV/tile order — so `array_split` alone would carve out
+            # SPATIALLY CONTIGUOUS chunks, making every train cell a hole-filling
+            # case too. That destroys the train split's value as a control: it is
+            # supposed to be the easy, context-rich condition against which the
+            # held-out REGION is compared, and it is also the only setting close
+            # to CIFM's pretraining regime (a scattered mask). We therefore
+            # permute before splitting, which yields spatially scattered chunks.
+            #
+            # This does NOT manufacture per-seed variance: the permutation is
+            # drawn from a seed-derived generator, so a given seed always yields
+            # the same partition, and CIFM's forward pass stays deterministic
+            # (frozen weights, model.eval(), no sampling). Two seeds do now
+            # differ in WHICH cells share a chunk, which is genuine protocol
+            # variation rather than injected noise — but CIFM should still be
+            # reported as a deterministic baseline, since the effect is tiny
+            # next to the between-method gaps. `--train-chunk-order index`
+            # restores the old contiguous behaviour for diagnosis.
+            if train_chunk_order == "random":
+                perm = np.random.default_rng(seed).permutation(tr_idx.size)
+                chunks = np.array_split(tr_idx[perm], n_chunks)
+            else:
+                chunks = np.array_split(tr_idx, n_chunks)
         else:
             n_chunks, chunks = (1, [tr_idx]) if tr_idx.size else (0, [])
         t0 = time.time()
@@ -615,6 +654,17 @@ def main(argv=None):
                         "mygene/Ensembl, so repeated runs share an identical map "
                         "(the helper hits live APIs and is not cached). Not "
                         "required — every run writes its own map.")
+    p.add_argument("--train-chunk-order", default="random",
+                   choices=["random", "index"],
+                   help="How train cells are partitioned into chunks (each "
+                        "chunk is excluded from its own context). 'random' "
+                        "(DEFAULT) permutes with a seed-derived RNG first, so "
+                        "chunks are spatially SCATTERED — the train split is "
+                        "then a genuine context-rich control and the closest "
+                        "match to CIFM's pretraining mask. 'index' splits in "
+                        "AnnData row order, which on FOV/tile-ordered data "
+                        "carves out contiguous blocks and turns train cells "
+                        "into hole-filling cases as well; kept for diagnosis.")
     p.add_argument("--output", default="marginal",
                    choices=["marginal", "gate", "magnitude"],
                    help="How to collapse CIFM's two decoder heads into one "
@@ -667,6 +717,8 @@ def main(argv=None):
         args.variant_tag = f"{DEFAULT_VARIANT_TAG}+{args.graph}"
         if args.output != "marginal":
             args.variant_tag += f"+out-{args.output}"
+        if args.train_chunk_order != "random":
+            args.variant_tag += f"+tco-{args.train_chunk_order}"
         if args.coord_scale != "dataset":
             args.variant_tag += f"+cs-{args.coord_scale}"
         print(f"Variant : {args.variant_tag}  (auto-derived from --graph/"
@@ -750,6 +802,7 @@ def main(argv=None):
         pred_log = predict_all_cells(
             model, adata_s, batch_key=args.batch_key, device=device,
             output=args.output, train_chunk=args.train_chunk,
+            train_chunk_order=args.train_chunk_order,
             coord_scales=coord_scales, graph=args.graph, knn_k=args.knn_k,
             seed=seed)
 
@@ -794,6 +847,7 @@ def main(argv=None):
             "graph": args.graph,
             "knn_k": args.knn_k,
             "output": args.output,
+            "train_chunk_order": args.train_chunk_order,
             "read_depth_mode": "neighbor(observed only)",
             "read_depth_neighs": args.read_depth_neighs,
             "train_chunk": args.train_chunk,
