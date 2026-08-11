@@ -1,5 +1,9 @@
 #!/usr/bin/env python
 """
+!! NOTE any "0.144" / "0.205" below is a MISREAD of Fig. 2B's MSE panel.
+   The real values are CIFM 0.266 and NeighborAvg 0.280, with large
+   overlapping error bars. Corrected 2026-08-11.
+
 cifm_mse_definition.py — find the MSE definition that reproduces Fig. 2B.
 =============================================================================
 `reproduce_cifm_fig2.py` reproduced the authors' SPEARMAN on their own data,
@@ -10,8 +14,8 @@ their split and their masking regime:
 
 so the forward path is right. MSE did not follow:
 
-    CIFM        MSE 1.7682        (published 0.144)
-    NeighborAvg MSE 0.1894        (published 0.205)   <- already close
+    CIFM        MSE 1.7682        (published 0.266)
+    NeighborAvg MSE 0.1894        (published 0.280)
 
 That pattern is the whole clue. Our NeighborAvg MSE is within 8% of theirs, so
 the metric SPACE and the MSE FORM cannot be badly wrong. What differs is CIFM's
@@ -58,7 +62,10 @@ from pathlib import Path
 import numpy as np
 
 DEFAULT_CIFM_REPO = Path(__file__).resolve().parents[1] / "cifm"
-TARGET = {"CIFM": 0.144, "NeighborAvg": 0.205}
+TARGET = {"CIFM": 0.266, "NeighborAvg": 0.280}  # corrected 2026-08-11
+# Fig. 2B MSE panel, read from a zoomed view: UnifDist 0.409, PoissDist
+# 0.403, NeighborAvg 0.280, CIFM 0.266 -- with LARGE, overlapping error
+# bars. An earlier revision misread these as 0.205 / 0.144.
 
 
 def _rank_rows(A):

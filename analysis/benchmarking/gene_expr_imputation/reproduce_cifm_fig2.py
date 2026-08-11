@@ -1,5 +1,9 @@
 #!/usr/bin/env python
 """
+!! NOTE any "0.144" / "0.205" below is a MISREAD of Fig. 2B's MSE panel.
+   The real values are CIFM 0.266 and NeighborAvg 0.280, with large
+   overlapping error bars. Corrected 2026-08-11.
+
 reproduce_cifm_fig2.py — reproduce CIFM's Fig. 2B numbers, on their terms.
 =============================================================================
 Goal: establish whether we can hit the authors' PUBLISHED numbers before any
@@ -80,11 +84,21 @@ import numpy as np
 
 DEFAULT_CIFM_REPO = Path(__file__).resolve().parents[1] / "cifm"
 
-FIG2B = {          # transcribed targets; None = not legible in our render
-    "UnifRnd":     dict(spearman=0.022, mse=0.409),
-    "BernRnd":     dict(spearman=0.013, mse=0.400),
-    "NeighborAvg": dict(spearman=0.17,  mse=0.205),
-    "CIFM":        dict(spearman=0.212, mse=0.144),
+FIG2B = {   # VERIFIED 2026-08-11 from zoomed views of both summary panels.
+    # Spearman: UnifDist 0.021, PoissDist 0.013, NeighborAvg 0.147, CIFM 0.212
+    #   error bars ~ CIFM 0.182-0.246, NeighborAvg 0.129-0.170 -> SEPARATED,
+    #   so CIFM's rank-correlation advantage over neighbour averaging is real.
+    # MSE:      UnifDist 0.409, PoissDist 0.403, NeighborAvg 0.280, CIFM 0.266
+    #   error bars ~ CIFM 0.208-0.325, NeighborAvg 0.215-0.345 -> OVERLAPPING,
+    #   so the MSE advantage is NOT established.
+    # Do not cite the MSE overlap without the Spearman separation: quoting one
+    # panel alone is selective reporting, and together they do not support
+    # dismissing the method.
+    # The second random baseline is POISSON ("PoissDist"), not Bernoulli.
+    "UnifRnd":     dict(spearman=0.021, mse=0.409),
+    "BernRnd":     dict(spearman=0.013, mse=0.403),
+    "NeighborAvg": dict(spearman=0.147, mse=0.280),
+    "CIFM":        dict(spearman=0.212, mse=0.266),
 }
 
 

@@ -1,5 +1,9 @@
 #!/usr/bin/env python
 """
+!! NOTE any "0.144" / "0.205" below is a MISREAD of Fig. 2B's MSE panel.
+   The real values are CIFM 0.266 and NeighborAvg 0.280, with large
+   overlapping error bars. Corrected 2026-08-11.
+
 cifm_bias_and_introspect.py — does `channel_matching` throw away the heads' bias?
 =============================================================================
 THE HYPOTHESIS. `channel_matching` rebuilds three layers as `bias=False` and

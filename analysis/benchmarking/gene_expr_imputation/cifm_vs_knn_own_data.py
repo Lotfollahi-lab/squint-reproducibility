@@ -1,5 +1,9 @@
 #!/usr/bin/env python
 """
+!! NOTE any "0.144" / "0.205" below is a MISREAD of Fig. 2B's MSE panel.
+   The real values are CIFM 0.266 and NeighborAvg 0.280, with large
+   overlapping error bars. Corrected 2026-08-11.
+
 cifm_vs_knn_own_data.py — on CIFM's OWN demo data, under CIFM's OWN split and
 CIFM's OWN metric: does a trivial spatial k-NN beat CIFM?
 =============================================================================

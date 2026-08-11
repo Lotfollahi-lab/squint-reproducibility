@@ -1,14 +1,18 @@
 #!/usr/bin/env python
 """
+!! NOTE any "0.144" / "0.205" below is a MISREAD of Fig. 2B's MSE panel.
+   The real values are CIFM 0.266 and NeighborAvg 0.280, with large
+   overlapping error bars. Corrected 2026-08-11.
+
 cifm_target_sum_sweep.py — is the 9x magnitude inflation just `target_sum`?
 =============================================================================
 STATE OF PLAY. On CIFM's own demo data, their regional split and their scattered
 5% masking, we reproduce their SPEARMAN (CIFM 0.2070 vs published 0.212;
-NeighborAvg 0.1842 vs ~0.17) and we reproduce NeighborAvg's MSE (0.1894 vs 0.205)
+NeighborAvg 0.1842 vs ~0.17) and we get NeighborAvg MSE 0.1894 (their 0.280)
 under log1p(1e4-norm) + pooled MSE. A 104-cell grid over post-processings x
-spaces x MSE forms could NOT bring CIFM's MSE to their 0.144: the closest
-legitimate candidate is the tutorial's own renormalisation at 0.4095, and even an
-ORACLE that forces each row's log-space sum to the truth's only reaches 0.2056.
+spaces x MSE forms bracketed their CIFM MSE of 0.266: the tutorial's own
+renormalisation gives 0.4095 (1.54x) and an ORACLE forcing each row's log-space
+sum to the truth's gives 0.2056 (0.77x).
 
 The grid also isolated the cause. It is not density -- NeighborAvg is just as
 dense (0.239 nonzero vs CIFM's 0.221) and still scores 0.19. It is MAGNITUDE:
@@ -33,7 +37,7 @@ pipeline does, since input and target are one matrix.
 
 WHAT TO LOOK FOR
   * calib ratio -> 1.00 at the right target_sum. That is the direct test.
-  * CIFM MSE -> ~0.144 and NeighborAvg MSE -> ~0.205 at the same value.
+  * CIFM MSE -> ~0.266 and NeighborAvg MSE -> ~0.280 at the same value.
   * Spearman should stay ~0.21. It is NOT invariant here (the input changes, not
     just the output scale), so if it collapses, the model is being fed something
     off-distribution and the hypothesis is wrong.
@@ -53,7 +57,7 @@ from pathlib import Path
 import numpy as np
 
 DEFAULT_CIFM_REPO = Path(__file__).resolve().parents[1] / "cifm"
-TARGET_CIFM, TARGET_NAVG = 0.144, 0.205
+TARGET_CIFM, TARGET_NAVG = 0.266, 0.280  # corrected 2026-08-11 (was a misread)
 
 
 def _rank_rows(A):

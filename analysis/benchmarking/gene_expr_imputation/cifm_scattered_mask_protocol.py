@@ -1,5 +1,9 @@
 #!/usr/bin/env python
 """
+!! NOTE any "0.144" / "0.205" below is a MISREAD of Fig. 2B's MSE panel.
+   The real values are CIFM 0.266 and NeighborAvg 0.280, with large
+   overlapping error bars. Corrected 2026-08-11.
+
 cifm_scattered_mask_protocol.py — is CIFM's low score OUR protocol, or our code?
 =============================================================================
 `cifm_vs_knn_own_data.py` produced a decisive anomaly on CIFM's own demo data:

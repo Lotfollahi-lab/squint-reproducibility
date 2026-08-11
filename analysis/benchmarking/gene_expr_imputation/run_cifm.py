@@ -136,6 +136,62 @@ WHAT WE CANNOT MATCH, AND MUST DISCLOSE
     randomly and uniformly. So pretraining masks a scattered 5%, while both their
     evaluation and ours use a contiguous region.
 
+VOID-INVARIANCE: OUR FULL-GRAPH ENCODER *IS* THE PAPER'S `Rmv` (proven)
+-----------------------------------------------------------------------
+Appdx B.3 encodes with the masked nodes REMOVED, `f_enc(X_unm, C_unm, A(C_unm))`,
+while the released `encode_decode` runs the encoder over the FULL graph with the
+masked rows set to zero. These are not merely similar -- they are BITWISE
+IDENTICAL for the unmasked nodes, verified two ways (2026-08-11):
+
+  * From source. `MLPBiasFree` maps 0 -> 0 exactly (bias-free Linear -> ReLU ->
+    LayerNorm(elementwise_affine=False), and LayerNorm(0) = 0/sqrt(0+eps) = 0),
+    so `gene_encoder(0) = 0`. In `EGNNLayer.message`,
+    `inner_prod = mean(h_i*h_j)` is exactly 0 if either node is void, and
+    `innerprod_embedding(0) = 0` multiplies the ENTIRE concatenated message
+    including `dist_embedding(dists)` -- so `msg = mlp_msg(0) = 0`. Void nodes
+    also stay void through every layer, and `pred(0) = 0`.
+  * Numerically. A standalone re-implementation compared full-graph-with-zeroed-
+    rows against masked-nodes-removed (12 unmasked + 5 masked, 89 extra edges):
+    max|difference| on the unmasked embeddings = 0.000e+00.
+
+Ablating the mechanisms shows what actually carries the invariance: removing the
+Eq. 11 intensity gate breaks it (rel. err 1.7), replacing the void-excluding
+coordinate denominator (`counts[inner_prod==0] = 0`) with a plain degree breaks it
+mildly (2.9e-2), while sum-vs-mean pooling makes NO difference (1.5e-13) -- because
+`mlp_upd` opens with a scale-invariant LayerNorm. So the paper's stated mechanism
+(3) is not load-bearing and the coordinate denominator, which it does not mention,
+is. None of this changes what we do; it means the radius-mode encoder needs no
+correction.
+
+WHAT THE PAPER'S LOSS CANNOT BE
+-------------------------------
+`expressions_dec[dropouts_dec <= 0.5] = 0` is a hard threshold with identically
+zero gradient into `mask_cell_dropout`. If Eq. 15 were computed on the GATED
+output, that head could never have been trained -- yet it demonstrably is
+(AUROC 0.877 for truth>0, against 0.461 for the magnitude head). So the gate is
+not inside the objective, Eq. 15's `X_dec` is the UNGATED
+`relu(mask_cell_expression(.))`, and Eq. 15 as printed is an incomplete statement
+of the real objective: a zero-inflation / BCE term is missing from the paper.
+This is also consistent with `forward()` being an empty stub and `proj`
+(hidden->1) being referenced nowhere -- the release is a training class stripped
+to inference. NOTE neither candidate reproduces their MSE locally (gated 1.7682,
+ungated 8.5340, published 0.144), so an unaccounted step still sits between
+`X_dec` and their reported number.
+
+A PAPER-FAITHFUL MECHANISM FOR CONTIGUOUS-REGION DEGRADATION
+------------------------------------------------------------
+Every masked node receives the SAME `mask_embedding` vector `e`. For a cell deep
+inside a large contiguous hole, nearly all of its decoder edges therefore carry
+`inner_prod = ||e||^2/d`, a positive constant, and only `dists` varies. The
+decoder output collapses toward a near-constant profile, and a fixed 0.5 threshold
+on a near-constant `p` keeps essentially the SAME gene set for every interior
+cell -- the model's marginal prior, learned where ~17k genes are detected per
+cell and hence far denser than a 431-gene panel. This is a property of the
+released design, not of our code. Testable if ever needed: interior held-out
+cells should have near-identical predicted profiles, and the kept-gene fraction
+should rise with distance from the region boundary. It does NOT explain the
+over-call under a scattered mask on the demo data.
+
 CIFM-SPECIFIC HANDLING (the parts that needed a decision)
 ---------------------------------------------------------
 * INPUT FORMAT. Per the official `test.ipynb`, CIFM consumes
@@ -643,6 +699,20 @@ def _predict_chunk(model, ctx_X, ctx_xy, q_xy, device, output: str,
             # k+1: torch_cluster calls knn(x, x, k if loop else k+1), so with
             # loop=True the self-edge eats one slot. k=16 alone would give 15
             # spatial neighbours + self, not the harness's 16 + self.
+            #
+            # !! KNOWN DEFECT, kNN MODE ONLY (verified 2026-08-11 against the
+            # released source). A k-NN graph has a FIXED neighbour budget, so the
+            # zero-expression query cells concatenated below DISPLACE real
+            # observed neighbours from each context cell's k slots -- and then
+            # contribute nothing, because CIFM's encoder is exactly
+            # void-invariant (proven below). Context cells near the held-out
+            # region are therefore genuinely STARVED of context, worse the denser
+            # the masked block. Under the paper's own formulation
+            # (`A(C_unm)`, Appdx B.1/B.3) every context cell would get k OBSERVED
+            # neighbours. RADIUS MODE IS UNAFFECTED: a radius graph has no budget,
+            # so adding void nodes adds only edges that carry exactly zero.
+            # => `--graph radius` (the default) is the faithful arm. Disclose this
+            # whenever a `--graph knn` number is reported.
             edge_index = knn_graph(coords, k=knn_k + 1, loop=True)
         else:
             edge_index = radius_graph(coords, r=model.radius_spatial_graph,

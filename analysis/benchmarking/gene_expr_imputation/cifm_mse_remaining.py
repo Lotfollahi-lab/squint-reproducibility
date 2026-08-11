@@ -1,10 +1,14 @@
 #!/usr/bin/env python
 """
+!! NOTE any "0.144" / "0.205" below is a MISREAD of Fig. 2B's MSE panel.
+   The real values are CIFM 0.266 and NeighborAvg 0.280, with large
+   overlapping error bars. Corrected 2026-08-11.
+
 cifm_mse_remaining.py — the MSE readings not yet tested.
 =============================================================================
 Goal: reproduce the four MSE values in Fig. 2B. Nothing else.
 
-    CIFM 0.144   NeighborAvg 0.205   BernRnd 0.400   UnifRnd 0.409
+    CIFM 0.266   NeighborAvg 0.280   PoissDist 0.403   UnifDist 0.409
 
 Already ruled out (104-cell grid in cifm_mse_definition.py, and the target_sum
 sweep):
@@ -22,7 +26,7 @@ untested is how the MSE is AGGREGATED, and over WHICH ENTRIES.
 
 THE KEY REFERENCE THIS SCRIPT ADDS. An all-zeros prediction. In the settled
 space its MSE is just mean(truth^2), and it calibrates everything: if all-zeros
-lands near 0.28, then their 0.144 (CIFM) and 0.205 (NeighborAvg) are both BETTER
+lands near 0.28, then their 0.266 (CIFM) and 0.280 (NeighborAvg) are close to it
 than predicting nothing, and their ~0.40 randoms are worse. That fixes the scale
 of the whole figure and tells us whether 0.144 is even attainable by a prediction
 of our output's density.
@@ -67,8 +71,11 @@ from pathlib import Path
 import numpy as np
 
 DEFAULT_CIFM_REPO = Path(__file__).resolve().parents[1] / "cifm"
-TARGETS = {"CIFM": 0.144, "NeighborAvg": 0.205,
-           "BernRnd": 0.400, "UnifRnd": 0.409}
+TARGETS = {"CIFM": 0.266, "NeighborAvg": 0.280,
+           "BernRnd": 0.403, "UnifRnd": 0.409}  # corrected 2026-08-11
+# Fig. 2B MSE panel: UnifDist 0.409, PoissDist 0.403 (POISSON, not
+# Bernoulli), NeighborAvg 0.280, CIFM 0.266, all with wide overlapping
+# error bars. An earlier revision misread CIFM as 0.144.
 
 
 def main(argv=None) -> int:
