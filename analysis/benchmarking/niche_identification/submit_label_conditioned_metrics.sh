@@ -50,11 +50,26 @@ BATCH_KEY="${BATCH_KEY:-adata_batch_id}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 ONLY="${ONLY:-}"
 DRY_RUN="${DRY_RUN:-0}"
-LSF_GROUP="${LSF_GROUP:-s10396}"
-LSF_QUEUE="${LSF_QUEUE:-normal}"        # CPU only; GPU queues reject these
+# CPU queue, and the group that goes with it. The GPU pairing is a different
+# one (training-parallel + s10396), and it would buy nothing here -- see below.
+LSF_GROUP="${LSF_GROUP:-team361}"
+LSF_QUEUE="${LSF_QUEUE:-normal}"
 LSF_WALL="${LSF_WALL:-12:00}"
 LSF_MEM="${LSF_MEM:-64000}"
 LSF_CORES="${LSF_CORES:-4}"
+# Raw bsub flags, appended verbatim.
+#
+# THIS WORK IS CPU-ONLY, AND A GPU CANNOT HELP IT. scib-metrics runs the LISI
+# family through jax, but the squint venv has jax 0.6.2 / jaxlib 0.6.2 with NO
+# jax-cuda12-plugin installed, so jax.default_backend() is "cpu" on every node
+# (the nvidia-cuda-* wheels in the venv belong to torch). kbet is scipy, the
+# neighbour graph is pynndescent/numba, and silhouette is jax. So requesting a
+# GPU would reserve an idle device. Measured cost: ~4 min per seed at 53k cells.
+#
+# If you nonetheless need a GPU queue, they REJECT jobs that request no GPU:
+#   LSF_QUEUE=training-parallel LSF_GROUP=s10396 \
+#   LSF_EXTRA="-gpu mode=exclusive_process:num=1:block=yes"
+LSF_EXTRA="${LSF_EXTRA:-}"
 
 ART="$REPO/artifacts/$DATASET_TAG"
 OUT="$REPO/artifacts/label_conditioned_metrics"
@@ -90,10 +105,11 @@ submit () {   # submit <name> <latent_keys> <adata...>
         printf '  %-24s %-28s %d seeds\n' "$NAME" "$KEYS" "$#"
         return
     fi
+    # shellcheck disable=SC2086  # LSF_EXTRA must word-split into separate flags
     bsub -G "$LSF_GROUP" -q "$LSF_QUEUE" -J "lcm_${DATASET_TAG}_${NAME}" \
          -W "$LSF_WALL" -n "$LSF_CORES" -M "$LSF_MEM" \
          -R "select[mem>$LSF_MEM]" -R "rusage[mem=$LSF_MEM]" \
-         -R "span[ptile=$LSF_CORES]" \
+         -R "span[ptile=$LSF_CORES]" $LSF_EXTRA \
          -o "$LOG/${DATASET_TAG}_${NAME}.out" \
          -e "$LOG/${DATASET_TAG}_${NAME}.err" \
          "$CMD"
