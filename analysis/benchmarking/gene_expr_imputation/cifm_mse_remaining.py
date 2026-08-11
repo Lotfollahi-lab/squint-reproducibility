@@ -210,8 +210,10 @@ def main(argv=None) -> int:
     best = None
     for fn, vals in rows.items():
         d = {}
+        # PREDS labels are longer than the TARGETS keys ("CIFM (gate)" etc.)
         for key in TARGETS:
-            d[key] = abs(vals[names.index(key)] - TARGETS[key])
+            col = next(i for i, n in enumerate(names) if n.startswith(key))
+            d[key] = abs(vals[col] - TARGETS[key])
         tot = sum(d.values())
         print(f"  {fn:18s}{d['CIFM']:>9.3f}{d['NeighborAvg']:>9.3f}"
               f"{d['BernRnd']:>9.3f}{d['UnifRnd']:>9.3f}{tot:>9.3f}")
