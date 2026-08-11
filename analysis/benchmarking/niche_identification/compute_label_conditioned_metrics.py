@@ -94,16 +94,75 @@ LABEL_HINTS = ("cell_type", "cell_types", "celltype", "annotation", "niche",
 BATCH_HINTS = ("batch", "section", "sample", "donor", "slide", "assay")
 
 
-def inspect(path: Path) -> None:
+def _read_elem():
+    try:
+        from anndata.io import read_elem                           # anndata >= 0.11
+    except ImportError:                                            # pragma: no cover
+        from anndata.experimental import read_elem
+    return read_elem
+
+
+def load_minimal(path: Path, obsm_keys, obs_cols):
+    """
+    obs plus the requested obsm arrays, read through h5py. Never touches uns or X.
+
+    Not ad.read_h5ad, for two independent reasons:
+      * Several baseline predicted_adata.h5ad files carry uns['log1p']['base'] = None,
+        written by an older anndata, and 0.11.4 raises IORegistryError ("No read
+        method registered for IOSpec(encoding_type='null')") while parsing uns. It
+        fails on the whole file even though nothing here needs uns.
+      * X is never used. Every metric reads obsm and obs, and sc.pp.neighbors takes
+        use_rep=<obsm key>. Skipping X turns a multi-GB read into a few hundred MB,
+        which is what lets the 199k-cell NSCLC file run inside a 64 GB job.
+    """
     import anndata as ad
-    a = ad.read_h5ad(path, backed="r")
-    print(f"\n=== {path} ===\n  n_obs={a.n_obs}  n_vars={a.n_vars}")
+    import h5py
+    read_elem = _read_elem()
+    with h5py.File(path, "r") as h:
+        if "obs" not in h:
+            raise SystemExit(f"{path}\n  no obs group. This file is a stub: the "
+                             f"novae baseline saved predicted_adata.h5ad without "
+                             f"obs or obsm at every timestamp, so its metrics "
+                             f"cannot be recomputed from disk.")
+        obs = read_elem(h["obs"])
+        for c in obs_cols:
+            if c not in obs.columns:
+                raise SystemExit(f"{path}\n  obs column {c!r} absent. Run --inspect.")
+        if "obsm" not in h:
+            raise SystemExit(f"{path}\n  no obsm group, so there is no "
+                             f"representation to score (looked for "
+                             f"{list(obsm_keys)}).")
+        have = list(h["obsm"].keys())
+        missing = [k for k in obsm_keys if k not in have]
+        if missing:
+            raise SystemExit(f"{path}\n  --latent-keys {missing} not in obsm. "
+                             f"Present: {have}")
+        obsm = {k: np.asarray(read_elem(h["obsm"][k])) for k in obsm_keys}
+    return ad.AnnData(obs=obs, obsm=obsm)
+
+
+def inspect(path: Path) -> None:
+    import h5py
+    read_elem = _read_elem()
+    with h5py.File(path, "r") as h:
+        obs = read_elem(h["obs"]) if "obs" in h else None
+        shapes = ({k: h["obsm"][k].shape for k in h["obsm"].keys()}
+                  if "obsm" in h else {})
+    print(f"\n=== {path} ===")
+    if obs is None or not len(obs.columns):
+        print("  !! obs is absent or has no columns; this file is a stub")
+    print(f"  n_obs={len(obs) if obs is not None else '?'}")
     print("\n  obsm keys (candidates for --latent-keys):")
-    for k in a.obsm.keys():
-        try:
-            print(f"    {k:32s} {a.obsm[k].shape}")
-        except Exception:                                          # noqa: BLE001
-            print(f"    {k:32s} ?")
+    for k, s in shapes.items():
+        print(f"    {k:32s} {s}")
+    if not shapes:
+        print("    (none)")
+    if obs is None:
+        return
+
+    class _A:                      # keeps the loop below unchanged
+        pass
+    a = _A(); a.obs = obs
     print("\n  obs columns that look like labels or batches:")
     for c in a.obs.columns:
         lc = c.lower()
@@ -254,7 +313,6 @@ def main(argv=None) -> int:
         raise SystemExit(f"{out} already exists. This script never overwrites "
                          f"results. Use a different --out, or --force.")
 
-    import anndata as ad
     import pandas as pd
     try:
         import scib_metrics
@@ -272,7 +330,7 @@ def main(argv=None) -> int:
     rows = []
     for f in a.adata:
         seed = next((q.split("seed")[-1] for q in f.parts[::-1] if "seed" in q), "0")
-        adata = ad.read_h5ad(f)
+        adata = load_minimal(f, latent_keys, (a.cell_type_key, a.batch_key))
         n_dropped = 0
         for nm, col in (("cell-type-key", a.cell_type_key),
                         ("batch-key", a.batch_key)):
