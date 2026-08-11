@@ -59,8 +59,12 @@ CIFM_SPECIES="${CIFM_SPECIES:-mouse}"
 # runs share an identical mouse->human map (the mygene / Ensembl REST lookup runs
 # at job time and is not cached). Leave empty to resolve it fresh each run.
 CIFM_ORTHOLOG_CSV="${CIFM_ORTHOLOG_CSV:-}"
+# Free-form extra flags for run_cifm.py, e.g. the coordinate-scaling sensitivity
+# run:  CIFM_FLAGS="--coord-scale auto --variant-tag baseline-cifm-autoscale+region-holdout"
+CIFM_FLAGS="${CIFM_FLAGS:-}"
 CIFM_EXTRA=""
 [[ -n "$CIFM_ORTHOLOG_CSV" ]] && CIFM_EXTRA="--ortholog-csv $CIFM_ORTHOLOG_CSV"
+CIFM_EXTRA="$CIFM_EXTRA $CIFM_FLAGS"
 
 NC_SPECIES="${NC_SPECIES:-mouse}"
 NC_ORTHOLOGS="${NC_ORTHOLOGS:-$REPO/analysis/benchmarking/nichecompass/human_mouse_gene_orthologs.csv}"

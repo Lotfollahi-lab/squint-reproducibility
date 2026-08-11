@@ -146,6 +146,15 @@ uv pip install --python "$PY" "e3nn" "pytorch-lightning>=2.2,<2.5" \
     "transformers" "huggingface_hub" "scanpy>=1.10" "anndata>=0.10" "pandas" \
     "scikit-learn" "mygene" "requests" "h5py>=3.10" "squidpy>=1.5"
 
+# 5. setuptools LAST and PINNED. `xarray_schema` (a transitive dep of
+#    spatialdata <- squidpy) still does `from pkg_resources import ...`, which
+#    lives in setuptools; uv ships no setuptools by default, and setuptools 80+
+#    omits pkg_resources -> "ModuleNotFoundError: No module named
+#    'pkg_resources'" at `import squidpy`. Same pin and rationale as
+#    squint/pyproject.toml. Installed AFTER squidpy so its resolution cannot
+#    pull a newer setuptools over the top.
+uv pip install --python "$PY" "setuptools>=68,<76"
+
 # ---- the verifier is a REAL FILE in the repo (verify_cifm.py) --------------
 # It used to be written here as a heredoc, which meant a fix required
 # rebuilding the venv. It now lives beside this script so it can be edited

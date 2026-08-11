@@ -126,6 +126,36 @@ DEFAULT_CIFM_REPO = _THIS.parent / "cifm"
 DEFAULT_READ_DEPTH_NEIGHS = 16          # == SQUINT's --read-depth-neighs
 CIFM_HF_REPO = "ynyou/CIFM"
 
+# ---------------------------------------------------------------------------
+# Coordinate units, per section, FROM THE ORIGINAL DATASET PUBLICATIONS.
+#
+# CIFM's graph is a FIXED-radius graph (r=20, in micrometres), so unlike our own
+# k-NN graph it is NOT scale-free: wrong units => an empty or saturated graph and
+# meaningless predictions. Our silver files carry the SOURCE coordinates verbatim
+# (`extract_utils.py` copies `x`/`y` for STARmap+ and `center_x`/`center_y` for
+# MERFISH with no rescaling), so the conversion has to be applied here.
+#
+#   batch 15 -- STARmap PLUS mouse CNS. Shi et al., Nature 622:552-561 (2023),
+#       doi:10.1038/s41586-023-06569-5: imaged "at a voxel size of
+#       194 x 194 x 345 nm^3", i.e. xy coordinates are 0.194 um VOXELS.
+#       Cross-check on our full data (n=42136): median NN 74.72 voxels
+#       x 0.194 = 14.5 um (a sensible cell spacing) and the section spans
+#       ~34.5k voxels x 0.194 = 6.7 mm (a sensible mouse CNS section). Taken as
+#       micrometres instead, spacing would be 75 um -- implausibly sparse.
+#   batch 82 -- MERFISH whole mouse brain. Zhang et al., Nature (2023),
+#       doi:10.1038/s41586-023-06808-9. `center_x`/`center_y` are already
+#       MICROMETRES (the Vizgen/MERFISH cell-metadata convention). Cross-check
+#       on our full data (n=44686): median NN 10.99 um and a ~5.3 x 5.8 mm
+#       section -- both already correct, hence factor 1.0.
+#
+# NOTE these are dataset-specific. For any other dataset either add an entry or
+# use --coord-scale auto (density matching), which is a fallback, NOT equivalent:
+# auto forces both sections to the SAME cell density, erasing a real difference:
+# on the full data it chose 0.1338 for batch 15 (31% below the published 0.194)
+# and 0.9097 for batch 82 (9% below 1.0). The two sections genuinely differ --
+# 14.5 um vs 11.0 um spacing -- and the published factors preserve that.
+DEFAULT_COORD_SCALES = {15: 0.194, 82: 1.0}
+
 
 # ---------------------------------------------------------------------------
 # Leak-free read depth.
@@ -316,14 +346,21 @@ def resolve_coord_scales(coords: np.ndarray, batch: np.ndarray, radius: float,
     from sklearn.neighbors import NearestNeighbors
 
     print(f"\n=== Coordinate scaling (CIFM r={radius}; target median NN "
-          f"= {target_nn} when auto) ===")
+          f"= {target_nn} when auto; mode={coord_scale}) ===")
     scales: Dict = {}
     for b in np.unique(batch):
         c = coords[batch == b]
         nn = NearestNeighbors(n_neighbors=2).fit(c)
         d, _ = nn.kneighbors(c)
         med = float(np.median(d[:, 1]))
-        if coord_scale == "auto":
+        if coord_scale == "dataset":
+            if b not in DEFAULT_COORD_SCALES:
+                raise SystemExit(
+                    f"--coord-scale dataset: no published unit conversion known "
+                    f"for section {b!r}. Add it to DEFAULT_COORD_SCALES (with the "
+                    f"citation) or pass --coord-scale auto / a number.")
+            f = float(DEFAULT_COORD_SCALES[b])
+        elif coord_scale == "auto":
             f = (target_nn / med) if med > 0 else 1.0
         else:
             f = float(coord_scale)
@@ -345,14 +382,15 @@ def resolve_coord_scales(coords: np.ndarray, batch: np.ndarray, radius: float,
 # ---------------------------------------------------------------------------
 # Prediction
 # ---------------------------------------------------------------------------
-def _predict_chunk(model, ctx_X, ctx_xy, q_xy, device, apply_gate: bool):
+def _predict_chunk(model, ctx_X, ctx_xy, q_xy, device, apply_gate: bool,
+                   graph: str = "radius", knn_k: int = 16):
     """
     Faithful re-implementation of CIFM.predict_cells_at_locations that also
     exposes the continuous dropout head (needed so we can choose NOT to gate).
     ctx_X: (n_ctx, G) normalised+log1p context expression. Returns (n_q, G).
     """
     import torch
-    from torch_geometric.nn import radius_graph
+    from torch_geometric.nn import knn_graph, radius_graph
 
     n_ctx, G = ctx_X.shape
     n_q = q_xy.shape[0]
@@ -364,8 +402,19 @@ def _predict_chunk(model, ctx_X, ctx_xy, q_xy, device, apply_gate: bool):
         coords = torch.tensor(xy, dtype=torch.float32)
         coords = torch.cat([coords, torch.zeros(coords.shape[0], 1)], dim=1).to(device)
 
-        edge_index = radius_graph(coords, r=model.radius_spatial_graph,
-                                  max_num_neighbors=10000, loop=True)
+        # CIFM natively uses a FIXED-RADIUS graph. `--graph knn` swaps in the
+        # same k-NN connectivity SQUINT / GeST / the kNN floor use, so every
+        # method sees a receptive field of the same size (k=16) — the
+        # apples-to-apples comparison. NOTE this is off-distribution for CIFM
+        # (it was pretrained on radius graphs only) and must be disclosed.
+        # The coordinate VALUES still matter either way: CIFM's EGNN consumes
+        # relative positions, so the published unit conversion is applied in
+        # both modes.
+        if graph == "knn":
+            edge_index = knn_graph(coords, k=knn_k, loop=True)
+        else:
+            edge_index = radius_graph(coords, r=model.radius_spatial_graph,
+                                      max_num_neighbors=10000, loop=True)
         mapping = torch.arange(n_ctx, n_ctx + n_q, device=device)
 
         emb = model.encode(expr, coords, edge_index)
@@ -384,6 +433,7 @@ def _predict_chunk(model, ctx_X, ctx_xy, q_xy, device, apply_gate: bool):
 def predict_all_cells(
         model, adata: ad.AnnData, batch_key: str, device: str,
         apply_gate: bool, train_chunk: int, coord_scales: Dict,
+        graph: str = "radius", knn_k: int = 16,
     ) -> np.ndarray:
     """
     Log-space predictions for EVERY cell, leak-free, section by section.
@@ -425,7 +475,8 @@ def predict_all_cells(
         if te_idx.size:
             t0 = time.time()
             out[te_idx] = _predict_chunk(model, Xn[tr_idx], xy[tr_idx],
-                                         xy[te_idx], device, apply_gate)
+                                         xy[te_idx], device, apply_gate,
+                                         graph=graph, knn_k=knn_k)
             print(f"     test  : {te_idx.size} cells in {time.time()-t0:.1f}s")
 
         # ---- train cells: chunked, chunk excluded from its own context ----
@@ -446,7 +497,7 @@ def predict_all_cells(
                 print("     WARNING: empty context for a train chunk; skipping")
                 continue
             out[q] = _predict_chunk(model, Xn[ctx], xy[ctx], xy[q],
-                                    device, apply_gate)
+                                    device, apply_gate, graph=graph, knn_k=knn_k)
         print(f"     train : {tr_idx.size} cells in {n_chunks} chunk(s), "
               f"{time.time()-t0:.1f}s")
     return out
@@ -505,6 +556,13 @@ def main(argv=None):
                    help="Reproduce CIFM's native hard gate (expr[p_drop<=0.5]=0). "
                         "OFF by default: GeST/kNN are ungated and the harness "
                         "derives AUROC/AP from prediction magnitude.")
+    p.add_argument("--graph", default="radius", choices=["radius", "knn"],
+                   help="'radius' (default) = CIFM's native fixed-radius graph. "
+                        "'knn' swaps in the same k-NN connectivity SQUINT/GeST "
+                        "use, matching every method's receptive field; "
+                        "off-distribution for CIFM, so disclose it.")
+    p.add_argument("--knn-k", type=int, default=16,
+                   help="k for --graph knn (16 = the graph SQUINT/GeST use).")
     p.add_argument("--read-depth-neighs", type=int, default=DEFAULT_READ_DEPTH_NEIGHS)
     p.add_argument("--squint-examples", type=Path, default=None,
                    help="Path to squint/examples, so we can import SQUINT's own "
@@ -512,12 +570,13 @@ def main(argv=None):
     p.add_argument("--train-chunk", type=int, default=4096,
                    help="Train cells predicted per forward pass (each chunk is "
                         "removed from its own context to stay leak-free).")
-    p.add_argument("--coord-scale", default="auto",
-                   help="'auto' (default) scales EACH section so its median "
-                        "nearest-neighbour distance equals --coord-target-nn, "
-                        "because CIFM's graph is fixed-radius and this dataset's "
-                        "two sections are on different scales. Or pass a number "
-                        "for one global factor (1.0 = leave as-is).")
+    p.add_argument("--coord-scale", default="dataset",
+                   help="'dataset' (default) applies the PUBLISHED per-section "
+                        "unit conversion from DEFAULT_COORD_SCALES (STARmap+ "
+                        "0.194 um/voxel, Shi et al. 2023; MERFISH already um, "
+                        "Zhang et al. 2023). 'auto' instead density-matches each "
+                        "section to --coord-target-nn (fallback for datasets with "
+                        "no known conversion). Or a number for one global factor.")
     p.add_argument("--coord-target-nn", type=float, default=10.0,
                    help="Target median NN distance in CIFM's units when "
                         "--coord-scale auto (10 um is typical cell spacing).")
@@ -586,7 +645,7 @@ def main(argv=None):
     pred_log = predict_all_cells(
         model, adata, batch_key=args.batch_key, device=device,
         apply_gate=args.apply_dropout_gate, train_chunk=args.train_chunk,
-        coord_scales=coord_scales)
+        coord_scales=coord_scales, graph=args.graph, knn_k=args.knn_k)
 
     print("\n=== Leak-free read depth (k=%d, observed neighbours only) ==="
           % args.read_depth_neighs)
@@ -644,6 +703,8 @@ def main(argv=None):
             "genes_mapped": map_stats,
             "input_format": "normalize_total(1e4)+log1p; spatial in micrometres",
             "radius_spatial_graph": float(getattr(model, "radius_spatial_graph", -1)),
+            "graph": args.graph,
+            "knn_k": args.knn_k,
             "apply_dropout_gate": bool(args.apply_dropout_gate),
             "read_depth_mode": "neighbor(observed only)",
             "read_depth_neighs": args.read_depth_neighs,
