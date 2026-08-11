@@ -36,6 +36,27 @@ benchmarking.py is deliberately NOT modified: it produced the published numbers.
 reuse only its graph builder, compute_knn_graph_connectivities_and_distances, so the
 neighbour graph is exactly the paper's (same k, same random_state).
 
+WHERE kbet CAN BE COMPUTED AT ALL (measured, see label_batch_feasibility.py)
+scib-metrics skips any label confined to one batch (_kbet.py:151) and then averages
+with np.nanmean, so an annotation that does not straddle batches yields NaN rather
+than a low score.
+
+  mouse brain  NOT COMPUTABLE. `cell_type` (49 classes) is the UNION of two
+               per-section vocabularies -- 23 CL-ontology names in batch 82
+               ("astrocyte", "microglial cell") and 26 descriptive names in batch 15
+               ("Astrocytes", "Microglia") -- with ZERO overlap. Every label is
+               single-batch, all 49 are skipped, kbet = NaN. The niche columns are
+               worse: Sub_molecular_tissue_region (63) exists only in batch 15 and
+               ccf_region_name (167) only in batch 82. This is a property of the
+               annotations, not of this script or of the representation.
+  eczema       COMPUTABLE. `new_annotation` (21 classes) is one shared vocabulary
+               across the three patient sections; 18 classes appear in all three,
+               20 in at least two, 100% of cells scorable. Use --cell-type-key
+               new_annotation: the silver also carries a stray 40-class `cell_type`
+               that the benchmark deliberately does not score.
+  NSCLC        COMPUTABLE, with --drop-label-nan. All 10 cell types and all 12
+               niches appear in both sections, but `cell_type` has 8,980 NaN.
+
 SELF-LOOP CONVENTION
 scib-metrics' own builders return k neighbours INCLUDING the query point (column 0 is
 self at distance 0), so NeighborsResults is built that way here. scanpy-style graphs
@@ -194,6 +215,12 @@ def main(argv=None) -> int:
                         "mouse-brain file, for the identification run.")
     p.add_argument("--cell-type-key", default="cell_type")
     p.add_argument("--batch-key", default="adata_batch_id")
+    p.add_argument("--drop-label-nan", action="store_true",
+                   help="Drop cells with no cell-type label instead of refusing to "
+                        "run. Needed on CosMx NSCLC, whose cell_type has 8,980 NaN. "
+                        "Standard scIB practice, but it shrinks the scored cell set, "
+                        "so the recomputed ilisi is then NOT comparable to Table 1 "
+                        "(which scores every cell). n_cells and n_dropped record it.")
     p.add_argument("--include-self", dest="include_self", action="store_true",
                    default=True, help="Prepend the query point as neighbour 0, "
                                       "matching scib-metrics' own builders.")
@@ -246,15 +273,28 @@ def main(argv=None) -> int:
     for f in a.adata:
         seed = next((q.split("seed")[-1] for q in f.parts[::-1] if "seed" in q), "0")
         adata = ad.read_h5ad(f)
+        n_dropped = 0
         for nm, col in (("cell-type-key", a.cell_type_key),
                         ("batch-key", a.batch_key)):
             if col not in adata.obs.columns:
                 raise SystemExit(f"{f}\n  --{nm} {col!r} not in obs. Run --inspect.")
-            if adata.obs[col].isna().any():
-                raise SystemExit(
-                    f"{f}\n  --{nm} {col!r} has {int(adata.obs[col].isna().sum())} "
-                    f"NaN. kbet and clisi need a label for every cell; pick a "
-                    f"complete column (--inspect).")
+            n_nan = int(adata.obs[col].isna().sum())
+            if not n_nan:
+                continue
+            # Unlabelled cells may be dropped; a cell with no BATCH cannot be
+            # placed at all, so that stays fatal.
+            if nm == "cell-type-key" and a.drop_label_nan:
+                keep = ~adata.obs[col].isna().to_numpy()
+                n_dropped = n_nan
+                adata = adata[keep].copy()
+                print(f"  --drop-label-nan: dropped {n_nan} cells with no "
+                      f"{col!r}; {adata.n_obs} remain. The recomputed ilisi is "
+                      f"therefore on a SUBSET and is not a Table 1 reproduction.")
+                continue
+            raise SystemExit(
+                f"{f}\n  --{nm} {col!r} has {n_nan} NaN. kbet and clisi need a "
+                f"label for every cell; pick a complete column (--inspect), or "
+                f"pass --drop-label-nan to score the labelled subset.")
         labels = np.asarray(adata.obs[a.cell_type_key].astype(str))
         batches = np.asarray(adata.obs[a.batch_key].astype(str))
 
@@ -265,6 +305,9 @@ def main(argv=None) -> int:
             row = {"method": a.method, "seed": seed, "latent_key": lk,
                    "cell_type_key": a.cell_type_key, "batch_key": a.batch_key,
                    "include_self": a.include_self, "n_cells": int(adata.n_obs),
+                   "n_dropped_no_label": n_dropped, "n_labels": int(len(
+                       np.unique(labels))), "n_batches": int(len(
+                           np.unique(batches))),
                    "scib_version": scib_metrics.__version__, "path": str(f),
                    "error": ""}
             row.update({m: float("nan") for m in METRICS})
