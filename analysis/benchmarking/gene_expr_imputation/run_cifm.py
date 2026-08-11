@@ -57,30 +57,38 @@ signal is the harness-supplied neighbour read depth.
 
 That is consistent with the radius and k-NN arms returning nearly identical
 scores (test cell-wise 0.0813 vs 0.0775): interior cells are unreachable under
-both. BUT DO NOT STATE IT AS THE CAUSE -- the measured numbers do not support
-that yet, and an earlier version of this docstring overreached:
+both. It is TEMPTING to stop there and call the receptive field the cause. Do
+not -- an earlier version of this docstring did, and our own numbers refute it.
 
-  The geometry argument predicts a LARGE train>test gap, because train cells
-  keep observed tissue all around them. Measured (2026-08-11, --output
-  marginal): cell-wise train 0.0783 vs test 0.0813 -- no gap, slightly
-  REVERSED. AUROC(zero) is 0.6127 train / 0.5722 test, against 0.877 for the
-  same head on CIFM's own demo data. So on this dataset the heads are close to
-  uninformative whether or not context is available.
+RESOLVED 2026-08-11, and NOT in geometry's favour. The geometry argument
+predicts a large train>test gap, since train cells keep observed tissue all
+around them. Measured (--output marginal, radius):
 
-Two explanations remain open, and they have opposite implications:
-  (a) an artefact of OUR protocol -- until 2026-08-11 train chunks were split in
-      AnnData row order, which on FOV/tile-ordered data carves out SPATIALLY
-      CONTIGUOUS blocks, so train cells were hole-filling cases too and train
-      was never the context-rich control it was meant to be. Fixed:
-      `--train-chunk-order random` is now the default. Rerun before concluding.
-  (b) the dataset itself is off-distribution for the checkpoint (431 MOUSE genes
-      reached through a human ortholog map into a human-only vocabulary),
-      in which case the receptive field is a side issue.
+                        train-chunk-order=index   =random
+  cell-wise train                    0.0783        0.0610
+  cell-wise test                     0.0813        0.0813   (unchanged: test is
+  AUROC(zero) train                  0.6127        0.6149    never chunked)
 
-Resolve (a) vs (b) with the rerun: if train jumps well above test, geometry is
-the story; if train stays ~0.08 with scattered chunks, it is the data.
+Scattered chunks give every train cell its neighbours back, yet the score FELL.
+Giving CIFM more context makes it worse under this metric, so the 80 um
+receptive field is not what limits it here. The consistent explanation is that
+a masked cell with no reachable context emits a near-constant profile
+(mask_embedding + geometry), and that profile scores HIGHER on cell-wise
+Pearson than CIFM's genuine context-conditioned output -- which also explains
+test (0.0813, mostly context-free) > train (0.0610, mostly context-rich). The
+same ordering holds on CIFM's OWN demo data, where a constant train-mean
+profile scores 0.4211 against CIFM's 0.3954.
 
-Either way the aggregate is NOT a clean measure of CIFM's imputation ability.
+Do NOT recycle the receptive-field argument in a submission: it is contradicted
+by our own numbers. What IS supported is that our adaptation degrades the model
+-- its sparsity head reaches AUROC 0.877 on CIFM's demo data but only 0.57 on
+our ortholog-mapped mouse panel -- so the gap points at the 431-gene mouse->human
+mapping into a human-only vocabulary, not at the hole geometry. Note the metric
+is not degenerate: on the demo data 16-NN (0.4565) does beat the constant
+profile (0.4211), so it does reward spatial information; CIFM simply lands
+below both.
+
+The aggregate is therefore NOT a clean measure of CIFM's imputation ability.
 Report the >=80 um-band subset alongside any aggregate, and note that SQUINT's
 stage-2 prior in-paints ITERATIVELY while CIFM here gets one shot. (Claims about
 CIFM's pretraining mask fraction and autoregressive multi-cell inference were
@@ -103,9 +111,24 @@ CIFM-SPECIFIC HANDLING (the parts that needed a decision)
   needs a depth to become count-scale. We port `_neighbor_read_depth` verbatim
   from `squint/examples/stage2_decode_pearson.py:415-448`: a held-out cell's
   depth is the mean library size of its k=16 nearest OBSERVED cells in the same
-  section; train cells keep their own. This is the same rule SQUINT (MC) uses,
-  and it never reads a held-out cell's own counts. Using the cell's own depth
-  would silently corrupt RMSE / AUROC / AP while leaving Pearson plausible.
+  section; train cells keep their own. It never reads a held-out cell's own
+  counts. Using the cell's own depth would silently corrupt RMSE / AUROC / AP
+  while leaving Pearson plausible.
+  !! UNVERIFIED PARITY (checked 2026-08-11). This bullet used to assert "the
+  same rule SQUINT (MC) uses". That is NOT established. In
+  `squint/examples/submit_stage2_mc_sweep.sh:68` the default is
+  READ_DEPTH_MODE="true" -- the held-out cell's OWN library size -- and
+  `stage2_decode_pearson.py`'s own help calls that mode "leaks the target's
+  depth -- valid only for the reconstruction sanity-check", with "USE THIS for
+  imputation" pointing at `neighbor`. The same script's comment says "Use
+  READ_DEPTH_MODE=neighbor for the reported imputation numbers", but no run
+  record in either repo shows it was actually set. If the paper's SQUINT bar was
+  produced with `true`, SQUINT saw each held-out cell's real depth while CIFM,
+  GeST and the kNN floor did not -- and because the metric is computed on
+  log1p(counts), a per-cell scale factor does NOT cancel out of Pearson (and
+  matters even more for RMSE / AUROC / AP). VERIFY on the farm before reporting
+  any cross-method comparison: grep the stage-2 decode logs for the echoed
+  "read-depth :" line.
 * PREDICTING TRAIN CELLS, LEAK-FREE. The harness needs `X_hat` everywhere
   (train rows feed the train/all splits and the niche aggregation at test
   cells). We predict train cells in chunks with the chunk itself removed from
@@ -162,6 +185,7 @@ repo on PYTHONPATH (`--cifm-repo`).
 from __future__ import annotations
 
 import argparse
+import math
 import json
 import sys
 import time
@@ -451,8 +475,102 @@ def resolve_coord_scales(coords: np.ndarray, batch: np.ndarray, radius: float,
 # ---------------------------------------------------------------------------
 # Prediction
 # ---------------------------------------------------------------------------
+def _as_context(pred_log: np.ndarray) -> np.ndarray:
+    """
+    Re-normalise a PREDICTED profile so it can be fed back in as context.
+
+    Required for iterative in-painting. The model consumes
+    `normalize_total(1e4) + log1p`, but its raw output is NOT on that scale --
+    on CIFM's demo data the marginal's log-space row sum is ~15.3k against a
+    truth of ~1.36k. Feeding that back unchanged would inject context ~11x too
+    large and poison every later step. So: expm1 -> renormalise to 1e4 -> log1p,
+    which is exactly the transform the observed context went through.
+    """
+    lin = np.expm1(np.clip(pred_log, 0.0, None))
+    rs = lin.sum(axis=1, keepdims=True)
+    rs = np.where(rs > 0, rs, 1.0)
+    return np.log1p(lin / rs * 1e4).astype(np.float32)
+
+
+def _infill_iterative(model, Xn, xy, tr_idx, te_idx, device, output: str,
+                      graph: str, knn_k: int, steps: int, schedule: str,
+                      rank: str):
+    """
+    MaskGIT-style iterative in-painting for CIFM, mirroring SQUINT's decoder.
+
+    WHY THIS EXISTS. SQUINT's stage-2 prior fills the held-out region with
+    `steps=12` confidence-scheduled iterations, and committed cells become
+    context for the next one (`vqniche/stage2/decode.py`: "large contiguous
+    holes are filled from the outside in"). CIFM's released API
+    (`predict_cells_at_locations`) is SINGLE-SHOT: every held-out cell is masked
+    at once and no prediction is ever fed back, so its reach is strictly one
+    4-hop/80 um receptive field. Scoring a 12-iteration method against a
+    1-iteration one on a 1.3-1.7 mm hole is OUR asymmetry, not CIFM's, and
+    CIFM's paper does multi-cell inference autoregressively. This restores
+    parity. `--infill-steps 1` is the released-API behaviour.
+
+    Schedule is `_schedule_ratio` copied from `vqniche/stage2/decode.py:33-38`
+    (cosine: the fraction REMAINING masked after `step` is cos(0.5*pi*step/steps)),
+    so the two methods commit on the same curve.
+
+    Ranking -- which cells to commit first. SQUINT ranks by the summed log-prob
+    of the chosen discrete codes. CIFM has no categorical head, so:
+      'confidence' (default, closest to MaskGIT) = mean_g log max(p_g, 1-p_g),
+          the model's own certainty in its sparsity calls -- the same head that
+          scores AUROC 0.877 on CIFM's demo data.
+      'distance'   = ascending distance to the nearest context cell, i.e. fill
+          strictly from the boundary inward. Independent of head calibration,
+          which matters here because that head only reaches AUROC ~0.57 on our
+          ortholog-mapped panel.
+    Both are deterministic; no Gumbel noise (SQUINT's noise_anneal trick would
+    add per-seed variance CIFM does not otherwise have).
+    """
+    from scipy.spatial import cKDTree
+
+    n_te = int(te_idx.size)
+    G = Xn.shape[1]
+    pred = np.zeros((n_te, G), dtype=np.float32)
+    committed = np.zeros(n_te, dtype=bool)
+    ctx_X, ctx_xy = Xn[tr_idx], xy[tr_idx]
+
+    for step in range(1, steps + 1):
+        todo = np.where(~committed)[0]
+        if todo.size == 0:
+            break
+        p_step, conf = _predict_chunk(model, ctx_X, ctx_xy, xy[te_idx[todo]],
+                                      device, output, graph=graph, knn_k=knn_k,
+                                      return_conf=True)
+        pred[todo] = p_step
+
+        if step == steps:
+            committed[todo] = True
+            break
+
+        # fraction that should REMAIN masked after this step (SQUINT's curve)
+        remain = (math.cos(0.5 * math.pi * step / steps) if schedule == "cosine"
+                  else max(0.0, 1.0 - step / steps))
+        n_reveal = int(todo.size - math.floor(remain * n_te))
+        if n_reveal <= 0:
+            continue
+        n_reveal = min(n_reveal, todo.size)
+
+        if rank == "distance":
+            d, _ = cKDTree(ctx_xy).query(xy[te_idx[todo]], k=1)
+            order = np.argsort(d, kind="stable")            # nearest first
+        else:
+            order = np.argsort(-conf, kind="stable")        # most confident first
+        take = todo[order[:n_reveal]]
+        committed[take] = True
+        ctx_X = np.concatenate([ctx_X, _as_context(pred[take])], axis=0)
+        ctx_xy = np.concatenate([ctx_xy, xy[te_idx[take]]], axis=0)
+        print(f"       step {step:2d}/{steps}: committed {take.size} "
+              f"({int(committed.sum())}/{n_te}), context {ctx_X.shape[0]}")
+    return pred
+
+
 def _predict_chunk(model, ctx_X, ctx_xy, q_xy, device, output: str,
-                   graph: str = "radius", knn_k: int = 16):
+                   graph: str = "radius", knn_k: int = 16,
+                   return_conf: bool = False):
     """
     Faithful re-implementation of CIFM.predict_cells_at_locations that also
     exposes the continuous dropout head (needed so we can choose NOT to gate).
@@ -495,6 +613,7 @@ def _predict_chunk(model, ctx_X, ctx_xy, q_xy, device, output: str,
         # confirmed both by CIFM's own gate direction and empirically
         # (AUROC 0.877 for truth>0 vs 0.461 for `m`). See the module docstring.
         m = model.relu(model.mask_cell_expression(emb_dec))
+        p = None
         if output == "magnitude":
             pred = m                                    # pre-2026-08 default
         else:
@@ -506,13 +625,27 @@ def _predict_chunk(model, ctx_X, ctx_xy, q_xy, device, output: str,
                 pred = m * p
             else:
                 raise ValueError(f"unknown --output {output!r}")
-        return pred.detach().cpu().numpy().astype(np.float32)
+        out = pred.detach().cpu().numpy().astype(np.float32)
+        if not return_conf:
+            return out
+        # Per-cell confidence for the iterative committer: mean_g log max(p,1-p).
+        # With --output magnitude the sparsity head is unused, so fall back to a
+        # constant (the caller's 'distance' ranking is the meaningful one there).
+        if p is None:
+            conf = np.zeros(out.shape[0], dtype=np.float32)
+        else:
+            import torch as _t
+            conf = (_t.log(_t.maximum(p, 1.0 - p).clamp_min(1e-9))
+                    .mean(dim=1).detach().cpu().numpy().astype(np.float32))
+        return out, conf
 
 
 def predict_all_cells(
         model, adata: ad.AnnData, batch_key: str, device: str,
         output: str, train_chunk: int, coord_scales: Dict,
         train_chunk_order: str = "random",
+        infill_steps: int = 1, infill_schedule: str = "cosine",
+        infill_rank: str = "confidence",
         graph: str = "radius", knn_k: int = 16, seed: int = 0,
     ) -> np.ndarray:
     """
@@ -554,9 +687,15 @@ def predict_all_cells(
         # ---- held-out cells: full train context, single pass -------------
         if te_idx.size:
             t0 = time.time()
-            out[te_idx] = _predict_chunk(model, Xn[tr_idx], xy[tr_idx],
-                                         xy[te_idx], device, output,
-                                         graph=graph, knn_k=knn_k)
+            if infill_steps > 1:
+                out[te_idx] = _infill_iterative(
+                    model, Xn, xy, tr_idx, te_idx, device, output,
+                    graph=graph, knn_k=knn_k, steps=infill_steps,
+                    schedule=infill_schedule, rank=infill_rank)
+            else:
+                out[te_idx] = _predict_chunk(model, Xn[tr_idx], xy[tr_idx],
+                                             xy[te_idx], device, output,
+                                             graph=graph, knn_k=knn_k)
             print(f"     test  : {te_idx.size} cells in {time.time()-t0:.1f}s")
 
         # ---- train cells: chunked, chunk excluded from its own context ----
@@ -654,6 +793,26 @@ def main(argv=None):
                         "mygene/Ensembl, so repeated runs share an identical map "
                         "(the helper hits live APIs and is not cached). Not "
                         "required — every run writes its own map.")
+    p.add_argument("--infill-steps", type=int, default=1,
+                   help="Iterative in-painting steps for the HELD-OUT region. "
+                        "1 (default) = CIFM's released single-shot "
+                        "predict_cells_at_locations. 12 matches SQUINT's "
+                        "stage-2 decoder (vqniche/stage2 DecodeConfig.steps=12), "
+                        "which fills contiguous holes outside-in and feeds "
+                        "committed cells back as context — scoring 12 "
+                        "iterations against 1 is OUR asymmetry, not CIFM's. "
+                        "Report both.")
+    p.add_argument("--infill-schedule", default="cosine",
+                   choices=["cosine", "linear"],
+                   help="Commit schedule, copied from vqniche/stage2/decode.py.")
+    p.add_argument("--infill-rank", default="confidence",
+                   choices=["confidence", "distance"],
+                   help="Which masked cells to commit first. 'confidence' = "
+                        "mean_g log max(p,1-p) from CIFM's sparsity head "
+                        "(closest to MaskGIT). 'distance' = nearest-to-context "
+                        "first, i.e. strictly boundary-inward; independent of "
+                        "that head's calibration, which is poor on our panel "
+                        "(AUROC ~0.57 vs 0.877 on CIFM's own data).")
     p.add_argument("--train-chunk-order", default="random",
                    choices=["random", "index"],
                    help="How train cells are partitioned into chunks (each "
@@ -719,6 +878,8 @@ def main(argv=None):
             args.variant_tag += f"+out-{args.output}"
         if args.train_chunk_order != "random":
             args.variant_tag += f"+tco-{args.train_chunk_order}"
+        if args.infill_steps > 1:
+            args.variant_tag += f"+infill{args.infill_steps}-{args.infill_rank}"
         if args.coord_scale != "dataset":
             args.variant_tag += f"+cs-{args.coord_scale}"
         print(f"Variant : {args.variant_tag}  (auto-derived from --graph/"
@@ -803,6 +964,9 @@ def main(argv=None):
             model, adata_s, batch_key=args.batch_key, device=device,
             output=args.output, train_chunk=args.train_chunk,
             train_chunk_order=args.train_chunk_order,
+            infill_steps=args.infill_steps,
+            infill_schedule=args.infill_schedule,
+            infill_rank=args.infill_rank,
             coord_scales=coord_scales, graph=args.graph, knn_k=args.knn_k,
             seed=seed)
 
@@ -848,6 +1012,9 @@ def main(argv=None):
             "knn_k": args.knn_k,
             "output": args.output,
             "train_chunk_order": args.train_chunk_order,
+            "infill_steps": int(args.infill_steps),
+            "infill_schedule": args.infill_schedule,
+            "infill_rank": args.infill_rank,
             "read_depth_mode": "neighbor(observed only)",
             "read_depth_neighs": args.read_depth_neighs,
             "train_chunk": args.train_chunk,
