@@ -315,9 +315,6 @@ def main(argv=None) -> int:
         print("  implies a prediction about as sparse as the truth, and the "
               "released\n  gate at p>0.5 does not produce that on this data "
               "(0.22 nonzero vs 0.025).")
-    print(f"\n  BEST joint match: post-processing '{best[1]}', form '{best[2]}' "
-          f"-> CIFM {best[3]:.4f} (target 0.144), NeighborAvg {best[4]:.4f} "
-          f"(target 0.205); joint residual {best[0]:.3f}")
     return 0
 
 
