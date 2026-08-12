@@ -5,13 +5,39 @@ compute_label_conditioned_metrics.py — the scIB label-conditioned scores R2 as
 R2-W1b: "MMD ... does not by itself establish preservation of cell-type-specific
 biology; label-conditioned integration metrics would be preferable."
 
+"Label-conditioned integration" does not mean kbet specifically. It means any
+batch-mixing measure computed WITHIN cell-type strata, and scIB offers several.
+That matters here, because kbet is the one of them that cannot be computed on a
+discrete codebook (see below), while batch ASW can.
+
 Computed on the SAVED latents, no retraining:
-  kbet   scib_metrics.kbet_per_label — batch mixing WITHIN each cell type. This is
-         the label-conditioned integration metric R2 asked for.
+  basw   scib_metrics.silhouette_batch — silhouette with respect to BATCH computed
+         within each cell type, then averaged over cell types. Label-conditioned by
+         construction, and it reads the embedding directly: no kNN graph, no
+         diffusion, so THIS is the label-conditioned integration metric that works
+         on the discrete codes. Already implemented in the paper's own
+         vqniche/metrics/benchmarking.py:633 under the same name.
+  kbet   scib_metrics.kbet_per_label — batch mixing within each cell type, via a
+         diffusion map. The strictest reading of R2's request, but undefined on a
+         discrete representation; read it off the continuous latent.
+  graph_conn  scib_metrics.graph_connectivity — per cell type, the fraction of its
+         cells in the largest connected component of its induced subgraph. Also
+         label-conditioned, but DO NOT report it for a discrete representation: it
+         is as tie-sensitive as kbet (measured on eczema seed 0: 0.17 on
+         cell_code_indices and 0.14 on cell_emb against 0.92 on cell_latent).
+         Retained because that collapse is a useful diagnostic.
   clisi  cell-type LISI. Bio-conservation mirror of the iLISI in Table 1.
   casw   cell-type silhouette. A second bio-conservation view.
   ilisi  scib_metrics.ilisi_knn. This IS the iLISI Table 1 reports; recomputed as a
          REPRODUCTION GATE, not as a new result.
+
+ONE CAVEAT ON basw, stated because it is not immune to ties either. scIB scores it
+as mean(1 - |silhouette|), so two cells at an identical point contribute a
+silhouette of 0, which reads as PERFECT mixing. A codebook therefore has a
+mechanical pull toward 1. Empirically that pull does not dominate: the discrete
+encodings score BELOW the continuous latent (0.82 and 0.87 against 0.93), which is
+the opposite of what tie-inflation alone would produce. So basw is usable on codes,
+but do not present it as tie-proof.
 
 WHY THIS CALLS scib_metrics DIRECTLY INSTEAD OF compute_benchmarking_metrics
 That function cannot compute these in the current environment. It passes raw sparse
@@ -87,7 +113,7 @@ from pathlib import Path
 
 import numpy as np
 
-METRICS = ["ilisi", "kbet", "clisi", "casw"]
+METRICS = ["ilisi", "basw", "kbet", "graph_conn", "clisi", "casw"]
 K_LISI, K_KBET = 90, 50          # the k's benchmarking.py uses for these metrics
 LABEL_HINTS = ("cell_type", "cell_types", "celltype", "annotation", "niche",
                "region", "domain", "leiden", "cluster")
@@ -329,7 +355,11 @@ def main(argv=None) -> int:
     latent_keys = [s.strip() for s in a.latent_keys.split(",") if s.strip()]
     rows = []
     for f in a.adata:
-        seed = next((q.split("seed")[-1] for q in f.parts[::-1] if "seed" in q), "0")
+        # SQUINT dirs end "..._seed3"; baseline dirs are "seeds/seed_3". Strip the
+        # separator so the csv reads 0..4 either way rather than "_3".
+        seed_raw = next((q.split("seed")[-1] for q in f.parts[::-1] if "seed" in q),
+                        "0")
+        seed = seed_raw.lstrip("_-")
         adata = load_minimal(f, latent_keys, (a.cell_type_key, a.batch_key))
         n_dropped = 0
         for nm, col in (("cell-type-key", a.cell_type_key),
@@ -353,6 +383,19 @@ def main(argv=None) -> int:
                 f"{f}\n  --{nm} {col!r} has {n_nan} NaN. kbet and clisi need a "
                 f"label for every cell; pick a complete column (--inspect), or "
                 f"pass --drop-label-nan to score the labelled subset.")
+        # ROW-ORDER TIE-BREAKING FIX. These files are section concatenations, so row
+        # order is batch (eczema: batch 0 = rows 0-17831, 1 = 17832-35215,
+        # 2 = 35216-53654). Quantized representations hold large groups of EXACTLY
+        # identical points (cell_emb: 1,669 cells at one point), and kNN breaks
+        # distance ties by row index, so a tied query gets its same-batch neighbours.
+        # Measured: that group is 654/356/659 across batches, yet sklearn returned 90
+        # neighbours all from batch 0. Every graph-based metric then reports the file's
+        # ordering instead of the embedding. Permuting once makes tie-breaking uniform
+        # over the tied group, which is correct: among cells at an identical point none
+        # is nearer than another. No effect on untied representations -- cell_latent
+        # scores identically with and without it, which is how this was confirmed.
+        perm = np.random.default_rng(0).permutation(adata.n_obs)
+        adata = adata[perm].copy()
         labels = np.asarray(adata.obs[a.cell_type_key].astype(str))
         batches = np.asarray(adata.obs[a.batch_key].astype(str))
 
@@ -371,7 +414,14 @@ def main(argv=None) -> int:
             row.update({m: float("nan") for m in METRICS})
             try:
                 X = np.asarray(adata.obsm[lk], dtype=np.float64)
-                sd = int(seed) if str(seed).isdigit() else 0
+                # Deliberately derived from the RAW token, not the cleaned label, so
+                # this keeps the exact graph random_state used by the runs already
+                # completed. Consequence, worth knowing: SQUINT dirs parse to a
+                # digit and so vary pynndescent's random_state per seed, while
+                # baseline dirs ("seed_3") do not and pin it to 0. That asymmetry
+                # affects only the approximate-kNN tie-breaking, not the embeddings
+                # or labels; normalise it if the seed spread ever looks suspicious.
+                sd = int(seed_raw) if str(seed_raw).isdigit() else 0
                 for k in (K_LISI, K_KBET):
                     if f"{lk}_{k}knng_distances" not in adata.obsp:
                         print(f"      building {k}-NN graph on {lk} ...")
@@ -389,6 +439,11 @@ def main(argv=None) -> int:
                 row["kbet"] = float(scib_metrics.kbet_per_label(
                     nr[K_KBET], batches=batches, labels=labels))
                 row["casw"] = float(scib_metrics.silhouette_label(X, labels))
+                # Label-conditioned integration that survives a discrete codebook.
+                row["basw"] = float(scib_metrics.silhouette_batch(
+                    X, labels=labels, batch=batches))
+                row["graph_conn"] = float(scib_metrics.graph_connectivity(
+                    nr[K_LISI], labels))
                 print("    " + "  ".join(f"{m}={row[m]:.4f}" for m in METRICS))
             except Exception as ex:                                # noqa: BLE001
                 # A sweep over CANDIDATE representations: integer code indices give

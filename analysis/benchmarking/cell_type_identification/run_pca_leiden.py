@@ -1436,19 +1436,35 @@ def _sanitize_for_h5ad(adata: ad.AnnData) -> ad.AnnData:
         # the bare `pandas.arrays.ArrowStringArray` case which
         # historically reported just as `string`.
         s = str(dtype)
-        return s.startswith("string") or "pyarrow" in s.lower()
+        # `s == "str"` covers pandas 3.x, which renames the dtype from
+        # "string"/"string[pyarrow]" to plain "str" while still backing it with
+        # ArrowStringArray. Without this the loop below matched NOTHING in the novae
+        # venv (pandas 3.0.2) and every obs column was left Arrow-backed, so
+        # write_h5ad still failed. Measured there: obs.index, obs['new_annotation']
+        # and var.index all report dtype 'str' with values ArrowStringArray, and the
+        # old predicate returned False for all three.
+        return s.startswith("string") or s == "str" or "pyarrow" in s.lower()
 
+    # dtype=object is passed EXPLICITLY to both constructors below, and it is
+    # load-bearing. An object-dtype ndarray is not enough on its own: pandas 3.x
+    # sets `future.infer_string = True`, so pd.Index(arr) / pd.Series(arr) re-infer
+    # string data straight back to Arrow-backed `str`, undoing the conversion and
+    # reintroducing the very IORegistryError this helper exists to prevent. Verified
+    # in the novae venv (pandas 3.0.2):
+    #     pd.Index(arr)               -> str     ArrowStringArray
+    #     pd.Index(arr, dtype=object) -> object   ndarray
+    # This is why run_novae.py:567 died with "No method registered for writing
+    # ArrowStringArray ... while writing key '_index' ... to /obs", leaving a
+    # predicted_adata.h5ad holding X and an empty obs, on every dataset. The other
+    # baselines were spared only because their venvs are pandas 2.x, where the
+    # inference is off. Passing dtype=object is a no-op there, so this is safe.
     def _force_object_index(idx) -> pd.Index:
-        # Going through np.asarray(..., dtype=object) is the only
-        # reliable way to escape PyArrow backing on newer pandas;
-        # `Index.astype(str)` and `Index.astype("object")` both keep
-        # the index as ArrowStringArray on some pandas/Arrow combos.
         arr = np.asarray(list(map(str, idx)), dtype=object)
-        return pd.Index(arr, name=idx.name)
+        return pd.Index(arr, dtype=object, name=idx.name)
 
     def _force_object_series(s: pd.Series) -> pd.Series:
         arr = np.asarray(list(map(str, s.to_list())), dtype=object)
-        return pd.Series(arr, index=s.index, name=s.name)
+        return pd.Series(arr, dtype=object, index=s.index, name=s.name)
 
     for df_name in ("obs", "var"):
         df = getattr(adata, df_name)

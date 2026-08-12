@@ -37,7 +37,11 @@
 #   bash submit_label_conditioned_metrics.sh              # submit everything
 #   DRY_RUN=1 bash submit_label_conditioned_metrics.sh    # print, submit nothing
 #   ONLY=baseline-scvi bash submit_label_conditioned_metrics.sh
+#
+# NSCLC needs the `long` queue: at 199,672 cells the per-cell-type diffusion step
+# inside kbet does not reliably finish inside `normal`'s wall limit.
 #   DATASET_TAG=chl59-2b_1p CELL_TYPE_KEY=cell_type EXTRA_ARGS=--drop-label-nan \
+#       LSF_QUEUE=long LSF_MEM=128000 LSF_WALL=48:00 \
 #       bash submit_label_conditioned_metrics.sh
 # =============================================================================
 set -uo pipefail
@@ -50,6 +54,11 @@ BATCH_KEY="${BATCH_KEY:-adata_batch_id}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 ONLY="${ONLY:-}"
 DRY_RUN="${DRY_RUN:-0}"
+# FORCE=1 recomputes methods that already have a csv, and passes --force through so
+# the python side overwrites it. Needed whenever a metric is added to METRICS,
+# since an existing csv is otherwise treated as done and skipped.
+FORCE="${FORCE:-0}"
+[[ "$FORCE" == "1" ]] && EXTRA_ARGS="$EXTRA_ARGS --force"
 # CPU queue, and the group that goes with it. The GPU pairing is a different
 # one (training-parallel + s10396), and it would buy nothing here -- see below.
 LSF_GROUP="${LSF_GROUP:-team361}"
@@ -91,9 +100,9 @@ mkdir -p "$LOG"
 submit () {   # submit <name> <latent_keys> <adata...>
     local NAME=$1 KEYS=$2; shift 2
     local CSV="$OUT/lcm_${DATASET_TAG}_${NAME}.csv"
-    if [[ -f "$CSV" ]]; then
-        echo "  SKIP $NAME — $CSV exists (the script never overwrites; delete it "
-        echo "       or pass --force to recompute)"
+    if [[ -f "$CSV" && "$FORCE" != "1" ]]; then
+        echo "  SKIP $NAME — $CSV exists. FORCE=1 recomputes it (needed after a new"
+        echo "       metric is added, e.g. basw), otherwise delete the csv by hand."
         return
     fi
     local ADATA_ARGS=""
@@ -117,11 +126,20 @@ submit () {   # submit <name> <latent_keys> <adata...>
 
 latest_ts () { ls -1d "$1"/*/ 2>/dev/null | sort | tail -1 | sed 's:/*$::'; }
 
-seed_files () {   # echo the 5 per-seed adatas under <ts>/seeds/
-    local TS=$1 F
+seed_files () {   # echo the per-seed adatas under <ts>/seeds/, else the top-level one
+    local TS=$1 F N=0
     for F in $(ls -1d "$TS"/seeds/seed_*/ 2>/dev/null | sort -V); do
-        [[ -f "${F}predicted_adata.h5ad" ]] && echo "${F}predicted_adata.h5ad"
+        if [[ -f "${F}predicted_adata.h5ad" ]]; then
+            echo "${F}predicted_adata.h5ad"; N=1
+        fi
     done
+    # The 2026-05 mouse-brain baseline runs wrote per-seed METRICS but only ONE
+    # adata, at the top level, so seeds/seed_*/ holds no h5ad. Fall back to it so
+    # those methods can be scored at all. They then contribute a single seed and
+    # get no error bar, which the summary reports as n_seeds=1 rather than hiding.
+    if ((N == 0)) && [[ -f "$TS/predicted_adata.h5ad" ]]; then
+        echo "$TS/predicted_adata.h5ad"
+    fi
 }
 
 echo "dataset      $DATASET_TAG"
@@ -143,7 +161,25 @@ if [[ -n "$SQUINT_DIR" && -d "$ART/$SQUINT_DIR" ]]; then
                                   sort | tail -1
                           done | sed 's:$:predicted_adata.h5ad:')
         if ((${#SQ[@]})); then
+            # SQUINT is scored on its DISCRETE representation, in both encodings.
+            #   *_code_indices : the integer codes, what Table 1's iLISI is on.
+            #   *_emb          : the quantized vectors those indices point to.
+            #                    cell_emb is a pure codebook lookup (633 distinct
+            #                    rows for 53,655 eczema cells, constant within each
+            #                    code pair); neighborhood_emb additionally carries
+            #                    the FiLM modulation, hence 4,133 distinct rows.
+            #                    Worth scoring separately from the indices because
+            #                    euclidean distance between codebook VECTORS is
+            #                    meaningful whereas distance between code numbers
+            #                    (code 5 vs code 7) is not, which matters for casw.
+            # kbet does NOT survive either encoding -- 94% of neighbour distances
+            # are exactly 0, so its diffusion step hits the `score = 0` fallback for
+            # 19 of 21 labels, identically for indices and quantized vectors. Read
+            # kbet off SQUINT-continuous below; the summary flags the zeros.
             submit SQUINT cell_code_indices,neighborhood_code_indices "${SQ[@]}"
+            submit SQUINT-quantized cell_emb,neighborhood_emb "${SQ[@]}"
+            # Kept, and NOT redundant: this is the only representation on which
+            # kbet, the metric R2-W1b actually asked for, can be computed at all.
             submit SQUINT-continuous cell_latent,neighborhood_latent "${SQ[@]}"
         else
             echo "  !! no seed dirs under $ART/$SQUINT_DIR"
@@ -188,6 +224,10 @@ for D in "$ART"/baseline-*; do
         echo "  SKIP $NAME — saved adata has no obsm group (novae is the known"
         echo "       case); rerun that baseline with the embedding written out"
         continue
+    fi
+    if ((${#FILES[@]} == 1)) && [[ "${FILES[0]}" == "$TS/predicted_adata.h5ad" ]]; then
+        echo "  note $NAME — no per-seed adatas saved; scoring the single"
+        echo "       top-level predicted_adata.h5ad (n_seeds=1, no error bar)"
     fi
     submit "$NAME" "$KEYS" "${FILES[@]}"
 done
