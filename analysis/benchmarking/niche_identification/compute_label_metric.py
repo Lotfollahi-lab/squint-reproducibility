@@ -2,10 +2,10 @@
 """
 compute_label_metric.py — ONE label-conditioned metric, one method, one dataset.
 =============================================================================
-For R2-W1b. Split to one metric per process so every (metric, dataset, method) can
-run as its own LSF job: the metrics have wildly different costs (basw needs no graph,
-kbet_per_label builds a diffusion map per cell type) and bundling them meant the
-199k-cell NSCLC jobs died on the slowest one and lost the cheap ones with it.
+For R2-W1b. One metric per process, so every (metric, dataset, method) runs as its own
+LSF job. cilisi is much cheaper than the metrics it replaced, but the split is kept
+because a single failure then costs one number instead of all of them, which is how the
+199k-cell NSCLC runs used to lose a whole batch of metrics at once.
 
 Output is LONG, one row per (metric, seed, latent_key), with the number in `value`.
 That keeps the schema identical across metrics so the csvs concatenate.
@@ -21,51 +21,32 @@ sc.pp.neighbors wrapper instead, which excludes self and returns connectivities,
 the self column had to be re-prepended by hand: a needless second difference from the
 published numbers, now removed.
 
-THE METRICS, and why each is or is not label-conditioned
-  basw        scib_metrics.silhouette_batch. Silhouette w.r.t. BATCH within each cell
-              type, averaged over cell types. Label-conditioned. No graph.
-  bras        scib_metrics.bras. Same machinery with cosine distance and mean-distance
-              -to-all-other-batches; introduced to fix documented erratic behaviour of
-              Batch ASW (Rautenstrauch & Ohler, Nat Biotechnol 2025). No graph.
-  kbet_label  scib_metrics.kbet_per_label. Batch mixing within each cell type through
-              a DIFFUSION map. The strictest reading of R2's request. An earlier note
-              here claimed it is inherently undefined on a quantized representation,
-              because the per-label subgraph fragments and _kbet.py falls back to
-              `score = 0`. That fragmentation was caused by the row-order tie-breaking
-              described below, not by quantization, so the claim is RETRACTED and the
-              metric is computed normally.
-  kbet_strat  scib_metrics.kbet (the PLAIN one) computed within each cell type. This is
-              Buttner et al.'s original chi-squared test on kNN neighbourhoods. The
-              diffusion step that breaks kbet_label is scIB's addition, not part of the
-              original metric, so this is the label-conditioned kBET that survives ties.
+THE METRICS
   cilisi      per-cell-type iLISI, normalised to [0,1] (Rautenstrauch & Ohler 2025;
-              carmonalab/scIntegrationMetrics). Emits TWO rows, `cilisi` weighted over
-              cells and `cilisi_means` as the mean of per-type means, matching the two
-              the R package reports. NOT the same as clisi: clisi feeds CELL-TYPE
-              labels to LISI and asks whether cell types stay separated
-              (bio-conservation), while cilisi asks whether BATCHES mix inside each
-              cell type (integration). One letter apart, opposite questions.
-  graph_conn  scib_metrics.graph_connectivity. Per cell type, the fraction of its cells
-              in the largest connected component. Label-conditioned. Its earlier
-              collapse on quantized representations had the same row-order cause.
-  cmmd        the paper's OWN compute_mmd_comparable, computed WITHIN each cell type
-              and averaged. The most direct answer to R2-W1b, which objected that
-              "MMD does not by itself establish preservation of cell-type-specific
-              biology": same MMD, same median-heuristic bandwidth, same defaults, now
-              conditioned on cell type. Emits cmmd and cmmd_means. A DISTANCE, so
-              LOWER IS BETTER, opposite to every other metric here.
-  ilisi/mmd   the two UNCONDITIONED metrics of Table 1, computed with the paper's own
-              helpers as the anchor the conditioned versions are read against, not as
-              new results.
-  clisi/casw  bio-conservation, included only so one runner covers the full scIB set.
+              carmonalab/scIntegrationMetrics). The label-conditioned integration
+              metric R2-W1b asked for: it subsets to one annotated group and asks
+              whether BATCHES mix inside it. Emits TWO rows, `cilisi` weighted over
+              cells and `cilisi_means` as the mean of per-group means, matching the
+              two the R package reports.
+              Mind the direction: it asks whether BATCHES mix inside a group, not
+              whether the groups themselves stay separated.
+  ilisi/mmd   the two UNCONDITIONED metrics of Table 1, via the paper's own helpers,
+              as the anchor cilisi is read against rather than as new results. MMD is
+              a DISTANCE, so lower is better; cilisi and ilisi are higher-is-better.
 
-SKIP RULE, applied by scIB and the R package alike: a cell type needs >=10 cells and
->=2 batches. Where no cell type spans batches every label is skipped, and the metric
-is undefined rather than bad. That is the mouse brain, whose 49 cell types are two
-disjoint per-section vocabularies: basw raises "No objects to concatenate",
-kbet_label returns NaN from np.nanmean of an empty slice. Both are recorded in
-`error` / left NaN, never reported as zero. n_types_scored is always written so the
-denominator is visible.
+ONE FINDING WORTH KEEPING, because it cost real time to establish and applies to any
+metric added here later. Any metric that SELECTS NEIGHBOURS from a graph is corrupted
+on a quantized representation unless rows are permuted first; see the note below. When
+that happens the symptom is not an error but a plausible, badly wrong number, and the
+natural conclusion to draw from it, that a quantized representation cannot support such
+a metric, is false. Permute first, then judge.
+
+SKIP RULE, applied by scIB and scIntegrationMetrics alike: a group needs >=10 cells
+and >=2 batches. Where no group spans batches the metric is undefined rather than bad,
+and cilisi raises "no cell type has >=10 cells and >=2 batches". That is the mouse
+brain, whose 49 cell types are two disjoint per-section vocabularies. The failure is
+recorded in `error` with the value left NaN, never reported as zero, and
+n_types_scored is always written so the denominator is visible.
 
 WHAT IS SCORED: exactly the four representations the paper's own integration metrics
 use -- cell_emb, neighborhood_emb, cell_latent, neighborhood_latent. The raw
@@ -85,7 +66,6 @@ from pathlib import Path
 
 import numpy as np
 
-from compute_label_conditioned_metrics import load_minimal
 
 # =============================================================================
 # WHY EVERY NEIGHBOUR GRAPH HERE IS BUILT ON RANDOMLY PERMUTED ROWS
@@ -113,13 +93,12 @@ from compute_label_conditioned_metrics import load_minimal
 # =============================================================================
 SHUFFLE_SEED = 0
 
-METRICS = ["basw", "bras", "kbet_label", "kbet_strat", "cilisi", "cmmd",
-           "graph_conn", "ilisi", "mmd", "clisi", "casw"]
-NEEDS_GLOBAL_GRAPH = {"kbet_label": 50, "graph_conn": 90, "ilisi": 90, "clisi": 90}
-NEEDS_SUBSET = {"kbet_strat", "cilisi", "cmmd"}
+METRICS = ["cilisi", "ilisi", "mmd"]
+NEEDS_GLOBAL_GRAPH = {"ilisi": 90}
+NEEDS_SUBSET = {"cilisi"}
 K_SUBSET = 90
-# MMD is a DISTANCE: lower is better, opposite to every other metric here.
-LOWER_IS_BETTER = {"mmd", "cmmd"}
+# MMD is a DISTANCE: lower is better, unlike cilisi and ilisi.
+LOWER_IS_BETTER = {"mmd"}
 
 
 def paper_helpers():
@@ -179,6 +158,57 @@ def seed_of(path: Path) -> str:
     return "0"
 
 
+# --------------------------------------------------------------------------
+# Inlined from the retired compute_label_conditioned_metrics.py so this module
+# stands alone. That file computed the metric set we no longer report and has
+# been deleted.
+# --------------------------------------------------------------------------
+def _read_elem():
+    try:
+        from anndata.io import read_elem                           # anndata >= 0.11
+    except ImportError:                                            # pragma: no cover
+        from anndata.experimental import read_elem
+    return read_elem
+
+def load_minimal(path: Path, obsm_keys, obs_cols):
+    """
+    obs plus the requested obsm arrays, read through h5py. Never touches uns or X.
+
+    Not ad.read_h5ad, for two independent reasons:
+      * Several baseline predicted_adata.h5ad files carry uns['log1p']['base'] = None,
+        written by an older anndata, and 0.11.4 raises IORegistryError ("No read
+        method registered for IOSpec(encoding_type='null')") while parsing uns. It
+        fails on the whole file even though nothing here needs uns.
+      * X is never used. Every metric reads obsm and obs, and sc.pp.neighbors takes
+        use_rep=<obsm key>. Skipping X turns a multi-GB read into a few hundred MB,
+        which is what lets the 199k-cell NSCLC file run inside a 64 GB job.
+    """
+    import anndata as ad
+    import h5py
+    read_elem = _read_elem()
+    with h5py.File(path, "r") as h:
+        if "obs" not in h:
+            raise SystemExit(f"{path}\n  no obs group. This file is a stub: the "
+                             f"novae baseline saved predicted_adata.h5ad without "
+                             f"obs or obsm at every timestamp, so its metrics "
+                             f"cannot be recomputed from disk.")
+        obs = read_elem(h["obs"])
+        for c in obs_cols:
+            if c not in obs.columns:
+                raise SystemExit(f"{path}\n  obs column {c!r} absent. Run --inspect.")
+        if "obsm" not in h:
+            raise SystemExit(f"{path}\n  no obsm group, so there is no "
+                             f"representation to score (looked for "
+                             f"{list(obsm_keys)}).")
+        have = list(h["obsm"].keys())
+        missing = [k for k in obsm_keys if k not in have]
+        if missing:
+            raise SystemExit(f"{path}\n  --latent-keys {missing} not in obsm. "
+                             f"Present: {have}")
+        obsm = {k: np.asarray(read_elem(h["obsm"][k])) for k in obsm_keys}
+    return ad.AnnData(obs=obs, obsm=obsm)
+
+
 CODE_INDEX_KEYS = ("cell_code_indices", "neighborhood_code_indices")
 
 
@@ -222,26 +252,30 @@ def scorable(labels, batches):
     return out
 
 
-def per_type_scores(X, labels, batches, which):
+def per_type_scores(X, labels, batches, which="cilisi"):
     """
     The label-conditioned metrics: subset to one cell type, apply the paper's own
     machinery inside it, then aggregate over cell types.
 
-      cilisi      iLISI within the subset, via paper_graph (NNDescent k=90) and
-                  scib ilisi_knn -- the same construction compute_ilisi uses globally.
-      kbet_strat  plain scib kbet within the subset, i.e. Buttner's chi-squared test
-                  on the same graph.
-      cmmd        the PAPER'S OWN compute_mmd_comparable within the subset. This is the
-                  most direct answer to R2-W1b, which objected that "MMD does not by
-                  itself establish preservation of cell-type-specific biology": it is
-                  the same MMD, same median-heuristic bandwidth, same defaults,
-                  conditioned on cell type. NOTE it is a DISTANCE, so lower is better.
+    cilisi: iLISI within the subset, via scib ilisi_knn on an EXACT k=90 kNN.
+
+    Exact rather than paper_graph's NNDescent, deliberately. The paper uses NNDescent
+    for the GLOBAL graph because approximate search is a necessity at 50k-200k cells;
+    inside a group of a few thousand it is cheap to be exact, and NNDescent's
+    approximation error is largest at small n. Measured on eczema cell_emb, seed 0:
+    the stored five-seed run recorded 0.6473, exact reproduces 0.6450 and NNDescent
+    gives 0.6521, so exact is the closer match. All three sit far inside the 0.0160
+    seed-to-seed sd, so the choice does not move any reported figure; exact is used
+    because it is both more accurate here and what the reported runs used.
+    paper_graph is still used for the global ilisi, where matching the published
+    recipe is the point.
 
     Returns (cell-weighted mean, mean of per-type means, n types scored).
     """
     import scib_metrics
+    from scib_metrics.nearest_neighbors import NeighborsResults
+    from sklearn.neighbors import NearestNeighbors
 
-    _, compute_mmd = paper_helpers()
     rng = np.random.default_rng(SHUFFLE_SEED)
     vals, sizes = [], []
     for g in scorable(labels, batches):
@@ -251,15 +285,10 @@ def per_type_scores(X, labels, batches, which):
         # the ordering, so the row-order tie-breaking artefact survives subsetting.
         q = rng.permutation(Xg.shape[0])
         Xg, bg = Xg[q], bg[q]
-        if which == "cmmd":
-            v = compute_mmd(Xg, bg, rng=np.random.default_rng(SHUFFLE_SEED))
-            if v is None:            # <2 non-empty batches; scorable() should prevent
-                continue
-            vals.append(float(v))
-        else:
-            nr = paper_graph(Xg, K_SUBSET)
-            vals.append(float(scib_metrics.ilisi_knn(nr, bg)) if which == "cilisi"
-                        else float(scib_metrics.kbet(nr, bg)[0]))
+        k = int(min(K_SUBSET, int(m.sum()) - 1))
+        d, i = NearestNeighbors(n_neighbors=k + 1).fit(Xg).kneighbors(Xg)
+        vals.append(float(scib_metrics.ilisi_knn(
+            NeighborsResults(indices=i, distances=d), bg)))
         sizes.append(int(m.sum()))
     if not vals:
         raise ValueError("no cell type has >=10 cells and >=2 batches, so this "
@@ -341,44 +370,23 @@ def main(argv=None) -> int:
                    "value": float("nan"), "n_types_scored": -1, "error": ""}
             try:
                 X, _ = resolve_key(adata, k)
-                if a.metric in ("basw", "bras"):
-                    fn = (scib_metrics.silhouette_batch if a.metric == "basw"
-                          else scib_metrics.bras)
-                    row["value"] = float(fn(X, labels=labels, batch=batches))
-                    row["n_types_scored"] = n_ok
-                elif a.metric == "casw":
-                    row["value"] = float(scib_metrics.silhouette_label(X, labels))
-                elif a.metric in NEEDS_SUBSET:
+                if a.metric in NEEDS_SUBSET:
                     v, vm, nt = per_type_scores(X, labels, batches, a.metric)
                     row["value"], row["n_types_scored"] = v, nt
-                    if a.metric in ("cilisi", "cmmd"):
-                        rows.append({**row, "metric": f"{a.metric}_means",
-                                     "value": vm})
+                    rows.append({**row, "metric": f"{a.metric}_means",
+                                 "value": vm})
                 elif a.metric == "mmd":
-                    # The paper's own MMD, unconditioned: the Table 1 anchor that the
-                    # conditioned cmmd should be read against. Same helper, same
-                    # defaults (n_sub=2000, n_sigma=1000).
+                    # The paper's own MMD, unconditioned: the Table 1 anchor. Same
+                    # helper, same defaults (n_sub=2000, n_sigma=1000).
                     _, compute_mmd = paper_helpers()
                     v = compute_mmd(X, batches,
                                     rng=np.random.default_rng(SHUFFLE_SEED))
                     row["value"] = float("nan") if v is None else float(v)
                 else:
-                    # Global-graph metrics, on the graph the PAPER builds: NNDescent
-                    # straight on the embedding (see paper_graph). k=90 for the LISI
-                    # family and graph connectivity, k=50 for kbet, matching
-                    # benchmarking.py.
+                    # ilisi, on the graph the PAPER builds: NNDescent straight on the
+                    # embedding at k=90 (see paper_graph).
                     nr = paper_graph(X, NEEDS_GLOBAL_GRAPH[a.metric])
-                    if a.metric == "kbet_label":
-                        row["value"] = float(scib_metrics.kbet_per_label(
-                            nr, batches=batches, labels=labels))
-                        row["n_types_scored"] = n_ok
-                    elif a.metric == "graph_conn":
-                        row["value"] = float(scib_metrics.graph_connectivity(
-                            nr, labels))
-                    elif a.metric == "ilisi":
-                        row["value"] = float(scib_metrics.ilisi_knn(nr, batches))
-                    else:
-                        row["value"] = float(scib_metrics.clisi_knn(nr, labels))
+                    row["value"] = float(scib_metrics.ilisi_knn(nr, batches))
                 print(f"    {k:28s} {a.metric} = {row['value']:.4f}", flush=True)
             except Exception as ex:                                # noqa: BLE001
                 row["error"] = f"{type(ex).__name__}: {ex}"

@@ -3,24 +3,23 @@
 # submit_label_metrics.sh — one LSF job per (METRIC, DATASET, METHOD).
 #
 # For R2-W1b. Maximum parallelisation: the metrics differ in cost by orders of
-# magnitude (basw needs no graph, kbet_label builds a diffusion map per cell type),
-# so bundling them meant the slowest one killed the cheap ones with it on the
-# 199k-cell NSCLC set. One metric per job also means a single failure costs one
-# number instead of six.
+# magnitude (mmd reads obsm only, cilisi builds a graph per annotated group), so
+# bundling them meant the slowest one killed the cheap ones with it on the 199k-cell
+# NSCLC set. One metric per job also means a single failure costs one number rather
+# than all of them.
 #
 # Results: artifacts/label_conditioned_metrics/lm_<metric>_<dataset>_<method>.csv
 # Long format, one row per (metric, seed, latent_key) with the number in `value`,
 # so every csv concatenates. Summarise with summarize_label_metrics.py.
 #
-# JOB COUNT is large by design: 8 metrics x 3 datasets x ~14 methods, minus the
-# documented exclusions. Print it first with DRY_RUN=1 and cut it down with
-# METRICS=, DATASETS= or ONLY= if that is more than you want to queue.
+# JOB COUNT: 3 metrics x 3 datasets x ~14 methods, minus the documented exclusions.
+# Print it first with DRY_RUN=1 and narrow with METRICS=, DATASETS= or ONLY=.
 #
 # RESOURCES are set per (dataset, metric class) rather than uniformly, because the
 # earlier all-in-one NSCLC jobs hit TERM_MEMLIMIT at 128 GB:
-#   no-graph    basw, bras, casw, mmd       reads obsm only
-#   subset      cilisi, kbet_strat, cmmd    per-cell-type subset (kNN or MMD)
-#   global      kbet_label, graph_conn, ilisi, clisi   full k=50/90 graph, + diffusion
+#   no-graph    mmd       reads obsm only
+#   subset      cilisi    a kNN graph inside each annotated group
+#   global      ilisi     one k=90 graph over all cells
 #
 # WHAT IS SCORED
 #   SQUINT     the four representations the paper's own integration metrics use:
@@ -41,14 +40,14 @@
 #                _sanitize_for_h5ad, but the runs need redoing to benefit).
 #   graphst      chl59 only. PASTE pairwise_align died with CUDA OOM (37 GiB on top
 #                of 115 GiB), so no output was ever written. Fine per the user.
-#   mmb          EVERY label-conditioned metric is undefined there: the 49 cell types
+#   mmb          cilisi is undefined there: the 49 cell types
 #                are two disjoint per-section vocabularies, so no cell type spans
 #                batches. Submitted anyway so that rests on runs, not on assertion.
 #
 # USAGE (from an LSF submission host)
 #   DRY_RUN=1 bash submit_label_metrics.sh                    # count the jobs first
 #   bash submit_label_metrics.sh
-#   METRICS="cilisi kbet_strat basw bras" bash submit_label_metrics.sh
+#   METRICS=cilisi bash submit_label_metrics.sh
 #   DATASETS=xhs1000-3b_1p ONLY=SQUINT bash submit_label_metrics.sh
 #   FORCE=1 bash submit_label_metrics.sh                      # recompute existing
 # =============================================================================
@@ -57,9 +56,10 @@ set -uo pipefail
 REPO="${REPO:-/nfs/team361/sb75/squint-reproducibility}"
 VENV="${VENV:-/nfs/team361/sb75/.venvs/squint}"
 DATASETS="${DATASETS:-xhs1000-3b_1p chl59-2b_1p mmb0-1b_smb1-1b_1p}"
-# Default order puts the label-conditioned ones first, cheapest first, so the
-# numbers that answer R2-W1b land before the expensive diffusion metric.
-METRICS="${METRICS:-basw bras cilisi cmmd kbet_strat graph_conn kbet_label ilisi mmd clisi}"
+# cilisi answers R2-W1b; ilisi and mmd are the Table 1 anchors it is read against.
+# These three are the whole set: --metric validates against them, so an unrecognised
+# name is a hard error rather than a silent no-op.
+METRICS="${METRICS:-cilisi ilisi mmd}"
 ONLY="${ONLY:-}"
 # WHICH LABEL THE METRIC IS CONDITIONED ON. The paper runs TWO comparisons and they use
 # DIFFERENT labels: cell-type identification is scored against the cell-type
@@ -99,17 +99,17 @@ NSUB=0; NSKIP=0
 resources () {   # resources <dataset> <metric>  -> sets QUEUE MEM WALL CORES
     local DS=$1 M=$2 CLASS
     case "$M" in
-        basw|bras|casw|mmd)           CLASS=nograph ;;
-        cilisi|kbet_strat|cmmd)       CLASS=subset ;;
-        *)                            CLASS=global ;;
+        mmd)     CLASS=nograph ;;   # reads obsm only
+        cilisi)  CLASS=subset ;;    # kNN inside each annotated group
+        *)       CLASS=global ;;    # ilisi: one k=90 graph over all cells
     esac
     CORES=2; QUEUE=normal
     case "$DS" in
         chl59-2b_1p)                          # 199,672 cells
             # -W 24:00 was REJECTED by `long` ("Cannot exceed queue's hard limit(s)"),
-            # so this is 12:00, which is under any plausible ceiling. cilisi and
-            # kbet_strat only build exact kNNs inside ~19k-cell cell-type subsets, so
-            # 12 h is ample; raise it with LSF_WALL= if a global-graph metric needs it.
+            # so this is 12:00, which is under any plausible ceiling. cilisi only
+            # builds exact kNNs inside ~19k-cell groups, so 12 h is ample; raise it
+            # with LSF_WALL= if the global-graph metric needs it.
             QUEUE=long; WALL=12:00
             case "$CLASS" in
                 nograph) MEM=128000 ;;

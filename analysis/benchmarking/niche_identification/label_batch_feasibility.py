@@ -6,27 +6,27 @@ Two questions, one crosstab.
 
 1. HOW MANY CELL TYPES DOES EACH SECTION ACTUALLY HAVE? On the mouse brain the
    49-class `cell_type` column looks like a union of two per-section annotation
-   vocabularies rather than one harmonised set: the skip log from
-   `kbet_per_label` contained both "Astrocytes" and "astrocyte", both
-   "Microglia" and "microglial cell". If that is right, no cell type spans both
-   sections and any statement of the form "the dataset has 49 cell types" needs
-   qualifying, because no single section does.
+   vocabularies rather than one harmonised set: it contains both "Astrocytes" and
+   "astrocyte", both "Microglia" and "microglial cell". If that is right, no cell
+   type spans both sections and any statement of the form "the dataset has 49 cell
+   types" needs qualifying, because no single section does.
 
-2. WHERE CAN kbet_per_label BE COMPUTED AT ALL? scib-metrics 0.5.6,
-   `_kbet.py:151`, skips a label outright when
+2. WHERE CAN A LABEL-CONDITIONED METRIC BE COMPUTED AT ALL? Every such metric
+   partitions by the annotation and then needs at least two batches inside a part,
+   so a group is skipped outright when
 
        n_obs < 10  or  len(np.unique(batches_sub)) == 1
 
-   and then averages with `np.nanmean`. If every label sits in one batch, every
-   label is skipped and the mean of an empty slice is NaN. That is a property of
-   the annotation, not a bug, and it cannot be fixed by changing the code. So
-   before running the metric anywhere, check which (dataset, label column) pairs
-   have labels that genuinely straddle batches.
+   which is the rule scib-metrics and scIntegrationMetrics both apply. If every
+   group sits in one batch then every group is skipped and the metric is undefined,
+   not merely low. That is a property of the annotation, not a bug, and no change to
+   the code fixes it. So before running such a metric, check which (dataset, label
+   column) pairs have labels that genuinely straddle batches.
 
-Reported per label column: classes per batch, how many classes are shared, and
-the fraction of cells that fall in a label kbet would actually score. That last
-number is the one that matters: a column can be nominally shared and still leave
-kbet averaging over a handful of unrepresentative classes.
+Reported per label column: classes per batch, how many classes are shared, and the
+fraction of cells falling in a group the metric would actually score. That last
+number is the one that matters: a column can be nominally shared and still leave the
+average resting on a handful of unrepresentative classes.
 
 USAGE
   python label_batch_feasibility.py --adata .../predicted_adata.h5ad [--adata ...]
@@ -43,9 +43,9 @@ from pathlib import Path
 
 import numpy as np
 
-# scib-metrics 0.5.6 _kbet.py:151. Kept as a named constant so the feasibility
-# verdict below cannot drift away from the condition it is predicting.
-KBET_MIN_CELLS_PER_LABEL = 10
+# The minimum group size every label-conditioned metric requires. Kept as a named
+# constant so the feasibility verdict below cannot drift from the condition it predicts.
+MIN_CELLS_PER_LABEL = 10
 
 BATCH_HINTS = ("batch", "section", "sample", "donor", "slide", "assay",
                "library", "fov_batch")
@@ -127,7 +127,7 @@ def report(path: Path, label_keys, batch_key, list_classes: bool) -> None:
         size_per_class = ct.sum(axis=1)
         # exactly the condition scib-metrics applies before averaging
         scorable = (n_batches_per_class >= 2) & (size_per_class >=
-                                                KBET_MIN_CELLS_PER_LABEL)
+                                                MIN_CELLS_PER_LABEL)
         n_scorable_cells = int(size_per_class[scorable].sum())
         frac = n_scorable_cells / max(int(size_per_class.sum()), 1)
         shared_all = int((n_batches_per_class == vc.size).sum())
@@ -155,10 +155,10 @@ def report(path: Path, label_keys, batch_key, list_classes: bool) -> None:
 
     print("\n  'per batch' counts classes PRESENT in each batch, in the batch order"
           f" listed above.\n  'shared' counts classes present in all {vc.size} "
-          f"batches. 'scorable cells' applies\n  scib-metrics' own filter "
-          f"(>=2 batches and >={KBET_MIN_CELLS_PER_LABEL} cells): a column whose"
-          "\n  scorable fraction is 0% makes kbet_per_label return NaN, whatever "
-          "the code does.")
+          f"batches. 'scorable cells' applies\n  the standard filter "
+          f"(>=2 batches and >={MIN_CELLS_PER_LABEL} cells): a column whose"
+          "\n  scorable fraction is 0% leaves the metric undefined, whatever the "
+          "code does.")
 
 
 def main(argv=None) -> int:

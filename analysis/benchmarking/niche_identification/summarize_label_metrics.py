@@ -17,12 +17,11 @@ SQUINT contributes four representations, the four the paper's own integration me
 use (see any run's metrics/batch_integration_metrics.csv). Baselines contribute one,
 on the emb_key their published iLISI was computed on.
 
-READ cilisi AND kbet_strat AS THE ANSWER TO R2-W1b: both are batch mixing computed
-WITHIN each cell type. basw and bras are the silhouette-based alternatives; note that
-Rautenstrauch & Ohler (Nat Biotechnol 2025) document Batch ASW behaving erratically
-and propose bras as its replacement, so prefer bras over basw if a silhouette metric
-is reported at all. ilisi is the UNCONDITIONED metric already in Table 1, present as
-the anchor the conditioned ones should be read against, not as a new result.
+cilisi IS THE ANSWER TO R2-W1b: batch mixing computed WITHIN each annotated group.
+ilisi and mmd are the UNCONDITIONED metrics already in Table 1, present as the anchor
+cilisi is read against rather than as new results. Any metric column not listed in
+ORDER is appended after the known ones rather than dropped, so an unexpected column
+is visible instead of silent.
 
 n_types_scored is carried through: every label-conditioned metric averages only over
 cell types with >=10 cells and >=2 batches, so the denominator matters. Where it is 0
@@ -43,11 +42,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-ORDER = ["cilisi", "cilisi_means", "kbet_strat", "kbet_label", "bras", "basw",
-         "cmmd", "cmmd_means", "graph_conn", "ilisi", "mmd", "clisi", "casw"]
-# MMD is a DISTANCE, so lower is better; every other column here is
-# higher-is-better. Sorting by one of these ascends instead of descends.
-LOWER_IS_BETTER = {"mmd", "cmmd", "cmmd_means"}
+ORDER = ["cilisi", "cilisi_means", "ilisi", "mmd"]
+# MMD is a DISTANCE, so lower is better; cilisi and ilisi are higher-is-better.
+# Sorting by mmd ascends instead of descending.
+LOWER_IS_BETTER = {"mmd"}
 DEFAULT_DIR = (Path("/nfs/team361/sb75/squint-reproducibility/artifacts")
                / "label_conditioned_metrics")
 
@@ -177,7 +175,7 @@ def main(argv=None) -> int:
         print("\n" + "=" * 104)
         print(f"{ds}   sorted by {sortcol} "
               f"({'lower' if asc else 'higher'} is better); "
-              f"cmmd/mmd are DISTANCES so lower is better, all others higher")
+              f"mmd is a DISTANCE so lower is better, cilisi and ilisi higher")
         print("=" * 104)
         for task in ([a.task] if a.task else TASKS):
             sub = dsub[dsub["task"] == task]
