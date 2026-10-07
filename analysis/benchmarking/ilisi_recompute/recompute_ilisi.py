@@ -516,6 +516,10 @@ RESULT_FIELDS = [
 SQUINT_ROLES = ("squint", "ablation", "latent_control")
 MMD_N_SUB, MMD_N_SIGMA = 2000, 1000   # compute_inference_metrics defaults
 MMD_TOL = 1e-6
+# scib computes LISI in jax float32, so a fully unmixed median cell (LISI = 1)
+# can come back as e.g. (1 - 2.6e-6 - 1) / (B - 1) < 0. Values within this
+# tolerance of [0, 1] are clamped; anything further out is an error.
+SCIB_RANGE_TOL = 1e-4
 
 
 # =============================================================================
@@ -1995,7 +1999,8 @@ def exact_graph(X, k, chunk=EXACT_CHUNK, rng=None, ties="random"):
 
 
 def scib_ilisi(idx, dist, batch):
-    """scib_metrics.ilisi_knn with its defaults; must be a scalar in [0, 1]."""
+    """scib_metrics.ilisi_knn with its defaults; a scalar in [0, 1] (float32
+    rounding within SCIB_RANGE_TOL of the bounds is clamped)."""
     from scib_metrics import ilisi_knn
     from scib_metrics.nearest_neighbors import NeighborsResults
     raw = ilisi_knn(NeighborsResults(indices=idx, distances=dist), batch)
@@ -2004,9 +2009,10 @@ def scib_ilisi(idx, dist, batch):
                            f"expected the scaled median (a scalar). Refusing to "
                            f"average it into something else.")
     v = float(raw)
-    if not math.isfinite(v) or v < -1e-6 or v > 1.0 + 1e-6:
+    if (not math.isfinite(v) or v < -SCIB_RANGE_TOL
+            or v > 1.0 + SCIB_RANGE_TOL):
         raise ValueError(f"scib iLISI {v} is outside [0, 1]")
-    return v
+    return min(max(v, 0.0), 1.0)
 
 
 def fallback_inline_mean(knn_indices, batch_labels):
@@ -3122,7 +3128,7 @@ def cmd_selftest(a):
     scaled = scib_ilisi(idx, dist, b2[p2])
     fb = fallback_inline_mean(idx, b2[p2])
     naive = (fb - 1.0) / (2 - 1)
-    check("scib value is the scaled median in [0, 1]", -1e-6 <= scaled <= 0.1,
+    check("scib value is the scaled median in [0, 1]", 0.0 <= scaled <= 0.1,
           f"{scaled:.4f} (most cells sit in batch-pure codes, so the median cell is "
           f"unmixed)")
     check("fallback value is an unscaled mean in [1, n_batches]",
