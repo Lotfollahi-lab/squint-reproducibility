@@ -1,5 +1,10 @@
 # SQUINT reproducibility
 
+> **Branch `leakfree-holdout`.** This branch adds an opt-in leak-free (inductive) protocol for
+> the held-out-region imputation and its farm runbook; see
+> [Leak-free (inductive) imputation](#leak-free-inductive-imputation) in Section 3.2. All
+> defaults, and every command for the reported results, are unchanged.
+
 Code to reproduce the experiments of
 
 > **Learning Discrete Cell and Niche Codes from Spatial Transcriptomics Using Dual Residual Vector Quantization**\
