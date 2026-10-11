@@ -2,16 +2,15 @@
 """
 Significance marks for the main niche-/cell-type-identification benchmark
 (Table 1 of the paper). For every method and every quality metric
-(NMI, ARI, MMD) in each dataset, test that method's five per-seed values
+(NMI, ARI, MMD, iLISI) in each dataset, test that method's five per-seed values
 against SQUINT's with a two-sample Welch t-test (unpaired: SQUINT and each
 baseline are DIFFERENT models with independent seed draws), and emit the
 significance stars printed as superscripts on the non-SQUINT cells:
     *  p<0.05   **  p<0.01   ***  p<0.001
 SQUINT is the reference row, so it carries no marks (like the ablation
 table's shaded default). Direction (who is ahead) is read from the
-bold/underline best/second markup already in the table. iLISI and runtime
-are NOT marked (iLISI has no unambiguous better/worse direction; runtime is
-a resource metric).
+bold/underline best/second markup already in the table. Runtime is NOT
+marked (it is a resource metric).
 
 Per-comparison (uncorrected) Welch tests, matching the ablation table's
 "vs. default" convention. Pass --holm for Holm-Bonferroni correction across
@@ -44,7 +43,7 @@ DATASETS = [("mmb0-1b_smb1", "Mouse Brain"),
             ("xhs1000", "Xenium Eczema")]
 BLOCKS = [("Niche", "niche_identification_benchmark"),
           ("Cell-type", "cell_type_identification_benchmark")]
-QUALITY = ("NMI", "ARI", "MMD")     # metrics that carry stars
+QUALITY = ("NMI", "ARI", "MMD", "iLISI")     # metrics that carry stars
 
 
 # --- pure-Python two-sample Welch t-test -----------------------------------
@@ -117,6 +116,8 @@ def stars(p):
 
 def _metric_of(col):
     c = col.lower()
+    if "ilisi" in c:
+        return "iLISI"
     for key in ("nmi", "ari", "mmd"):
         if key in c:
             return key.upper()
