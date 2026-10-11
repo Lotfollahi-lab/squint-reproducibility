@@ -26,7 +26,7 @@
 #   DRY_RUN=1 bash .../submit_imputation_recon.sh                         # print bsubs
 #   DATASET=mmb0-1b_smb1-1b_1p SEEDS=0,1,2,3,4 bash .../submit_imputation_recon.sh
 #
-# Env overrides: DATASET, SEEDS, SILVER_DIR, PREDICTED_ADATA, NC_SPECIES,
+# Env overrides: DATASET, SEEDS, SILVER_DIR, VARIANT_SUFFIX, PREDICTED_ADATA, NC_SPECIES,
 #   NC_ORTHOLOGS, NC_MEBOCOST, VENV_ROOT, REPO, LSF_QUEUE, LSF_GROUP, LSF_GPU,
 #   LSF_WALL, LSF_MEM_MB, LSF_CORES.
 # -----------------------------------------------------------------------------
@@ -40,6 +40,14 @@ ART="${ART:-/nfs/team361/sb75/squint-reproducibility/artifacts}"
 DATASET="${DATASET:-mmb0-1b_smb1-1b_1p}"
 SEEDS="${SEEDS:-0,1,2,3,4}"
 SILVER_DIR="${SILVER_DIR:-}"                 # empty -> runner's own default
+# Appended to every method's default variant tag (its artifacts folder), e.g.
+# VARIANT_SUFFIX=+coord-aligned -> gest-imputed+region-holdout+coord-aligned/<TS>/.
+# Use it for any re-run under different inputs: the plot resolvers merge every
+# timestamp under one variant folder, so a re-run must not share the folder of
+# runs made under another setting. Also added to the log file names. Empty ->
+# the runners' default tags (legacy behaviour). cifm encodes its own settings in
+# its tag, so with a suffix pass `--variant-tag ...` in CIFM_FLAGS.
+VARIANT_SUFFIX="${VARIANT_SUFFIX:-}"
 # Niche-branch spatial-kNN neighbor count. Empty -> each runner's own default,
 # which is now 16 (matches SQUINT's native niche graph, +knn16+, so the
 # niche-level metrics are graph-consistent across ALL methods and both figures).
@@ -107,6 +115,23 @@ method_spec() {
     esac
 }
 
+# method -> the runner's DEFAULT_VARIANT_TAG (kept in lockstep with the runners;
+# only used to build `--variant-tag <default><VARIANT_SUFFIX>`).
+method_tag() {
+    case "$1" in
+        gest)         echo "gest-imputed+region-holdout" ;;
+        gestarch)     echo "squint-gestarch+region-holdout" ;;
+        scvi)         echo "baseline-scvi+region-holdout" ;;
+        scvi-nbr)     echo "baseline-scvi-nbr+region-holdout" ;;
+        nichecompass) echo "baseline-nichecompass+region-holdout" ;;
+        vanilla-cell) echo "vanilla-vq-cell+region-holdout" ;;
+        vanilla-nbr)  echo "vanilla-vq-nbr+region-holdout" ;;
+        knn)          echo "baseline-knn-spatial+region-holdout" ;;
+        mlp)          echo "baseline-mlp-spatial+region-holdout" ;;
+        *) echo "" ;;
+    esac
+}
+
 # method -> the neighbor-count flag it accepts (native niche models train on the
 # aggregate, so their flag is --n-spatial-neighs; cell-only methods aggregate at
 # eval via --nbr-neighs). Empty NBR_NEIGHS -> no flag (runner default).
@@ -125,6 +150,8 @@ echo "=========================================================="
 echo "Re-run imputation + reconstruction (full metric panel + niche branch)"
 echo "  dataset : $DATASET    seeds: $SEEDS"
 echo "  methods : $METHODS"
+echo "  silver  : ${SILVER_DIR:-<runner default>}"
+echo "  suffix  : ${VARIANT_SUFFIX:-<none: default variant tags>}"
 echo "  LSF     : -G $LSF_GROUP -q $LSF_QUEUE -gpu '$LSF_GPU' -W $LSF_WALL"
 echo "  DRY_RUN=$DRY_RUN"
 echo "=========================================================="
@@ -146,9 +173,20 @@ for m in $METHODS; do
         common="$common --silver-dir $SILVER_DIR"
     fi
     extra="$extra $(neighs_flag "$m")"          # NBR_NEIGHS -> per-method neighbor flag
+    if [[ -n "$VARIANT_SUFFIX" ]]; then
+        if [[ "$m" == "cifm" ]]; then
+            if [[ "$CIFM_FLAGS" != *"--variant-tag"* ]]; then
+                echo "ERROR: VARIANT_SUFFIX is set; pass an explicit --variant-tag for cifm in CIFM_FLAGS." >&2
+                exit 1
+            fi
+        else
+            extra="$extra --variant-tag $(method_tag "$m")$VARIANT_SUFFIX"
+        fi
+    fi
 
     job="imprec-$m"
-    log_out="$LOG_ROOT/${m}.out"; log_err="$LOG_ROOT/${m}.err"
+    log_base="$m${VARIANT_SUFFIX:+_${VARIANT_SUFFIX//[^A-Za-z0-9_-]/}}"
+    log_out="$LOG_ROOT/${log_base}.out"; log_err="$LOG_ROOT/${log_base}.err"
 
     read -r -d '' JOB <<EOF || true
 set -euo pipefail
