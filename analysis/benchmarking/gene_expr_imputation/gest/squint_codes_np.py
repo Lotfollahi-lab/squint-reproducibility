@@ -5,7 +5,7 @@ Factors out the torch-free logic so it is unit-testable without the ML stack:
 
   * ``read_squint_codes``  -- pull the per-cell code stack (cell L0/L1 +
     niche L0/L1) and codebook sizes out of a frozen ``predicted_adata`` using
-    the SAME conventions as ``vqniche.stage2.data.AnnDataCodeSource``
+    the SAME conventions as ``squint.stage2.data.AnnDataCodeSource``
     (obsm['cell_code_indices'] / obsm['neighborhood_code_indices'], with the
     obsm/uns key aliases). We mirror rather than import it so this analysis
     module stays decoupled from the squint package import path.

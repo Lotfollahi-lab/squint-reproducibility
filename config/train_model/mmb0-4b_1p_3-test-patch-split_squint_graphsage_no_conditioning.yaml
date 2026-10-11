@@ -4,29 +4,19 @@ experiment:
 
 logging:
   root_log_dir: /nfs/team361/am84/VQNiche/logs/
-  # log_model: true
-  # offline: false
-  log_model: false
-  offline: true
+  log_model: true
+  offline: false
+  # log_model: false
+  # offline: true
   enabled: true
 
 dataset:
-  dataset_name: xhs1021-15b_1p
+  dataset_name: mmb0-4b_1p
   adata_batch_idx:
     - 0
     - 1
     - 2
-    # - 3
-    # - 4
-    # - 5
-    # - 6
-    # - 7
-    - 8
-    - 9
-    - 10
-    - 11
-    - 12
-    # - 13
+    - 3
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
@@ -49,34 +39,39 @@ dataset:
   train_transform_names:
     - SpatialBatchSplit
   train_transform_params:
-    region:
-      x_min: 1000
-      x_max: 2000
-      y_min: 3000
-      y_max: 4000
+    region: [
+          {
+            x_min: 20750,
+            x_max: 21000,
+            y_min: -125,
+            y_max: 125,
+          },
+          {
+            x_min: 22000,
+            x_max: 22250,
+            y_min: 250,
+            y_max: 500,
+          },
+          {
+            x_min: 20000,
+            x_max: 20250,
+            y_min: -750,
+            y_max: -500,
+          }
+      ]  
     train_batches:
-      - 0
       - 1
-      # - 2
-      # - 3
-      # - 4
-      # - 5
-      # - 6
-      # - 7
-      - 8
-      - 9
-      - 10
-      - 11
-      - 12
+      - 2
+      - 3
     val_batches: []
     test_batches:
-      - 2
+      - 4
     xy_key: xy_coordinates
 
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 16
+    batch_size: 128
   sampler_name: NeighborSampler
   sampler_params:
     num_neighbors: [8, 8]
@@ -84,8 +79,8 @@ datamodule:
     sample_neighbors_for_inference: false
 
 model:
-  model_name: VQNiche
-  encoder_name: VQNiche_Encoder
+  model_name: Squint
+  encoder_name: Squint_Encoder
   attribute_decoder_name: MLPSoftmax
   adjacency_decoder_name: MLP_AdjacencyDecoder
   predictor_name: Linear
@@ -93,9 +88,9 @@ model:
   imputation_params:
     # mask_strategy: original
     mask_strategy: learnable_parameter
-    base_mask_ratio: 0.3
-    final_mask_ratio: 0.3
-    warmup_epochs: 0
+    base_mask_ratio: 0.2
+    final_mask_ratio: 0.6
+    warmup_epochs: 5
     deterministic_masking: false
     compute_mask_input_diversity: false
     mask_token_eps: 0.0001
@@ -118,30 +113,31 @@ model:
     gnn_name: SAGEConv
 
     mlp_params:
-      hidden_channels: [600, 200]
+      hidden_channels: [600, 400]
       dropout: 0.1
       act: relu
       norm: null
 
     gnn_params:
-      hidden_channels: 200
-      num_layers: 3
+      hidden_channels: 400
+      num_layers: 1
       act_first: true
       activation: relu
       norm: null
       dropout: 0.1
       init_method: kaiming_uniform
 
-    conditioning_params:
-      condition_list:
-        - rbf_distances
-        # - relative_xy
-        - cell_batch_id
-        # - timepoint_id
-      use_bias: true
-      use_residual: false
-      residual_weight: 0.2
-      init_mode: identity
+    # conditioning_params:
+    #   condition_list:
+    #     - rbf_distances
+    #     # - cell_types
+    #     # - relative_xy
+    #     - cell_batch_id
+    #     # - timepoint_id
+    #   use_bias: true
+    #   use_residual: false
+    #   residual_weight: 0.2
+    #   init_mode: identity
 
     # spatial_prior_params:
     #   spatial_prior_feature: rbf_distances
@@ -172,7 +168,7 @@ model:
 
       # codebook related params
       codebook_size: 5000
-      heads: 1
+      heads: 10
       separate_codebook_per_head: false
       decay: 0.8
       eps: 0.00001
@@ -195,20 +191,21 @@ model:
       orthogonal_reg_active_codes_only: false # apply only to actively used codes in the current batch
 
   attribute_decoder_params:
-    # apply_conditioning: null # pre-MLP | in-MLP | None
+    apply_conditioning: null # pre-MLP | in-MLP | None
     # apply_conditioning: pre-MLP # pre-MLP | in-MLP | None
 
-    apply_conditioning: in-MLP # pre-MLP | in-MLP | None
-    conditioning_params:
-      condition_list:
-        - rbf_distances
-        # - relative_xy
-        - cell_batch_id
-        # - timepoint_id
-      use_bias: true
-      use_residual: false
-      residual_weight: 0.2
-      init_mode: identity
+    # apply_conditioning: in-MLP # pre-MLP | in-MLP | None
+    # conditioning_params:
+    #   condition_list:
+    #     - rbf_distances
+    #     # - cell_types
+    #     # - relative_xy
+    #     - cell_batch_id
+    #     # - timepoint_id
+    #   use_bias: true
+    #   use_residual: false
+    #   residual_weight: 0.2
+    #   init_mode: identity
 
     mlp_params:
       hidden_channels: [600]
@@ -247,7 +244,7 @@ model:
       k_hop_nb_loss: 1
       only_masked: false
       # only_masked: true
-      edge_sampling_ratio: null
+      edge_sampling_ratio: 2
       use_pos_weight: true
       estimate_adj_kwargs:
         nonlinearity: sigmoid

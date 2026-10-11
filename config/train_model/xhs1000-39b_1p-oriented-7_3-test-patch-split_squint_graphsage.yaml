@@ -100,8 +100,8 @@ datamodule:
     sample_neighbors_for_inference: false
 
 model:
-  model_name: VQNiche
-  encoder_name: VQNiche_Encoder
+  model_name: Squint
+  encoder_name: Squint_Encoder
   attribute_decoder_name: MLPSoftmax
   adjacency_decoder_name: MLP_AdjacencyDecoder
   predictor_name: Linear

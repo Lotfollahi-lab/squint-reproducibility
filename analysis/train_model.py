@@ -3,23 +3,23 @@ This script provides a pipeline for a single training run of a Model on a single
 
 The pipeline consists of the following steps:
 1. Parse the arguments from the config file.
-2. Initialize the DatasetBlob (see vqniche.dataset.in_memory_dataset_blob.py).
+2. Initialize the DatasetBlob (see squint.dataset.in_memory_dataset_blob.py).
 3. Load the data corresponding to the batches specified in the config file.
-4. Initialize the DataModule (see vqniche.dataloaders.in_memory_datamodule.py).
-5. Initialize the Model (see vqniche.models.vqgraph.py).
+4. Initialize the DataModule (see squint.dataloaders.in_memory_datamodule.py).
+5. Initialize the Model (see squint.models.squint.py and squint.models.squint_dual.py).
 6. Initialize the Logger (if enabled).
 7. Initialize the Checkpoints (if enabled).
-8. Initialize the Trainer (see vqniche.utils.initialize.py).
+8. Initialize the Trainer (see squint.initializers.initialize.py).
 9. Train the Model.
 10. Validate the Model.
 
 The pipeline employs PyTorch Lightning to support distributed data parallel (DDP) training across multiple GPUs. With wandb, the script supports a standalone run via a base config file and a sweep run via a base config file and a list of sweep config files.
 
 Example Usage for a standalone run:
->>> python analysis/train_model.py --base_config_file config/train_model/xhs1000-39b_1p-batch11_random-split_vqniche_graphsage.yaml
+>>> python analysis/train_model.py --base_config_file config/train_model/xhs1000-39b_1p-batch11_random-split_squint_graphsage.yaml
 
 Example Usage for a sweep run:
->>> python analysis/train_model.py --base_config_file config/train_model/xhs1000-39b_1p-batch11_random-split_vqniche_graphsage.yaml --sweep_config_files config/sweep/backbone_gnn.yaml
+>>> python analysis/train_model.py --base_config_file config/train_model/xhs1000-39b_1p-batch11_random-split_squint_graphsage.yaml --sweep_config_files config/sweep/backbone_gnn.yaml
 """
 import re
 import os
@@ -31,9 +31,9 @@ import pandas as pd
 import torch
 import pytorch_lightning as pl
 
-from vqniche.utils.parse_train_configs import parse_train_arguments, collect_train_configs, update_config
-from vqniche.initializers.initialize import *
-from vqniche.utils.parse_test_configs import find_best_checkpoint
+from squint.utils.parse_train_configs import parse_train_arguments, collect_train_configs, update_config
+from squint.initializers.initialize import *
+from squint.utils.parse_test_configs import find_best_checkpoint
 
 
 def train(config: Dict):
@@ -240,7 +240,7 @@ if __name__ == '__main__':
         # registers sweep with specified hyperparameter grid
         if 'sweep_id' not in base_config['experiment']:
             sweep_id = wandb.sweep(
-                project="VQNiche",
+                project="squint",
                 sweep=sweep_config,
             )
         else:
@@ -258,7 +258,7 @@ if __name__ == '__main__':
             # initializes a run for the current config from the sweep
             sweep_run = wandb.init(
                         dir=str(sweep_dir),
-                        project="VQNiche",
+                        project="squint",
                         mode="offline" if base_config['logging']['offline'] else "online",
                         group=f"{base_config['dataset']['dataset_name']}:batch={base_config['dataset']['adata_batch_idx']}",
                         job_type="train",
@@ -292,7 +292,7 @@ if __name__ == '__main__':
         # initializes a run for the standalone config
         standalone_run = wandb.init(
                             dir=str(standalone_dir),
-                            project="VQNiche",
+                            project="squint",
                             mode="offline" if base_config['logging']['offline'] else "online",
                             group=f"{base_config['dataset']['dataset_name']}:batch={base_config['dataset']['adata_batch_idx']}",
                             job_type="train",

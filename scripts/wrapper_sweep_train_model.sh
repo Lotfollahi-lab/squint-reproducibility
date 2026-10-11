@@ -6,7 +6,7 @@ SCRIPT="scripts/${EXPERIMENT_NAME}.sh"
 # Set the experiment parameters
 DATASET_NAME="${1:-sss2-1b_1p}"
 SPLIT_NAME="${2:-1-test-patch-split}"
-MODEL_NAME="${3:-vqniche_graphsage}"
+MODEL_NAME="${3:-squint_graphsage}"
 SWEEP_NAME="${4:-backbone_gnn}"
 CONDITIONING="${5:-1}"
 

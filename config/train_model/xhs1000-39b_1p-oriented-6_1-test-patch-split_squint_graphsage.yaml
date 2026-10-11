@@ -4,19 +4,37 @@ experiment:
 
 logging:
   root_log_dir: /nfs/team361/am84/VQNiche/logs/
-  log_model: true
-  offline: false
-  # log_model: false
-  # offline: true
+  # log_model: true
+  # offline: false
+  log_model: false
+  offline: true
   enabled: true
 
 dataset:
-  dataset_name: mmb0-4b_1p
+  dataset_name: xhs1000-39b_1p
   adata_batch_idx:
-    - 0
-    - 1
     - 2
-    - 3
+    - 11
+    - 9
+    - 28
+    - 29
+    - 32
+    - 12
+  adata_fname:
+    - adata_batch2.h5ad # BK21_Lesional Baseline
+    - adata_batch11.h5ad # BK18_Lesional Baseline
+    - adata_batch9.h5ad # BK18_Lesional Baseline
+    - adata_batch28.h5ad # BK18_Lesional Baseline
+    - adata_batch29.h5ad # BK18_Lesional Baseline
+    - adata_batch32.h5ad # BK18_Lesional Baseline
+    - adata_batch12.h5ad # BK18_Day 3
+
+  # batch_timepoint:
+  #   max_timepoint: 4
+  #   batch_timepoint_map:
+  #     2: 0
+  #     11: 0
+  #     12: 1
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
@@ -40,32 +58,35 @@ dataset:
     - SpatialBatchSplit
   train_transform_params:
     region:
-      x_min: 20750
-      x_max: 21000
-      y_min: -125
-      y_max: 125
+      x_min: 3000
+      x_max: 3500
+      y_min: 3500
+      y_max: 4000
     train_batches:
-      - 1
       - 2
-      - 3
+      - 11
+      - 9
+      - 28
+      - 29
+      - 32
     val_batches: []
     test_batches:
-      - 4
+      - 12
     xy_key: xy_coordinates
 
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 256
+    batch_size: 128
   sampler_name: NeighborSampler
   sampler_params:
-    num_neighbors: [16, 16]
+    num_neighbors: [8, 8]
   inference_params:
     sample_neighbors_for_inference: false
 
 model:
-  model_name: VQNiche
-  encoder_name: VQNiche_Encoder
+  model_name: Squint
+  encoder_name: Squint_Encoder
   attribute_decoder_name: MLPSoftmax
   adjacency_decoder_name: MLP_AdjacencyDecoder
   predictor_name: Linear
@@ -73,9 +94,9 @@ model:
   imputation_params:
     # mask_strategy: original
     mask_strategy: learnable_parameter
-    base_mask_ratio: 0.3
-    final_mask_ratio: 0.3
-    warmup_epochs: 0
+    base_mask_ratio: 0.2
+    final_mask_ratio: 0.6
+    warmup_epochs: 5
     deterministic_masking: false
     compute_mask_input_diversity: false
     mask_token_eps: 0.0001
@@ -98,14 +119,14 @@ model:
     gnn_name: SAGEConv
 
     mlp_params:
-      hidden_channels: [600, 200]
+      hidden_channels: [600, 400]
       dropout: 0.1
       act: relu
       norm: null
 
     gnn_params:
-      hidden_channels: 200
-      num_layers: 3
+      hidden_channels: 400
+      num_layers: 1
       act_first: true
       activation: relu
       norm: null
@@ -152,7 +173,7 @@ model:
 
       # codebook related params
       codebook_size: 5000
-      heads: 1
+      heads: 10
       separate_codebook_per_head: false
       decay: 0.8
       eps: 0.00001
@@ -227,7 +248,7 @@ model:
       k_hop_nb_loss: 1
       only_masked: false
       # only_masked: true
-      edge_sampling_ratio: null
+      edge_sampling_ratio: 2
       use_pos_weight: true
       estimate_adj_kwargs:
         nonlinearity: sigmoid

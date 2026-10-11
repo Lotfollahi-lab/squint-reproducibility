@@ -180,8 +180,8 @@ def train_one_seed(adata_full: ad.AnnData, seed: int, batch_key: str,
     run_dir = Path(args.predicted_adata).resolve().parent
     ckpt = decode_mod._find_ckpt(str(run_dir), args.stage1_ckpt)
     print(f"  loading stage-1 decoder from {ckpt}")
-    from vqniche.models import VQNiche_Dual
-    s1 = VQNiche_Dual.load_from_checkpoint(ckpt, map_location=device)
+    from squint.models import Squint_Dual
+    s1 = Squint_Dual.load_from_checkpoint(ckpt, map_location=device)
     s1.eval().to(device)
     ccn = getattr(s1.encoder, "ccn_mode", None)
     if ccn not in (None, "film_scale", "film", "film_cont"):

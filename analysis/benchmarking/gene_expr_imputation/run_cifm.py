@@ -598,7 +598,7 @@ def _infill_iterative(model, Xn, xy, tr_idx, te_idx, device, output: str,
 
     WHY THIS EXISTS. SQUINT's stage-2 prior fills the held-out region with
     `steps=12` confidence-scheduled iterations, and committed cells become
-    context for the next one (`vqniche/stage2/decode.py`: "large contiguous
+    context for the next one (`squint/stage2/decode.py`: "large contiguous
     holes are filled from the outside in"). CIFM's released API
     (`predict_cells_at_locations`) is SINGLE-SHOT: every held-out cell is masked
     at once and no prediction is ever fed back, so its reach is strictly one
@@ -607,7 +607,7 @@ def _infill_iterative(model, Xn, xy, tr_idx, te_idx, device, output: str,
     CIFM's paper does multi-cell inference autoregressively. This restores
     parity. `--infill-steps 1` is the released-API behaviour.
 
-    Schedule is `_schedule_ratio` copied from `vqniche/stage2/decode.py:33-38`
+    Schedule is `_schedule_ratio` copied from `squint/stage2/decode.py:33-38`
     (cosine: the fraction REMAINING masked after `step` is cos(0.5*pi*step/steps)),
     so the two methods commit on the same curve.
 
@@ -998,14 +998,14 @@ def main(argv=None):
                    help="Iterative in-painting steps for the HELD-OUT region. "
                         "1 (default) = CIFM's released single-shot "
                         "predict_cells_at_locations. 12 matches SQUINT's "
-                        "stage-2 decoder (vqniche/stage2 DecodeConfig.steps=12), "
+                        "stage-2 decoder (squint/stage2 DecodeConfig.steps=12), "
                         "which fills contiguous holes outside-in and feeds "
                         "committed cells back as context — scoring 12 "
                         "iterations against 1 is OUR asymmetry, not CIFM's. "
                         "Report both.")
     p.add_argument("--infill-schedule", default="cosine",
                    choices=["cosine", "linear"],
-                   help="Commit schedule, copied from vqniche/stage2/decode.py.")
+                   help="Commit schedule, copied from squint/stage2/decode.py.")
     p.add_argument("--infill-rank", default="confidence",
                    choices=["confidence", "distance"],
                    help="Which masked cells to commit first. 'confidence' = "

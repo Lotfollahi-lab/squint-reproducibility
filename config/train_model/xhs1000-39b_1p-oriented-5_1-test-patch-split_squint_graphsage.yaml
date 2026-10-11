@@ -11,12 +11,26 @@ logging:
   enabled: true
 
 dataset:
-  dataset_name: mmb0-4b_1p
+  dataset_name: xhs1000-39b_1p
   adata_batch_idx:
-    - 0
-    - 1
     - 2
-    - 3
+    - 11
+    - 9
+    - 28
+    - 12
+  adata_fname:
+    - adata_batch2.h5ad # BK21_Lesional Baseline
+    - adata_batch11.h5ad # BK18_Lesional Baseline
+    - adata_batch9.h5ad # BK18_Lesional Baseline
+    - adata_batch28.h5ad # BK18_Lesional Baseline
+    - adata_batch12.h5ad # BK18_Day 3
+
+  # batch_timepoint:
+  #   max_timepoint: 4
+  #   batch_timepoint_map:
+  #     2: 0
+  #     11: 0
+  #     12: 1
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
@@ -37,24 +51,36 @@ dataset:
   label_name: cell_types
 
   train_transform_names:
-    - RandomNodeSplit
+    - SpatialBatchSplit
   train_transform_params:
-    val_ratio: 0.1
-    test_ratio: 0.1
+    region:
+      x_min: 3000
+      x_max: 3500
+      y_min: 3500
+      y_max: 4000
+    train_batches:
+      - 2
+      - 11
+      - 9
+      - 28
+    val_batches: []
+    test_batches:
+      - 12
+    xy_key: xy_coordinates
 
 datamodule:
   loader_name: NeighborLoader
   loader_params:
-    batch_size: 256
+    batch_size: 128
   sampler_name: NeighborSampler
   sampler_params:
-    num_neighbors: [16, 16]
+    num_neighbors: [8, 8]
   inference_params:
     sample_neighbors_for_inference: false
 
 model:
-  model_name: VQNiche
-  encoder_name: VQNiche_Encoder
+  model_name: Squint
+  encoder_name: Squint_Encoder
   attribute_decoder_name: MLPSoftmax
   adjacency_decoder_name: MLP_AdjacencyDecoder
   predictor_name: Linear
@@ -62,9 +88,9 @@ model:
   imputation_params:
     # mask_strategy: original
     mask_strategy: learnable_parameter
-    base_mask_ratio: 0.3
-    final_mask_ratio: 0.3
-    warmup_epochs: 0
+    base_mask_ratio: 0.2
+    final_mask_ratio: 0.6
+    warmup_epochs: 5
     deterministic_masking: false
     compute_mask_input_diversity: false
     mask_token_eps: 0.0001
@@ -87,14 +113,14 @@ model:
     gnn_name: SAGEConv
 
     mlp_params:
-      hidden_channels: [600, 200]
+      hidden_channels: [600, 400]
       dropout: 0.1
       act: relu
       norm: null
 
     gnn_params:
-      hidden_channels: 200
-      num_layers: 3
+      hidden_channels: 400
+      num_layers: 1
       act_first: true
       activation: relu
       norm: null
@@ -141,7 +167,7 @@ model:
 
       # codebook related params
       codebook_size: 5000
-      heads: 1
+      heads: 10
       separate_codebook_per_head: false
       decay: 0.8
       eps: 0.00001
@@ -216,7 +242,7 @@ model:
       k_hop_nb_loss: 1
       only_masked: false
       # only_masked: true
-      edge_sampling_ratio: null
+      edge_sampling_ratio: 2
       use_pos_weight: true
       estimate_adj_kwargs:
         nonlinearity: sigmoid
@@ -230,11 +256,11 @@ model:
       wt_mask_token_regularization: 1.0
 
 trainer:
-  monitor: val_pearson_1hop_nbr
+  monitor: train_pearson_1hop_nbr
   checkpoint_params:
     mode: max
     save_top_k: 1
     save_last: true
-  max_epochs: 1
+  max_epochs: 5
   enable_checkpointing: true
   ckpt_path: best

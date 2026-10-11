@@ -67,7 +67,7 @@ LOG_DIR="$LOG_ROOT/coupling_diagnostics/${STAMP}"
 JOB_NAME="coupdiag_${STAMP}"
 
 # diagnose_coupling.py is self-contained (anndata/numpy/pandas + optional
-# sklearn — no vqniche/torch import).
+# sklearn — no squint/torch import).
 WORKER=$(cat <<EOF
 set -euo pipefail
 source "$VENV_PATH/bin/activate"

@@ -62,7 +62,7 @@ def silver_check(silver_dir):
 def blob_check(dataset, data_dir):
     print(f"\n=== BLOB (load, no rebuild): gold/.../{dataset} ===")
     try:
-        from vqniche.dataset.in_memory_dataset_blob import InMemoryDatasetBlob
+        from squint.dataset.in_memory_dataset_blob import InMemoryDatasetBlob
     except Exception as e:
         print(f"  (skipped — could not import InMemoryDatasetBlob: {e})")
         return

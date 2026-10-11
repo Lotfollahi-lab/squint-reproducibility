@@ -17,12 +17,14 @@ dataset:
     - 11
     - 9
     - 28
+    - 29
     - 12
   adata_fname:
     - adata_batch2.h5ad # BK21_Lesional Baseline
     - adata_batch11.h5ad # BK18_Lesional Baseline
     - adata_batch9.h5ad # BK18_Lesional Baseline
     - adata_batch28.h5ad # BK18_Lesional Baseline
+    - adata_batch29.h5ad # BK18_Lesional Baseline
     - adata_batch12.h5ad # BK18_Day 3
 
   # batch_timepoint:
@@ -63,6 +65,7 @@ dataset:
       - 11
       - 9
       - 28
+      - 29
     val_batches: []
     test_batches:
       - 12
@@ -79,8 +82,8 @@ datamodule:
     sample_neighbors_for_inference: false
 
 model:
-  model_name: VQNiche
-  encoder_name: VQNiche_Encoder
+  model_name: Squint
+  encoder_name: Squint_Encoder
   attribute_decoder_name: MLPSoftmax
   adjacency_decoder_name: MLP_AdjacencyDecoder
   predictor_name: Linear

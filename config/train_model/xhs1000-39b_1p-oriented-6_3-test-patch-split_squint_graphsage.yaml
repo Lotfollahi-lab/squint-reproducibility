@@ -16,12 +16,16 @@ dataset:
     - 2
     - 11
     - 9
+    - 28
+    - 29
     - 12
   adata_fname:
-    - adata_batch2.h5ad # BK21_Lesional Baseline
-    - adata_batch11.h5ad # BK18_Lesional Baseline
-    - adata_batch9.h5ad # BK18_Lesional Baseline
-    - adata_batch12.h5ad # BK18_Day 3
+    - adata_batch2.h5ad
+    - adata_batch11.h5ad
+    - adata_batch9.h5ad
+    - adata_batch28.h5ad
+    - adata_batch29.h5ad
+    - adata_batch12.h5ad
 
   # batch_timepoint:
   #   max_timepoint: 4
@@ -51,15 +55,32 @@ dataset:
   train_transform_names:
     - SpatialBatchSplit
   train_transform_params:
-    region:
-      x_min: 3000
-      x_max: 3500
-      y_min: 3500
-      y_max: 4000
+    region: [
+      {
+        x_min: 3000,
+        x_max: 3500,
+        y_min: 3500,
+        y_max: 4000,
+      },
+      {
+        x_min: 1500,
+        x_max: 2000,
+        y_min: 3000,
+        y_max: 3500,
+      },
+      {
+        x_min: 2000,
+        x_max: 2500,
+        y_min: 2000,
+        y_max: 2500,
+      }
+    ]
     train_batches:
       - 2
       - 11
       - 9
+      - 28
+      - 29
     val_batches: []
     test_batches:
       - 12
@@ -76,8 +97,8 @@ datamodule:
     sample_neighbors_for_inference: false
 
 model:
-  model_name: VQNiche
-  encoder_name: VQNiche_Encoder
+  model_name: Squint
+  encoder_name: Squint_Encoder
   attribute_decoder_name: MLPSoftmax
   adjacency_decoder_name: MLP_AdjacencyDecoder
   predictor_name: Linear

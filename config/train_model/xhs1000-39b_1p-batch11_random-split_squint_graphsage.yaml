@@ -11,22 +11,16 @@ logging:
   enabled: true
 
 dataset:
-  dataset_name: xhs1021-15b_1p
+  dataset_name: xhs1000-39b_1p
   adata_batch_idx:
-    - 0
-    - 1
-    - 2
-    - 3
-    - 4
-    - 5
-    - 6
-    - 7
-    - 8
-    - 9
-    - 10
     - 11
-    - 12
-    # - 13
+  adata_fname:
+    - adata_batch11.h5ad # BK18 Lesional
+
+  # batch_timepoint:
+  #   max_timepoint: 4
+  #   batch_timepoint_map:
+  #     11: 0
 
   root_data_dir: /lustre/scratch126/cellgen/lotfollahi/DATASETS
 
@@ -63,8 +57,8 @@ datamodule:
     sample_neighbors_for_inference: false
 
 model:
-  model_name: VQNiche
-  encoder_name: VQNiche_Encoder
+  model_name: Squint
+  encoder_name: Squint_Encoder
   attribute_decoder_name: MLPSoftmax
   adjacency_decoder_name: MLP_AdjacencyDecoder
   predictor_name: Linear
@@ -235,6 +229,7 @@ model:
       wt_attr_reconstr: 1.0
       wt_adj_reconstr: 1.0
       wt_joint_code_commit: 1.0
+      wt_spatial_prior: 1.0
       wt_commit: 1.0
       wt_code: 1.0
       wt_mask_token_regularization: 1.0

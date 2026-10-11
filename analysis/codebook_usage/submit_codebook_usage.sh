@@ -73,7 +73,7 @@ LOG_DIR="$LOG_ROOT/codebook_usage/${STAMP}"
 JOB_NAME="cbu_${STAMP}"
 
 # The worker command: activate the env, run the report. report_codebook_usage.py
-# is self-contained (anndata/numpy/pandas/matplotlib only — no vqniche import).
+# is self-contained (anndata/numpy/pandas/matplotlib only — no squint import).
 WORKER=$(cat <<EOF
 set -euo pipefail
 source "$VENV_PATH/bin/activate"

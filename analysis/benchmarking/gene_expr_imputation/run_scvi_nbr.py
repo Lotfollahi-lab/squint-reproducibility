@@ -19,7 +19,7 @@ target?" comparator: held architecture/loss/training procedure fixed
 
 X_nbr is computed via `aggregate_1hop_neighbor_features(...,
 return_mean=True)` — bit-for-bit identical to SQUINT's niche-target
-construction (see `vqniche.utils.loss_utils`). The float values are
+construction (see `squint.utils.loss_utils`). The float values are
 passed unrounded to scVI; NB log-likelihood extends continuously to
 non-negative reals via `lgamma`, so there is no need to discretise.
 
@@ -87,7 +87,7 @@ def train_one_seed(
     SQUINT-matched target: the input/target is the FLOAT 1-hop spatial
     mean of the per-cell counts (same `aggregate_1hop_neighbor_features
     (..., return_mean=True)` SQUINT uses for its niche branch — see
-    `vqniche.utils.loss_utils.aggregate_1hop_neighbor_features`). The
+    `squint.utils.loss_utils.aggregate_1hop_neighbor_features`). The
     NB likelihood handles real-valued non-negative targets via
     continuous `lgamma` extension, so no rounding is needed; we just
     pass the float through. scvi-tools warns about non-integer inputs

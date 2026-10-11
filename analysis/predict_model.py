@@ -3,11 +3,11 @@ This script provides a pipeline for a single testing run of a Model on a single 
 
 The pipeline consists of the following steps:
 1. Load the user-specified config file used for training the model from the wandb run directory.
-2. Initialize the DatasetBlob (see vqniche.dataset.in_memory_dataset_blob.py).
+2. Initialize the DatasetBlob (see squint.dataset.in_memory_dataset_blob.py).
 3. Load the data corresponding to the batch specified in the config file.
-4. Initialize the DataModule (see vqniche.dataloaders.in_memory_datamodule.py).
+4. Initialize the DataModule (see squint.dataloaders.in_memory_datamodule.py).
 5. Load the Model from the checkpoint. The checkpoint can be specified via a command line argument or automatically determined from the wandb run directory.
-6. Initialize the Trainer (see vqniche.utils.initialize.py).
+6. Initialize the Trainer (see squint.initializers.initialize.py).
 7. Run the Validation step(s) of the model.
 8. Run the Inference step of the model and collect all the data needed for the downstream analysis.
 9. Convert the inference data to an AnnData object.
@@ -30,12 +30,12 @@ from tabulate import tabulate
 import torch
 import pytorch_lightning as pl
 
-from vqniche.utils.parse_test_configs import *
-from vqniche.initializers.initialize import *
-from vqniche import metrics
-from vqniche.utils.type_conversions import *
-from vqniche.plotting import *
-from vqniche.utils.loss_utils import aggregate_1hop_neighbor_features
+from squint.utils.parse_test_configs import *
+from squint.initializers.initialize import *
+from squint import metrics
+from squint.utils.type_conversions import *
+from squint.plotting import *
+from squint.utils.loss_utils import aggregate_1hop_neighbor_features
 
 
 codebook_metrics = ['codebook_utilization']
@@ -89,8 +89,8 @@ def collate_predict_outputs(
     collated_dict['edge_index'] = predict_dataloader.data.edge_index
 
     # Codebook metadata. Two layouts to support:
-    #   1. Single-VQ models (VQNiche, etc.):     encoder.vq
-    #   2. Dual-VQ model (VQNiche_Dual):         encoder.vq_cell + encoder.vq_niche
+    #   1. Single-VQ models (Squint, etc.):     encoder.vq
+    #   2. Dual-VQ model (Squint_Dual):         encoder.vq_cell + encoder.vq_niche
     encoder = model.encoder
     if hasattr(encoder, 'vq'):
         # Legacy single-codebook layout.
@@ -102,7 +102,7 @@ def collate_predict_outputs(
         if hasattr(encoder.vq, 'codebook_sizes'):
             collated_dict['codebook_sizes'] = list(encoder.vq.codebook_sizes)
     elif hasattr(encoder, 'vq_cell') and hasattr(encoder, 'vq_niche'):
-        # Dual-VQ layout (VQNiche_Dual). Per-branch metadata is exposed
+        # Dual-VQ layout (Squint_Dual). Per-branch metadata is exposed
         # under {key}_cell / {key}_niche; back-compat single-codebook keys
         # alias the niche branch (which is the primary spatial signal).
         for branch_name, vq in [('cell',  encoder.vq_cell),
