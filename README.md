@@ -46,10 +46,6 @@ look for `squint/examples/` in a sibling folder.
   observed cells, as for GeST, CIFM and the k-NN floor. The default of both the decoder and the
   launcher is `true`, which uses the held-out cell's own library size and so reads part of the
   target. Always set it explicitly; the decoder logs its choice (`[decode] [read-depth]`).
-- **CosMx query model.** The query-to-reference model (`$H+chl59-8b_1p`, Fig. 3; `$H` is
-  defined below) trains with 128 seed cells per batch (`_patch_dual_chl59_lung5`, l. 4307 of
-  squint `examples/run_squint.py`), not with the 512 of the other models (Supplement App. B),
-  although its name contains `bs512`.
 - **Trained checkpoints are not distributed.** Each run writes its own to `<run>/checkpoints/`.
 
 ## Before you start: adapt the cluster paths
@@ -610,10 +606,10 @@ file below is used only for the composition panels).
 
 ```bash
 cd $SQUINT && source $VENV_PATH/bin/activate
-bash examples/submit_single_run.sh "$H+chl59-8b_1p"   # without LSF: python examples/run_squint.py --all --variant "$H+chl59-8b_1p"
+bash examples/submit_single_run.sh "<variant>"   # a +chl59-8b_1p variant; without LSF: python examples/run_squint.py --all --variant "<variant>"
 
 cd $REPO
-RUN=$ART/chl59-8b_1p/$H+chl59-8b_1p/<YYYYMMDD_HHMMSS>_seed0
+RUN=$ART/chl59-8b_1p/<variant>/<run folder>
 python analysis/benchmarking/plots/plot_code_distributions.py --adata $RUN/predicted_adata.h5ad \
     --query-sections Lung5_Rep3,Lung13 \
     --label-adata $DATA/bronze/chl59-8b_1p/nanostring_cosmx_human_nsclc_reference_query_mapping.h5ad   # Fig. 3, Fig. S6e,f
