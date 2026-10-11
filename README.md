@@ -692,7 +692,7 @@ Welch tests against the reference row, for tables `T1`, `T3` and `S1`), `per_see
 `t1_tables/` (the Table 1 CSVs above with corrected iLISI) and `ilisi_diff_report.txt`, which
 compares every value with the printed tables. The Discretization rows need
 `discretization_per_seed.csv` (Section 3.4; pass `DISC_CSV=` if it is not found).
-`compute_table1_significance.py` gives the Welch tests of NMI, ARI and MMD against SQUINT.
+`compute_table1_significance.py` gives the Welch tests of NMI, ARI, MMD and iLISI against SQUINT.
 
 **Table 2.**
 
