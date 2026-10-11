@@ -43,8 +43,8 @@ look for `squint/examples/` in a sibling folder.
   target. Always set it explicitly; the decoder logs its choice (`[decode] [read-depth]`).
 - **CosMx query model.** The query-to-reference model (`$H+chl59-8b_1p`, Fig. 3; `$H` is
   defined below) trains with 128 seed cells per batch (`_patch_dual_chl59_lung5`, l. 4307 of
-  squint `examples/run_squint.py`), not with the 512 of the other models and of Supplement
-  App. B, although its name contains `bs512`.
+  squint `examples/run_squint.py`), not with the 512 of the other models (Supplement App. B),
+  although its name contains `bs512`.
 - **Trained checkpoints are not distributed.** Each run writes its own to `<run>/checkpoints/`.
 
 ## Before you start: adapt the cluster paths
