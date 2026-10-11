@@ -316,6 +316,162 @@ the shared holdout and prints `[holdout] data_split: train=…, test=…`; check
 (`DEFAULT_SILVER_DIR` in `_holdout_utils.py`, ll. 64–66) is another folder on the authors'
 cluster. `mlp` and `gestarch` are wired in but not reported.
 
+#### Leak-free (inductive) imputation
+
+The protocol above is transductive, and held-out information can reach the imputation scores in
+three ways:
+
+- **L1, training.** Held-out cells are never training or validation seeds, but they stay nodes of
+  the kNN16 graph. As sampled neighbours, their counts enter the GNN input of observed boundary
+  cells, the 1-hop niche negative-binomial target, the adjacency loss and the codebook EMA
+  updates.
+- **L2, inference.** At predict, the niche codes of observed boundary cells aggregate their
+  held-out neighbours. Stage 2 in-paints the box from these codes.
+- **L3, scoring parity.** In the `-nichecell` arms, the observed neighbours of a held-out cell
+  enter the neighbourhood prediction as SQUINT's reconstruction of their own counts
+  (`layers['X_hat']`). The baselines put their leave-one-out predictions there instead. In
+  addition, `X_hat` was written by the best `val_loss` checkpoint, in decode batches shared with
+  held-out rows (the decoder's layer norm normalises over the whole batch, see step 0 below),
+  while the decoder loads `last.ckpt` by default. L3 does not affect the cell-level scores.
+
+An opt-in protocol removes L1 and L2 and makes L3 symmetric. All defaults, and so every command
+above, are unchanged, and every new output goes to a new folder. The reported Table 2 numbers come
+from the transductive protocol.
+
+| Piece | Purpose |
+|---|---|
+| `$H+region-holdout-inductive+mmb0-1b_smb1-1b_1p` (headline), `$H+region-holdout-inductive-drop+mmb0-1b_smb1-1b_1p` (sensitivity); `DATASET_VARIANTS` key `mmb0-1b_smb1-1b_1p-region-holdout-inductive` | The region-holdout model plus `_patch_holdout_inductive`. In the held-out sections, `SpatialBatchSplit` removes every edge from a held-out to an observed cell, for training, validation and predict. `inductive` rebuilds the observed kNN16 over observed cells only, with the constructor and symmetrisation of the dataset blob; `inductive-drop` keeps the original observed edges. Edges into held-out cells are kept, so their own codes and reconstruction targets are unchanged. Guards (`assert_inductive_holdout`) raise if a held-out cell enters a training or validation batch, or if a held-out-to-observed edge reaches a predict batch. For these runs, predict writes the configured codebook sizes to `uns['codebook_sizes_cell']` and `uns['codebook_sizes_niche']` for stage 2; for every run it records the graph protocol (`holdout_graph`, ...) in `uns['squint']`. |
+| squint `examples/run_inference.py --holdout-graph rebuild` | Applies the inductive graph to an existing run at predict time only (removes L2, keeps L1). Needs a new `--output-dir`. |
+| squint `examples/stage2_decode_pearson.py`: `--stage1-ckpt-policy adata`, `--observed-xhat redecode`, `--nbr-observed-fill truth`, `--selfcheck-strict` | Decode with the checkpoint that predict used. Re-decode observed cells from their true codes in observed-only batches. Let observed neighbours enter the neighbourhood score with their true counts (`heldout_only`: only held-out neighbours and the cell itself). Fail instead of warn when the self-check fails. Independently of these flags, the decoder now always checks that the stage-2 codes cover exactly the `data_split == test` rows, and the CSV gains the columns `observed_xhat`, `ckpt_policy` and `nbr_observed_fill`. |
+| squint `submit_stage2_ablation.sh`: `SKIP_LEAKY_DECODE`, `TRAIN_EXTRA`, `DECODE_EXTRA`; `submit_stage2_mc_sweep.sh`: `DECODE_EXTRA`, `OUT_ROOT`, `ARM_SUFFIX` | Pass the new flags and write to separate roots and arm names. Both launchers refuse to write new-flag outputs into the reported `stage2-ablation` folder. |
+| squint `examples/check_holdout_leakage.py` | Read-only audit of a `predicted_adata.h5ad`: held-out-to-observed edges (0 for an inductive run), boundary band, `n_test`, cells and split against a reference run, provenance, and the stored versus best checkpoint. |
+| `gene_expr_imputation/rescore_imputation.py --nbr-observed-fill truth --recompute-nbr --holdout-from` | Rescores a saved baseline run with the same observed-neighbour fill into a new folder, after checking its split against SQUINT's. |
+
+Runbook. Steps 0 and 2 are read-only. `OLD_SEEDS` are the reported stage-1 seed folders. Step 3
+and the checkpoint-only control in step 5 are optional; they split the total change into its parts
+(step 8).
+
+```bash
+cd $SQUINT && source $VENV_PATH/bin/activate
+D=mmb0-1b_smb1-1b_1p
+V_OLD="$H+region-holdout+$D"                  # reported, transductive
+V_IND="$H+region-holdout-inductive+$D"        # leak-free headline
+OLD_SEEDS="20260629_023326_seed0 20260629_024131_seed1 20260629_025158_seed2 20260629_025456_seed3 20260629_025518_seed4"
+
+# 0. pre-flight
+python -c "import inspect, torch_geometric as g; from torch_geometric.loader import NeighborLoader as L; from torch_geometric.sampler import NeighborSampler as S; d = lambda c: inspect.signature(c.__init__).parameters['subgraph_type'].default; print(g.__version__, d(L), d(S))"
+#    expect "directional directional": batches hold the in-edges of their seeds, which the edge cut relies on
+python -c "from squint.modules.mlp import MLP; m = MLP(in_channels=4, hidden_channels=[8], out_channels=2, norm='layer_norm'); print(getattr(m.norms[0], 'mode', 'per-node'))"
+#    "graph": all rows of one decoder call are normalised together (the reason for --observed-xhat redecode)
+pytest tests/test_inductive_holdout.py
+python examples/run_squint.py --list-variants | grep region-holdout-inductive
+for s in $OLD_SEEDS; do   # exposure of the reported runs: held-out->observed edges > 0, band, ring, ckpt
+  python examples/check_holdout_leakage.py --pred-ref $ART/$D/$V_OLD/$s/predicted_adata.h5ad --expect-n-test 6612
+done
+
+# 1. stage 1, five seeds (check the echoed LSF line)
+bash examples/submit_multi_seed.sh "$V_IND" 0,1,2,3,4
+SW=$ART/$D/${V_IND}__multiseed/<sweep timestamp>
+NEW_SEEDS="$(for n in 0 1 2 3 4; do basename "$(cat $SW/seed_runs/seed_${n}_run_dir.txt)"; done | xargs)"
+
+# 2. post-checks: each must end with "RESULT: OK"
+for s in $NEW_SEEDS; do
+  python examples/check_holdout_leakage.py --pred $ART/$D/$V_IND/$s/predicted_adata.h5ad \
+      --pred-ref $ART/$D/$V_OLD/20260629_023326_seed0/predicted_adata.h5ad --expect-n-test 6612
+done
+
+# 3. optional, L2 only: reported weights, inductive predict, written to a new folder (GPU)
+for s in $OLD_SEEDS; do
+  python examples/run_inference.py --variant "$V_OLD" --timestamp $s --holdout-graph rebuild \
+      --output-dir $ART/$D/${V_OLD}__predict-inductive/$s --skip-umap --skip-svg-plots --skip-code-index-plots
+done
+
+# 4. stage 2 on the new codes: reported settings, separate root, built-in decode (true read depth) skipped
+ABLN=$ART/$D/stage2-ablation-inductive
+STAGE1_VARIANT_DIR=$ART/$D/$V_IND SEEDS="$NEW_SEEDS" ABL_ROOT=$ABLN \
+    LOG_ROOT=$ART/logs/$D/stage2-ablation-inductive VARIANTS=decode-temp05-nonoise SKIP_LEAKY_DECODE=1 \
+    bash examples/submit_stage2_ablation.sh
+
+# 5. decode No MC and MC (S = 1000): nichecell, neighbour read depth, predict's checkpoint, observed re-decode
+DX="--stage1-ckpt-policy adata --observed-xhat redecode --selfcheck-strict"
+STAGE1_VARIANT_DIR=$ART/$D/$V_IND SEEDS="$NEW_SEEDS" ABL_ROOT=$ABLN LOG_ROOT=$ART/logs/$D/stage2-mc-sweep-inductive \
+    ONLY_NICHE_FROM_CELL=1 NICHE_FROM_CELL_KS="0 1000" READ_DEPTH_MODE=neighbor DECODE_EXTRA="$DX" \
+    bash examples/submit_stage2_mc_sweep.sh
+#    parity arm: observed neighbours enter the neighbourhood score with their true counts
+STAGE1_VARIANT_DIR=$ART/$D/$V_IND SEEDS="$NEW_SEEDS" ABL_ROOT=$ABLN LOG_ROOT=$ART/logs/$D/stage2-mc-sweep-inductive \
+    ONLY_NICHE_FROM_CELL=1 NICHE_FROM_CELL_KS="0 1000" READ_DEPTH_MODE=neighbor ARM_SUFFIX=-nbrtruth \
+    DECODE_EXTRA="$DX --nbr-observed-fill truth" bash examples/submit_stage2_mc_sweep.sh
+#    optional, checkpoint-only control on the reported runs (L1 and L2 still present)
+STAGE1_VARIANT_DIR=$ART/$D/$V_OLD SEEDS="$OLD_SEEDS" ABL_ROOT=$ART/$D/stage2-ablation \
+    OUT_ROOT=$ART/$D/stage2-ablation-ckptfix LOG_ROOT=$ART/logs/$D/stage2-mc-sweep-ckptfix \
+    ONLY_NICHE_FROM_CELL=1 NICHE_FROM_CELL_KS="0 1000" READ_DEPTH_MODE=neighbor \
+    DECODE_EXTRA="--stage1-ckpt-policy adata --observed-xhat redecode" bash examples/submit_stage2_mc_sweep.sh
+```
+
+For step 3, run steps 4 and 5 again with `STAGE1_VARIANT_DIR=$ART/$D/${V_OLD}__predict-inductive`,
+`SEEDS="$OLD_SEEDS"`, `ABL_ROOT=$ART/$D/stage2-ablation-l2only` and log folders ending in
+`-l2only` (`DECODE_EXTRA="$DX"`; no parity arm). In the stage-1 logs, check for
+`SpatialBatchSplit: batch <id> holdout_graph='rebuild'` lines for both held-out sections,
+`held-out->observed edges: 0`, `held-out mask self-check OK` and no `assert_inductive_holdout`
+error. In the decode logs, check for `[decode] coverage OK`, the checkpoint line and the
+stored-versus-redecoded agreement. The arms land in `$ABLN/decode-temp05-nonoise-nichecell/`
+(No MC), `$ABLN/decode-temp05-nonoise-mc1000-nichecell/` (MC) and the same folders with
+`-nbrtruth`. The stage-2 settings stay frozen: do not rank these arms on the test split with
+`rank_stage2_ablations.py`. The drop sibling runs through the same steps with
+`V_IND="$H+region-holdout-inductive-drop+$D"` and its own roots.
+
+The baselines see the same boxes and cells and never read SQUINT outputs, so they are not
+retrained. Only the parity arm needs their saved runs rescored into new folders, one per
+timestamp folder, because the plots read every timestamp under a method folder:
+
+```bash
+# 6. baselines, parity arm only
+cd $REPO/analysis/benchmarking
+REF=$ART/$D/$V_IND/<one of NEW_SEEDS>/predicted_adata.h5ad
+for m in gest-imputed+region-holdout baseline-knn-spatial+region-holdout; do
+  for p in $ART/$D/$m/*/; do
+    t=$(basename $p)
+    python gene_expr_imputation/rescore_imputation.py --run-dir $ART/$D/$m/$t \
+        --out-dir $ART/$D/${m}__nbrtruth/$t --nbr-observed-fill truth --recompute-nbr --holdout-from $REF
+  done
+done
+
+# 7. Table 2 into separate folders (the reported $ART/benchmarking/figures is not touched)
+cd $REPO/analysis/benchmarking/plots
+t2() {   # $1 out dir, $2 stage-2 root, $3 SQUINT arm suffix, $4 baseline folder suffix, $5 reconstruction run
+  for b in cell niche; do
+    python plot_reconstruction_benchmark.py --artifacts-root $ART --out-dir $1 --metric panel --branch $b \
+        --squint-path "$5"
+    python plot_imputation_benchmark.py --artifacts-root $ART --out-dir $1 --metric panel --branch $b \
+        --squint-imputed-path $2/decode-temp05-nonoise-mc1000-nichecell$3 --squint-imputed-label "SQUINT (MC)" \
+        --extra-variant $2/decode-temp05-nonoise-nichecell$3 "SQUINT (No MC)" \
+        --gest-imputed-path gest-imputed+region-holdout$4 \
+        --extra-variant baseline-knn-spatial+region-holdout$4 "k-NN (spatial)"
+  done
+  python ../compute_table2_significance.py --tables-dir $1
+}
+F=$ART/benchmarking
+t2 $F/figures_inductive          stage2-ablation-inductive ""        ""         "${V_IND}__multiseed"
+t2 $F/figures_inductive_nbrtruth stage2-ablation-inductive -nbrtruth __nbrtruth "${V_IND}__multiseed"
+t2 $F/figures_ckptfix            stage2-ablation-ckptfix   ""        ""         "${V_OLD}__multiseed"
+t2 $F/figures_l2only             stage2-ablation-l2only    ""        ""         "${V_OLD}__multiseed"
+```
+
+`--holdout-from` stops if a cell's split differs from SQUINT's or if the two files name cells
+differently; in the second case, drop it and rely on the runner's `test=6612` line. A folder
+without `predicted_adata_seed*.h5ad` cannot be rescored: rerun that baseline with a new
+`--variant-tag` (`run_gest.py`, `run_knn_spatial.py`), since a rerun under the default tag adds a
+timestamp that the Table 2 command above then reads.
+
+Step 8, comparison: compare the mean over seeds per method and metric
+(`imputation_benchmark_panel_{cell,niche}.csv`) of each folder with the reported
+`$ART/benchmarking/figures/`, in this order: checkpoint and
+observed re-decode (`figures_ckptfix` against the reported values), L2 (`figures_l2only` against
+`figures_ckptfix`), L1 (`figures_inductive` against `figures_l2only`) and parity
+(`figures_inductive_nbrtruth` against `figures_inductive`). The L2 step also carries the switch to
+configured stage-2 codebook sizes; predict logs per level whether they differ from the largest
+index + 1 (`uns['squint']['codebook_sizes_differ_from_max1']`).
+
 ### 3.3 CIFM (§4.4, Supplement App. C)
 
 The released checkpoint is applied zero-shot (no training code is released); 413 of the 431

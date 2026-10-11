@@ -301,12 +301,32 @@ def _neighbor_mean(A, M, normalize: str = "mean") -> np.ndarray:
     return nbr
 
 
+_OBSERVED_FILLS = ("pred", "truth", "heldout_only")
+
+
+def _heldout_only_graph(A, test: np.ndarray):
+    """Restrict a spatial graph to held-out COLUMNS plus self: row i keeps its
+    edges to held-out neighbours and a unit self-loop (observed neighbours are
+    dropped). Used for BOTH X_nbr and X_hat_nbr under observed_fill=
+    'heldout_only', mirroring stage2_decode_pearson --nbr-observed-fill
+    heldout_only."""
+    A = sp.csr_matrix(A, dtype=np.float32)
+    A_h = (A @ sp.diags(test.astype(np.float32))).tocsr()   # held-out columns only
+    A_h = A_h - sp.diags(A_h.diagonal()) + sp.identity(A.shape[0], dtype=np.float32,
+                                                        format="csr")
+    A_h = sp.csr_matrix(A_h, dtype=np.float32)
+    A_h.eliminate_zeros()
+    return A_h
+
+
 def add_neighborhood_layers(
         adata: ad.AnnData,
         *,
         batch_key: str = "adata_batch_id",
         n_neighs: int = 16,
         normalize: str = "mean",
+        observed_fill: str = "pred",
+        force: bool = False,
     ) -> ad.AnnData:
     """Ensure the niche-branch layers exist so `build_pearson_dataframe` scores
     the 'niche' branch for ANY method. Builds the per-section spatial kNN graph
@@ -314,7 +334,48 @@ def add_neighborhood_layers(
     method only produced a cell-level `layers['X_hat']` and has no native
     `layers['X_hat_nbr']` — sets `layers['X_hat_nbr']` = nbr-agg of X_hat. A
     native X_hat_nbr (SQUINT / NicheCompass) is left untouched. No-op (warns)
-    if obsm['spatial'] is missing."""
+    if obsm['spatial'] is missing.
+
+    Observed-neighbour parity knobs (opt-in; the defaults keep the behaviour
+    above, mirroring stage2_decode_pearson --nbr-observed-fill):
+      * observed_fill='pred' (default): X_hat_nbr aggregates the method's own
+        per-cell X_hat at every neighbour (observed neighbours = its
+        leave-one-out prediction).
+      * observed_fill='truth': X_hat_nbr aggregates where(test, X_hat, X), so
+        observed neighbours contribute their TRUE counts for every method.
+        X_nbr is unchanged.
+      * observed_fill='heldout_only': BOTH X_nbr and X_hat_nbr aggregate over
+        held-out neighbours plus self only (observed columns dropped), so the
+        niche score measures imputed content only. Only the split='test' rows
+        are meaningful (observed rows reduce to self plus held-out neighbours).
+      * force=True: drop existing X_nbr / X_hat_nbr and recompute them (saved
+        h5ads already carry both, which otherwise makes this a no-op). This
+        REPLACES a native X_hat_nbr by the aggregated X_hat, so use it for
+        cell-only methods. The existing obsp graph is reused.
+    A non-default observed_fill needs obs['data_split'] and layers['X_hat'],
+    and refuses to run over pre-existing niche layers unless force=True."""
+    if observed_fill not in _OBSERVED_FILLS:
+        raise ValueError(f"observed_fill={observed_fill!r} not in {_OBSERVED_FILLS}")
+    if observed_fill != "pred":
+        if "data_split" not in adata.obs.columns:
+            raise SystemExit(f"observed_fill={observed_fill!r} needs obs['data_split'].")
+        if "X_hat" not in adata.layers:
+            raise SystemExit(f"observed_fill={observed_fill!r} needs layers['X_hat'] "
+                             "(a cell-level prediction to aggregate).")
+    if force:
+        if "X_hat" not in adata.layers and "X_hat_nbr" in adata.layers:
+            raise SystemExit("force=True would drop the native layers['X_hat_nbr'] "
+                             "with no layers['X_hat'] to rebuild it from.")
+        dropped = [k for k in ("X_hat_nbr", "X_nbr") if k in adata.layers]
+        for k in dropped:
+            del adata.layers[k]
+        print(f"  [nbr] force: dropped existing layers {dropped} "
+              f"(observed_fill={observed_fill!r})")
+    elif observed_fill != "pred" and ("X_hat_nbr" in adata.layers
+                                      or "X_nbr" in adata.layers):
+        raise SystemExit(
+            f"observed_fill={observed_fill!r} requested but niche layers already "
+            "exist and would be kept as-is; pass force=True (--recompute-nbr).")
     if "X_hat_nbr" in adata.layers and "X_nbr" in adata.layers:
         return adata
     if "spatial_connectivities" not in adata.obsp:
@@ -323,8 +384,41 @@ def add_neighborhood_layers(
                   "layers; niche branch will be skipped.", file=sys.stderr)
             return adata
         spatial_knn_per_batch(adata, n_neighs=n_neighs, batch_key=batch_key)
+    if force or observed_fill != "pred":
+        # Sanity check of the (possibly saved) graph: kNN + self -> n_neighs + 1
+        # entries per row. A mismatch means the h5ad's obsp graph was built
+        # with another n_neighs than requested.
+        deg = np.diff(sp.csr_matrix(adata.obsp["spatial_connectivities"]).indptr)
+        med = float(np.median(deg)) if deg.size else float("nan")
+        print(f"  [nbr] graph: median {med:.0f} entries/row (expected "
+              f"{n_neighs + 1} = n_neighs + self)")
+        if deg.size and med != n_neighs + 1:
+            print(f"  [nbr] WARNING: obsp graph degree {med:.0f} != n_neighs+1 "
+                  f"({n_neighs + 1}); check which n_neighs the saved graph used.",
+                  file=sys.stderr)
+    if observed_fill == "heldout_only":
+        test = adata.obs["data_split"].astype(str).to_numpy() == "test"
+        A_h = _heldout_only_graph(adata.obsp["spatial_connectivities"], test)
+        adata.layers["X_nbr"] = _neighbor_mean(A_h, adata.X, normalize)
+        adata.layers["X_hat_nbr"] = _neighbor_mean(A_h, adata.layers["X_hat"], normalize)
+        n_ho = np.asarray(A_h[test].sum(axis=1)).ravel() - 1.0     # minus self
+        print(f"  [nbr] observed_fill='heldout_only': X_nbr + X_hat_nbr aggregate "
+              f"held-out neighbours + self ({normalize}); n_test={int(test.sum())}, "
+              f"mean held-out neighbours per held-out cell="
+              f"{float(n_ho.mean()) if n_ho.size else float('nan'):.2f}")
+        return adata
     if "X_nbr" not in adata.layers:
         compute_X_nbr(adata, normalize=normalize)
+    if observed_fill == "truth" and "X_hat_nbr" not in adata.layers:
+        test = adata.obs["data_split"].astype(str).to_numpy() == "test"
+        M = np.where(test[:, None], _to_dense_2d(adata.layers["X_hat"]),
+                     _to_dense_2d(adata.X))
+        A = adata.obsp["spatial_connectivities"].astype(np.float32)
+        adata.layers["X_hat_nbr"] = _neighbor_mean(A, M, normalize)
+        print(f"  [nbr] observed_fill='truth': X_hat_nbr = neighborhood-aggregated "
+              f"where(test, X_hat, X) ({normalize}, n_neighs={n_neighs}); "
+              f"n_test={int(test.sum())}, shape={adata.layers['X_hat_nbr'].shape}")
+        return adata
     if "X_hat" in adata.layers and "X_hat_nbr" not in adata.layers:
         A = adata.obsp["spatial_connectivities"].astype(np.float32)
         adata.layers["X_hat_nbr"] = _neighbor_mean(A, adata.layers["X_hat"], normalize)
