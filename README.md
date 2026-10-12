@@ -2,8 +2,10 @@
 
 > **Branch `leakfree-holdout`.** This branch adds an opt-in leak-free (inductive) protocol for
 > the held-out-region imputation and its farm runbook; see
-> [Leak-free (inductive) imputation](#leak-free-inductive-imputation) in Section 3.2. All
-> defaults, and every command for the reported results, are unchanged.
+> [Leak-free (inductive) imputation](#leak-free-inductive-imputation) in Section 3.2. It also adds
+> a read-only re-scoring of Table 2 on one neighbourhood definition for every method; see
+> [Canonical Table 2 scoring](#canonical-table-2-scoring). All defaults, and every command for
+> the reported results, are unchanged.
 
 Code to reproduce the experiments of
 
@@ -472,6 +474,99 @@ observed re-decode (`figures_ckptfix` against the reported values), L2 (`figures
 (`figures_inductive_nbrtruth` against `figures_inductive`). The L2 step also carries the switch to
 configured stage-2 codebook sizes; predict logs per level whether they differ from the largest
 index + 1 (`uns['squint']['codebook_sizes_differ_from_max1']`).
+
+#### Canonical Table 2 scoring
+
+The reported runs score the neighbourhood level with method-specific conventions. SQUINT's
+reconstruction rows aggregate over its own symmetrised training graph. NicheCompass's
+`X_hat_nbr` scale follows each cell's in-degree. For imputation, SQUINT fills the observed
+neighbours with its stage-1 reconstruction, while GeST and the k-NN floor fill them with
+leave-one-out predictions. `gene_expr_imputation/score_table2_canonical.py` re-scores the stored
+predictions of every Table 2 method on one definition. It neither retrains nor re-runs any
+method, and it writes only to a new folder.
+
+- **Graph and target.** The graph is the baselines' directed kNN16 + self per section on the
+  coordinate-aligned silver: `load_silver_concat`, `apply_holdout_regions` and
+  `add_neighborhood_layers`, the runners' own code path. The target is `X_nbr`, the row mean of
+  the raw counts over that graph. Every method's rows are mapped onto the silver rows and must
+  carry the same split and counts. SQUINT's rows are matched by section and cell name, because
+  its concat suffixes differ from the silver's.
+- **Reconstruction.** The cell level uses each method's stored `X_hat`. The neighbourhood level
+  uses the native `X_hat_nbr` of scVI and Vanilla VQ-VAE. NicheCompass's rows are rescaled to the
+  `X_nbr` row sums; the unscaled rows go to a `_reference` file. For SQUINT, the niche-decoder
+  outputs of its predict-time codes are averaged over the canonical graph.
+- **Imputation.** At the cell level, SQUINT (MC) and SQUINT (No MC) use the held-out predictions
+  that `stage2_decode_pearson.py --save-pred` writes to `heldout_predictions.npz`, and GeST and
+  k-NN use their stored `X_hat`. At the neighbourhood level, every method's held-out predictions
+  are averaged together with the true counts of the observed neighbours (parity). The own-fill
+  variant goes to `imputation_benchmark_panel_niche_ownfill.csv`.
+- **Self-checks.** These are PASS, FAIL, WARN and INFO lines in `selfcheck_report.txt`; a FAIL
+  never stops the run, but the job then exits 1.
+  - S0, S1, S2: stored data re-scored as stored reproduces every runner and multiseed CSV.
+  - S3: the decoders replayed on SQUINT's stored embeddings reproduce its stored `X_hat` and
+    `X_hat_nbr`.
+  - S4: each re-decoded arm's npz reproduces the arm's CSV and its decode provenance: codes, K,
+    leak-free read depth, checkpoint, row order. It is also linked to the reported arm.
+  - S5 (optional): the as-stored rows match existing panel CSVs.
+- **Outputs.** `{reconstruction,imputation}_benchmark_panel_{cell,niche}.csv` keep the columns
+  and method labels of the reported panels, so `compute_table2_significance.py` reads them
+  unchanged. Alongside them are `asstored/` (the current Table 2 numbers through the same
+  mapping), `redecoded/`, `per_seed/` and `summary_means.csv` (canonical against as-stored, per
+  method and metric).
+
+The reported arms carry no npz, so they are first re-decoded into new roots with the reported
+flags plus `--save-pred`. This is done twice: once with the reported decode checkpoint
+(`last`), and once with the checkpoint that predict used (`adata`; the two differ for two of
+the five seeds). `COMPARE_ROOT` makes each decode compare its CSV with the reported arm's CSV
+and log `[decode] [compare] PASS` or `FAIL`. Before commit `fdca41a`, the No MC decode scaled
+held-out cells by their true library size. A reported No MC arm written before that commit
+therefore fails this gate, and the log names the cause.
+
+```bash
+cd $SQUINT && source $VENV_PATH/bin/activate
+D=mmb0-1b_smb1-1b_1p
+S1=$ART/$D/$H+region-holdout+$D
+S1_SEEDS="<TS>_seed0 <TS>_seed1 <TS>_seed2 <TS>_seed3 <TS>_seed4"   # as in Section 3.2
+# 1. re-decode the reported stage-2 codes, No MC and MC (S = 1000), into new roots (GPU)
+for POL in last adata; do
+  STAGE1_VARIANT_DIR=$S1 SEEDS="$S1_SEEDS" ABL_ROOT=$ART/$D/stage2-ablation \
+      OUT_ROOT=$ART/$D/stage2-ablation-savepred-$POL COMPARE_ROOT=$ART/$D/stage2-ablation \
+      ONLY_NICHE_FROM_CELL=1 NICHE_FROM_CELL_KS="0 1000" READ_DEPTH_MODE=neighbor \
+      DECODE_EXTRA="--save-pred --stage1-ckpt-policy $POL" bash examples/submit_stage2_mc_sweep.sh
+done
+# 2. when done: 5 heldout_predictions.npz per arm and root, and the compare lines in the logs
+ls $ART/$D/stage2-ablation-savepred-*/decode-temp05-nonoise*-nichecell/*/metrics/heldout_predictions.npz | wc -l   # 20
+grep -h "\[compare\] \(PASS\|FAIL\)" $ART/logs/$D/stage2-mc-sweep__stage2-ablation-savepred-*/*.out
+# 3. canonical scoring (CPU), one job per root, each into a new folder
+cd $REPO
+for POL in last adata; do
+  ALLOW=0; [ $POL = last ] && ALLOW=1     # last: decode ckpt != predict ckpt is a WARN
+  ART=$ART DATASET=$D REPRO=$REPO SQUINT_REPO=$SQUINT VENV=$VENV_PATH \
+      SILVER_DIR=$DATA/silver/${D}_coord_aligned SQUINT_SEEDS="$S1_SEEDS" \
+      SQUINT_MULTISEED_TS=<timestamp of the stage-1 sweep folder> \
+      REDECODE_ROOT=$ART/$D/stage2-ablation-savepred-$POL ALLOW_CKPT_MISMATCH=$ALLOW \
+      OUT_DIR=$ART/table2_canonical/savepred-$POL LOG_DIR=$ART/logs/$D/table2-canonical-$POL \
+      bash analysis/benchmarking/gene_expr_imputation/submit_score_table2_canonical.sh
+done
+# 4. verdict and significance
+for POL in last adata; do
+  O=$ART/table2_canonical/savepred-$POL
+  tail -n 1 $O/selfcheck_report.txt
+  python analysis/benchmarking/compute_table2_significance.py --tables-dir $O --out $O/table2_significance.csv
+done
+```
+
+The baseline inputs default to the `+coord-aligned` re-runs (`VARIANT_SUFFIX=+coord-aligned` in
+`submit_imputation_recon.sh`), one timestamp folder each; `BASE_SCVI`, ..., `BASE_KNN` point
+elsewhere. `EXISTING_TABLES_DIR=<folder with the reported panel CSVs>` adds check S5. Expected
+outcomes:
+
+- **`last`:** a checkpoint WARN for the two seeds whose predict-time checkpoint is not
+  `last.ckpt`, and a vs-paper PASS per arm and seed, apart from the No MC case above. The
+  canonical SQUINT imputation rows are then the reported predictions, re-scored.
+- **`adata`:** the decode gate and the scorer's vs-paper line show re-decode drift for those two
+  seeds (a WARN in the scorer). `summary_means.csv` reports this drift separately from the
+  change that canonical scoring makes.
 
 ### 3.3 CIFM (§4.4, Supplement App. C)
 
