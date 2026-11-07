@@ -111,6 +111,10 @@ NBR_K="${NBR_K:-16}"
 DEVICE="${DEVICE:-cpu}"
 NTHREADS="${NTHREADS:-8}"
 FAST_SELFCHECKS="${FAST_SELFCHECKS:-0}"     # 1 = literal build_pearson_dataframe on seed 0 only
+# MC vs-paper tolerance (rel); empty = the script's 1e-3. The MC1000 re-decodes
+# of the paper arms reproduce every Table 2 metric to 3 dp, but Monte-Carlo
+# sampling moves other columns by up to 3.7e-3 (MSE median), so 5e-3 is used.
+TOL_REDECODE_MC="${TOL_REDECODE_MC:-}"
 TS="$(date +%Y%m%d_%H%M%S)"
 OUT_DIR="${OUT_DIR:-$ART/table2_canonical/$TS}"
 
@@ -126,6 +130,7 @@ DRY_RUN="${DRY_RUN:-0}"
 EXTRA=""
 if [[ "$FAST_SELFCHECKS" == "1" ]]; then EXTRA="$EXTRA --fast-selfchecks"; fi
 if [[ "$ALLOW_CKPT_MISMATCH" == "1" ]]; then EXTRA="$EXTRA --allow-ckpt-mismatch"; fi
+if [[ -n "$TOL_REDECODE_MC" ]]; then EXTRA="$EXTRA --tol-redecode-mc $TOL_REDECODE_MC"; fi
 if [[ -n "$EXISTING_TABLES_DIR" ]]; then
     EXTRA="$EXTRA --existing-tables-dir $EXISTING_TABLES_DIR"
 fi
@@ -155,6 +160,7 @@ echo "                  gest=$BASE_GEST"
 echo "                  knn=$BASE_KNN"
 echo "  existing tabs : ${EXISTING_TABLES_DIR:-<none: S5 skipped>}"
 echo "  nbr-k=$NBR_K device=$DEVICE threads=$NTHREADS fast-selfchecks=$FAST_SELFCHECKS"
+echo "  tol redecode MC: ${TOL_REDECODE_MC:-<script default 1e-3>}"
 echo "  OUT_DIR       : $OUT_DIR"
 echo "  logs          : $LOG_DIR/table2_canonical_${TS}.{out,err}"
 echo "  LSF           : -q $LSF_QUEUE -G $LSF_GROUP -n $NTHREADS -M $LSF_MEM_MB -W $LSF_WALL"
@@ -209,9 +215,16 @@ BSUB=( bsub -q "$LSF_QUEUE" -G "$LSF_GROUP" -n "$NTHREADS" -M "$LSF_MEM_MB"
        -R "select[mem>$LSF_MEM_MB] rusage[mem=$LSF_MEM_MB]" -R "span[hosts=1]"
        -W "$LSF_WALL" -J "$JOB_NAME"
        -o "$LOG_DIR/table2_canonical_${TS}.out" -e "$LOG_DIR/table2_canonical_${TS}.err" )
+# The job is submitted as a script FILE, not as `bash -lc "$JOB"`: bsub wraps a
+# command-line job in single quotes, so the single quotes in JOB (git --format)
+# would end that quoting early and the job would die with a bash syntax error
+# (exit 2, no output) before the scorer starts.
+JOB_FILE="$LOG_DIR/table2_canonical_${TS}.job.sh"
 
 if [[ "$DRY_RUN" == "1" ]]; then
-    printf '%q ' "${BSUB[@]}"; printf 'bash -lc %q\n' "$JOB"
+    printf '%q ' "${BSUB[@]}"; printf 'bash -l %q\n' "$JOB_FILE"
+    echo "----- $JOB_FILE (not written in DRY_RUN) -----"
+    printf '%s\n' "$JOB"
     echo "[t2-canonical] DRY_RUN: nothing submitted."
     exit 0
 fi
@@ -219,6 +232,8 @@ for p in "$VENV/bin/activate" "$SCRIPT" "$SQUINT_REPO/examples/stage2_decode_pea
     [[ -e "$p" ]] || { echo "MISSING: $p" >&2; exit 1; }
 done
 mkdir -p "$LOG_DIR"
-"${BSUB[@]}" bash -lc "$JOB"
-echo "[t2-canonical] submitted; outputs -> $OUT_DIR"
+printf '%s\n' "$JOB" > "$JOB_FILE"
+bash -n "$JOB_FILE" || { echo "REFUSING: $JOB_FILE does not parse (bash -n)." >&2; exit 1; }
+"${BSUB[@]}" bash -l "$JOB_FILE"
+echo "[t2-canonical] submitted; job script $JOB_FILE; outputs -> $OUT_DIR"
 echo "  then: python $REPRO/analysis/benchmarking/compute_table2_significance.py --tables-dir $OUT_DIR"
