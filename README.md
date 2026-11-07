@@ -272,7 +272,7 @@ are wired in but not reported.
 ### 3.2 Reconstruction and imputation (Table 2; Fig. S5)
 
 Stage 1 is the paper's Mouse Brain model with one 25% × 25% box held out in each section
-(STARmap upper left, MERFISH lower right; 6,612 cells). The held-out cells are not used as
+(STARmap upper left, MERFISH lower right; 6,052 cells). The held-out cells are not used as
 reconstruction targets and are tagged `data_split = test`; the baselines use the same boxes
 (`DEFAULT_HOLDOUT_REGIONS` in `gene_expr_imputation/_holdout_utils.py`).
 
@@ -315,7 +315,7 @@ NicheCompass, and the single-codebook Vanilla VQ-VAE (`vanilla-cell`, `vanilla-n
 GeST (`gest`; our reimplementation in `gene_expr_imputation/gest/`, with tests in
 `gest/tests/`, as no code is released) and the spatial k-NN floor (`knn`). Each runner applies
 the shared holdout and prints `[holdout] data_split: train=…, test=…`; check that it reports
-`test=6612`. Point `SILVER_DIR` at the Mouse Brain files that SQUINT reads: the default
+`test=6052`. Point `SILVER_DIR` at the Mouse Brain files that SQUINT reads: the default
 (`DEFAULT_SILVER_DIR` in `_holdout_utils.py`, ll. 64–66) is another folder on the authors'
 cluster. `mlp` and `gestarch` are wired in but not reported.
 
@@ -369,7 +369,7 @@ python -c "from squint.modules.mlp import MLP; m = MLP(in_channels=4, hidden_cha
 pytest tests/test_inductive_holdout.py
 python examples/run_squint.py --list-variants | grep region-holdout-inductive
 for s in $OLD_SEEDS; do   # exposure of the reported runs: held-out->observed edges > 0, band, ring, ckpt
-  python examples/check_holdout_leakage.py --pred-ref $ART/$D/$V_OLD/$s/predicted_adata.h5ad --expect-n-test 6612
+  python examples/check_holdout_leakage.py --pred-ref $ART/$D/$V_OLD/$s/predicted_adata.h5ad --expect-n-test 6052
 done
 
 # 1. stage 1, five seeds (check the echoed LSF line)
@@ -380,7 +380,7 @@ NEW_SEEDS="$(for n in 0 1 2 3 4; do basename "$(cat $SW/seed_runs/seed_${n}_run_
 # 2. post-checks: each must end with "RESULT: OK"
 for s in $NEW_SEEDS; do
   python examples/check_holdout_leakage.py --pred $ART/$D/$V_IND/$s/predicted_adata.h5ad \
-      --pred-ref $ART/$D/$V_OLD/20260629_023326_seed0/predicted_adata.h5ad --expect-n-test 6612
+      --pred-ref $ART/$D/$V_OLD/20260629_023326_seed0/predicted_adata.h5ad --expect-n-test 6052
 done
 
 # 3. optional, L2 only: reported weights, inductive predict, written to a new folder (GPU)
@@ -461,7 +461,7 @@ t2 $F/figures_l2only             stage2-ablation-l2only    ""        ""         
 ```
 
 `--holdout-from` stops if a cell's split differs from SQUINT's or if the two files name cells
-differently; in the second case, drop it and rely on the runner's `test=6612` line. A folder
+differently; in the second case, drop it and rely on the runner's `test=6052` line. A folder
 without `predicted_adata_seed*.h5ad` cannot be rescored: rerun that baseline with a new
 `--variant-tag` (`run_gest.py`, `run_knn_spatial.py`), since a rerun under the default tag adds a
 timestamp that the Table 2 command above then reads.
@@ -545,6 +545,7 @@ for POL in last adata; do
       SILVER_DIR=$DATA/silver/${D}_coord_aligned SQUINT_SEEDS="$S1_SEEDS" \
       SQUINT_MULTISEED_TS=<timestamp of the stage-1 sweep folder> \
       REDECODE_ROOT=$ART/$D/stage2-ablation-savepred-$POL ALLOW_CKPT_MISMATCH=$ALLOW \
+      TOL_REDECODE_MC=5e-3 \
       OUT_DIR=$ART/table2_canonical/savepred-$POL LOG_DIR=$ART/logs/$D/table2-canonical-$POL \
       bash analysis/benchmarking/gene_expr_imputation/submit_score_table2_canonical.sh
 done
@@ -562,8 +563,11 @@ elsewhere. `EXISTING_TABLES_DIR=<folder with the reported panel CSVs>` adds chec
 outcomes:
 
 - **`last`:** a checkpoint WARN for the two seeds whose predict-time checkpoint is not
-  `last.ckpt`, and a vs-paper PASS per arm and seed, apart from the No MC case above. The
-  canonical SQUINT imputation rows are then the reported predictions, re-scored.
+  `last.ckpt`, and a vs-paper PASS per arm and seed. The canonical SQUINT imputation rows are
+  then the reported predictions, re-scored. Observed: the No MC re-decodes are identical to the
+  reported arms. The MC re-decodes give every Table 2 metric of the reported arms to three
+  decimals, but Monte-Carlo sampling moves other columns by up to 3.7e-3 (relative, MSE
+  median). That is above the decode gate's 1e-3, hence `TOL_REDECODE_MC=5e-3`.
 - **`adata`:** the decode gate and the scorer's vs-paper line show re-decode drift for those two
   seeds (a WARN in the scorer). `summary_means.csv` reports this drift separately from the
   change that canonical scoring makes.
