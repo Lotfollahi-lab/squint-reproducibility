@@ -1353,10 +1353,6 @@ def _process_arm(label, arm_dir: Path, paper_dir: Path, seed_run, seed, ctx, C, 
                 f"x_hat row sum vs read_depth: max rel diff {rel_sum:.2e} (tol 1e-3); "
                 f"read_depth vs own library size: median rel diff {rel_true:.3f} (must be "
                 f"> 1e-3, ~0 = leaky true depth)")
-    scm = _as_float(meta.get("selfcheck_cellwise_pearson_median"))
-    R.check(f"{cid}/selfcheck", scm >= args.selfcheck_min,
-            f"decode true-code self-check cell-wise Pearson median {scm:.4f} "
-            f"(min {args.selfcheck_min:g})")
     if "obs_names" in Z.files:
         ok = np.array_equal(np.asarray(Z["obs_names"]).astype(str),
                             np.asarray(A.obs_names[gidx]).astype(str))
@@ -1397,15 +1393,29 @@ def _process_arm(label, arm_dir: Path, paper_dir: Path, seed_run, seed, ctx, C, 
         ref_src = "npz stage1_ckpt_predict_time"
     if ck_dec and ck_ref:
         same_w, mx = _same_weights(ctx, ck_dec, ck_ref)
+        ck_differs = same_w is not True
         R.check(f"{cid}/ckpt", same_w is True,
                 f"decode ckpt {os.path.basename(str(ck_dec))} (policy "
                 f"{meta.get('ckpt_policy')!r}) vs {ref_src} {os.path.basename(str(ck_ref))}: "
                 f"max |param diff| {'unreadable' if mx is None else format(mx, '.3e')}"
                 + ("" if same_w is True else hint), warn_only=allow)
     else:
+        ck_differs = True
         R.check(f"{cid}/ckpt", False, f"decode ckpt {ck_dec!r}; predict-time reference "
                                       f"unknown (S3 not verified and no uns ckpt in the "
                                       f"npz)" + hint, warn_only=allow)
+    # the true-code self-check compares against the stored X_hat, which the
+    # predict-time ckpt wrote: under an accepted ckpt mismatch a lower value
+    # reflects the weights, not the decode path, so it is then a WARN
+    scm = _as_float(meta.get("selfcheck_cellwise_pearson_median"))
+    sc_ok = scm >= args.selfcheck_min
+    R.check(f"{cid}/selfcheck", sc_ok,
+            f"decode true-code self-check cell-wise Pearson median {scm:.4f} "
+            f"(min {args.selfcheck_min:g})"
+            + ("" if sc_ok or not (allow and ck_differs) else
+               "; the decode ckpt is not the predict-time ckpt that wrote the stored "
+               "X_hat (accepted above)"),
+            warn_only=allow and ck_differs)
     # ---- S4: re-score with the decode's own convention ----------------------
     if "stage2_npz_row" in Z.files:
         o = Z["stage2_npz_row"].astype(np.int64)
