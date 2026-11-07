@@ -97,7 +97,8 @@ Outputs (in --out-dir)
         the re-decoded SQUINT arms' own CSV rows (summary 'drift' line =
         redecoded - asstored, i.e. re-decode drift apart from the canonical change)
   per_seed/<set>/<panel file>/<method>.csv   per-seed frames behind each panel
-  summary_means.csv, selfcheck_report.txt, run_config.json
+  summary_means.csv, selfcheck_report.txt, run_config.json, store_frames.pkl (all
+        per-seed frames, to rebuild the panels and summary without re-scoring)
 The panel CSVs carry the existing columns
 (metric,panel,axis,transform,gene_subset,branch,method,split,seed,value), the
 published method labels and the panel codes of plot_imputation_benchmark's
@@ -1579,6 +1580,13 @@ def build_panel_long(resolved: "OrderedDict[str, Optional[Path]]", branch: str,
     return pd.DataFrame(long_rows, columns=PANEL_COLUMNS)
 
 
+def _dump_store(S: Store, out_dir: Path) -> None:
+    """Every per-seed frame in one pickle, written before the panels: if a
+    later step fails, write_panels / summarise can be re-run from it without
+    re-scoring (S = Store(); S.frames.update(pd.read_pickle(path)))."""
+    pd.to_pickle(dict(S.frames), out_dir / "store_frames.pkl")
+
+
 def write_panels(S: Store, out_dir: Path, R: Report) -> Dict[Tuple[str, str], pd.DataFrame]:
     R.section("Panel CSVs")
     out: Dict[Tuple[str, str], pd.DataFrame] = {}
@@ -1883,7 +1891,7 @@ def main(argv=None) -> int:
     C = build_canonical(args, R)
     S = Store()
     for kk, run in base_runs.items():
-        process_baseline(kk, run, C, args, R, S)
+        R.guarded(f"baseline/{kk}", process_baseline, kk, run, C, args, R, S)
     R.section("As-stored SQUINT imputation rows (paper arms)")
     for s in args.squint_seeds:
         R.guarded(f"asstored/{s}", add_asstored_arms, s, args, R, S)
@@ -1891,10 +1899,13 @@ def main(argv=None) -> int:
         R.guarded(f"squint/{s}", process_squint_seed, s, C, args, R, S, s2d, MS)
         gc.collect()
 
-    panels = write_panels(S, out_dir, R)
+    # the steps below only reshape the stored frames: guarded, so that a bug in
+    # them still leaves the report and store_frames.pkl to rebuild from
+    R.guarded("store", _dump_store, S, out_dir)
+    panels = R.guarded("panels", write_panels, S, out_dir, R) or {}
     if args.existing_tables_dir is not None:
-        compare_existing(panels, Path(args.existing_tables_dir), R, args.tol)
-    summarise(panels, out_dir, R)
+        R.guarded("S5", compare_existing, panels, Path(args.existing_tables_dir), R, args.tol)
+    R.guarded("summary", summarise, panels, out_dir, R)
 
     n_fail, n_warn = R.n.get("FAIL", 0), R.n.get("WARN", 0)
     R.section("Self-check verdict")
